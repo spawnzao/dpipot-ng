@@ -1,0 +1,110 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// Config contém todas as configurações do proxy lidas de variáveis de ambiente.
+// Isso facilita a configuração via ConfigMap no Kubernetes sem recompilar.
+type Config struct {
+	// Endereço onde o proxy escuta conexões dos atacantes
+	ListenAddr string
+
+	// Caminho do Unix socket do sidecar nDPI
+	NDPISocketPath string
+
+	// Timeout para classificação nDPI (se exceder, usa protocolo "Unknown")
+	NDPITimeout time.Duration
+
+	// Rotas: label nDPI → endereço do honeypot (ClusterIP Service do K8s)
+	// Exemplo: "HTTP=elasticpot-svc:9200,SSH=cowrie-svc:22"
+	Routes map[string]string
+
+	// Endereço do honeypot padrão quando nDPI não classifica
+	DefaultRoute string
+
+	// Configuração do Kafka
+	KafkaBrokers string
+	KafkaTopic   string
+
+	// Quantos bytes do payload capturar por direção (0 = ilimitado)
+	MaxPayloadBytes int64
+
+	// Nível de log: debug, info, warn, error
+	LogLevel string
+}
+
+func Load() (*Config, error) {
+	cfg := &Config{
+		ListenAddr:      getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
+		NDPISocketPath:  getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
+		NDPITimeout:     getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
+		DefaultRoute:    getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
+		KafkaBrokers:    getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
+		KafkaTopic:      getEnv("KAFKA_TOPIC", "dpipot.payloads"),
+		MaxPayloadBytes: getInt64("MAX_PAYLOAD_BYTES", 0),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
+	}
+
+	// parseia as rotas do formato "HTTP=elasticpot-svc:9200,SSH=cowrie-svc:22"
+	routesRaw := getEnv("HONEYPOT_ROUTES",
+		"HTTP=elasticpot-svc:9200,MongoDB=mongodbhp-svc:27017,SSH=cowrie-svc:22")
+	routes, err := parseRoutes(routesRaw)
+	if err != nil {
+		return nil, fmt.Errorf("HONEYPOT_ROUTES inválido: %w", err)
+	}
+	cfg.Routes = routes
+
+	return cfg, nil
+}
+
+func parseRoutes(raw string) (map[string]string, error) {
+	routes := make(map[string]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("par inválido: %q (esperado PROTO=host:porta)", pair)
+		}
+		routes[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+	}
+	return routes, nil
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
+}
+
+func getInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
+}

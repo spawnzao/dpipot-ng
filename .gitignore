@@ -1,0 +1,22 @@
+# Go
+proxy/vendor/
+*.test
+*.out
+
+# binários compilados
+proxy/classifier
+
+# dependências C
+classifier/lib/
+classifier/*.o
+classifier/*.a
+
+# IDE
+.vscode/
+.idea/
+
+# env local
+.env
+
+# WSL FIles
+*Zone.Identifier
