@@ -168,6 +168,13 @@ spec:
           ports:
             - containerPort: 80
               protocol: TCP
+          securityContext:
+            capabilities:
+              add:
+                - NET_BIND_SERVICE
+          volumeMounts:
+            - name: wordpot-logs
+              mountPath: /opt/wordpot/logs
           resources:
             requests:
               cpu: 50m
@@ -175,3 +182,6 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+      volumes:
+        - name: wordpot-logs
+          emptyDir: {}
