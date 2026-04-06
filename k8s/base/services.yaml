@@ -83,6 +83,25 @@ spec:
       protocol: TCP
 
 ---
+# Wordpot — honeypot HTTP
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpot-svc
+  namespace: dpipot
+  labels:
+    app: wordpot
+spec:
+  type: ClusterIP
+  selector:
+    app: wordpot
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+
+---
 # Kafka — broker interno para buffer de payloads
 apiVersion: v1
 kind: Service
