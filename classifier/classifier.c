@@ -43,7 +43,8 @@ static uint32_t g_flow_id = 0;
 static void ndpi_flow_info_freer(void *const node)
 {
     struct nDPI_flow_info *const flow = (struct nDPI_flow_info *)node;
-    ndpi_flow_free(flow->ndpi_flow);
+    if (flow->ndpi_flow)
+        ndpi_flow_free(flow->ndpi_flow);
     ndpi_free(flow);
 }
 
@@ -103,9 +104,11 @@ static void ndpi_idle_scan_walker(const void *A, ndpi_VISIT which,
                            flow->last_seen + MAX_IDLE_TIME_UDP < workflow->last_time);
         int fin_seen    = (flow->flow_fin_ack_seen == 1 && flow->flow_ack_seen == 1);
         if (tcp_expired || udp_expired || fin_seen) {
-            if (!flow->detection_completed && flow->ndpi_flow)
+            if (!flow->detection_completed && flow->ndpi_flow) {
                 flow->detected_l7_protocol =
-                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow);
+                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow, NULL);
+                flow->detection_completed = 1;
+            }
             workflow->ndpi_flows_idle[workflow->cur_idle_flows++] = flow;
             workflow->total_idle_flows++;
         }
@@ -145,8 +148,8 @@ struct nDPI_workflow *init_workflow(void)
     w->max_idle_flows  = MAX_IDLE_FLOWS_PER_THREAD;
     w->ndpi_flows_idle = (void **)ndpi_calloc(w->max_idle_flows, sizeof(void *));
     if (!w->ndpi_flows_idle) goto err;
-    fprintf(stderr, "[classifier] nDPI inicializado — %zu protocolos\n",
-            (size_t)ndpi_get_num_protocols(w->ndpi_struct));
+    
+    fprintf(stderr, "[classifier] nDPI inicializado\n");
     return w;
 err:
     free_workflow(&w);
@@ -285,8 +288,7 @@ const char *classify_payload(
         flow_to_process->flow_id = g_flow_id++;
         strncpy(flow_to_process->flow_uuid, flow_id, FLOW_ID_SIZE - 1);
         flow_to_process->first_seen = time_ms;
-        flow_to_process->ndpi_flow =
-            (struct ndpi_flow_struct *)ndpi_flow_malloc(SIZEOF_FLOW_STRUCT);
+        flow_to_process->ndpi_flow = ndpi_flow_malloc(SIZEOF_FLOW_STRUCT);
         if (!flow_to_process->ndpi_flow) {
             ndpi_free(flow_to_process); free(pkt); return "Unknown";
         }
@@ -308,37 +310,45 @@ const char *classify_payload(
     flow_to_process->total_l4_data_len += payload_len;
     flow_to_process->last_seen = time_ms;
 
-    /* nDPI 5.x: parâmetro extra ndpi_flow_input_info* — NULL usa defaults */
+    // nDPI 4.12: process packet
     flow_to_process->detected_l7_protocol =
         ndpi_detection_process_packet(
             workflow->ndpi_struct,
             flow_to_process->ndpi_flow,
-            pkt,
+            (const unsigned char *)pkt,
             (uint16_t)pkt_size,
             time_ms,
             NULL);
 
     free(pkt);
 
-    /* nDPI 5.x: ndpi_detection_giveup(module, flow) — sem params extras */
-    if (!flow_to_process->detection_completed && flow_to_process->ndpi_flow)
+    // nDPI 4.12: giveup se necessário
+    if (!flow_to_process->detection_completed && flow_to_process->ndpi_flow) {
         flow_to_process->detected_l7_protocol =
             ndpi_detection_giveup(workflow->ndpi_struct,
-                                  flow_to_process->ndpi_flow);
+                                  flow_to_process->ndpi_flow,
+                                  NULL);
+        flow_to_process->detection_completed = 1;
+    }
 
-    /* nDPI 5.x: ndpi_proto tem proto_by_ip (ex master_protocol) e app_protocol */
+    // CORREÇÃO PARA nDPI 4.12: proto->proto é ndpi_master_app_protocol
+    // Precisamos acessar o campo .master_protocol que é uint16_t
     struct ndpi_proto *proto = &flow_to_process->detected_l7_protocol;
     uint16_t best = NDPI_PROTOCOL_UNKNOWN;
-    if (proto->app_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto->app_protocol;
-    else if (proto->proto_by_ip != NDPI_PROTOCOL_UNKNOWN)
-        best = proto->proto_by_ip;
+    
+    // Em nDPI 4.12, ndpi_master_app_protocol é uma união/struct
+    // O campo master_protocol é o protocolo principal
+    if (proto->proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto->proto.master_protocol;
+    else if (proto->proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto->proto.app_protocol;
 
-    if (best != NDPI_PROTOCOL_UNKNOWN)
-        snprintf(result_buf, sizeof(result_buf), "%s",
-                 ndpi_get_proto_name(workflow->ndpi_struct, best));
-    else
+    if (best != NDPI_PROTOCOL_UNKNOWN) {
+        const char *proto_name = ndpi_get_proto_name(workflow->ndpi_struct, best);
+        snprintf(result_buf, sizeof(result_buf), "%s", proto_name);
+    } else {
         snprintf(result_buf, sizeof(result_buf), "Unknown");
+    }
 
     check_for_idle_flows(0, workflow);
     return result_buf;

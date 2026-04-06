@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN useradd -u 1000 -m proxy
+RUN id -u proxy 2>/dev/null || useradd -u 1000 -m proxy
 
 COPY --from=builder /proxy /proxy
 

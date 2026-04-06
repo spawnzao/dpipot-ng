@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # clona e compila a versão mais atual do nDPI
-RUN git clone --depth=1 https://github.com/ntop/nDPI.git /ndpi
+RUN git clone --branch=4.12-stable --depth=1 https://github.com/ntop/nDPI.git /ndpi
 WORKDIR /ndpi
 RUN ./autogen.sh && \
     ./configure --prefix=/usr/local && \
