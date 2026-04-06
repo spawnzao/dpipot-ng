@@ -18,28 +18,27 @@ env:
   CLASSIFIER_IMAGE: ghcr.io/${{ github.repository_owner }}/dpipot-classifier
 
 jobs:
-  # ── build do proxy Go ─────────────────────────────────────────────
   build-proxy:
     name: build proxy
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write   # necessário para push no ghcr.io
+      packages: write
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: login no ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}  # token automático do Actions
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: extrai metadata da imagem
+      - name: extrai metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.6.1
         with:
           images: ${{ env.PROXY_IMAGE }}
           tags: |
@@ -48,20 +47,18 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: configura buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.8.0
 
       - name: build e push proxy
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.10.0
         with:
           context: ./proxy
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # cache entre builds — acelera muito o build do Go
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── build do classifier C + nDPI ──────────────────────────────────
   build-classifier:
     name: build classifier
     runs-on: ubuntu-latest
@@ -71,18 +68,18 @@ jobs:
 
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       - name: login no ghcr.io
-        uses: docker/login-action@v3
+        uses: docker/login-action@v3.3.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: extrai metadata da imagem
+      - name: extrai metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v5.6.1
         with:
           images: ${{ env.CLASSIFIER_IMAGE }}
           tags: |
@@ -91,15 +88,14 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: configura buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.8.0
 
       - name: build e push classifier
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6.10.0
         with:
           context: ./classifier
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # classifier compila o nDPI do git — cache é essencial
           cache-from: type=gha
           cache-to: type=gha,mode=max
