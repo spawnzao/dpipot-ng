@@ -312,13 +312,14 @@ const char *classify_payload(
     flow_to_process->total_l4_data_len += payload_len;
     flow_to_process->last_seen = time_ms;
 
-    // nDPI 4.12: process packet (4 params: struct, flow, packet, len)
     flow_to_process->detected_l7_protocol =
         ndpi_detection_process_packet(
             workflow->ndpi_struct,
             flow_to_process->ndpi_flow,
             (const unsigned char *)pkt,
-            (uint16_t)pkt_size);
+            (uint16_t)pkt_size,
+            time_ms,
+            NULL);
 
     free(pkt);
 
