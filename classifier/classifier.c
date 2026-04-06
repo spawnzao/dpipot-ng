@@ -105,8 +105,9 @@ static void ndpi_idle_scan_walker(const void *A, ndpi_VISIT which,
         int fin_seen    = (flow->flow_fin_ack_seen == 1 && flow->flow_ack_seen == 1);
         if (tcp_expired || udp_expired || fin_seen) {
             if (!flow->detection_completed && flow->ndpi_flow) {
+                uint8_t guessed = 0;
                 flow->detected_l7_protocol =
-                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow, NULL);
+                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow, 1, &guessed);
                 flow->detection_completed = 1;
             }
             workflow->ndpi_flows_idle[workflow->cur_idle_flows++] = flow;
@@ -139,7 +140,7 @@ struct nDPI_workflow *init_workflow(void)
     struct nDPI_workflow *w = (struct nDPI_workflow *)ndpi_calloc(1, sizeof(*w));
     if (!w) return NULL;
     w->pcap_handle = NULL;
-    w->ndpi_struct = ndpi_init_detection_module(NULL);
+    w->ndpi_struct = ndpi_init_detection_module(0);
     if (!w->ndpi_struct) { ndpi_free(w); return NULL; }
     ndpi_finalize_initialization(w->ndpi_struct);
     w->max_active_flows  = MAX_FLOW_ROOTS_PER_THREAD;
@@ -205,10 +206,11 @@ const char *classify_payload(
     uint32_t              dst_ip,
     uint16_t              dst_port,
     const uint8_t        *payload,
-    uint16_t              payload_len)
+    uint16_t              payload_len,
+    char                 *result_out,
+    size_t                result_size)
 {
-    static char result_buf[64];
-    if (!workflow || !payload || payload_len == 0) return "Unknown";
+    if (!workflow || !payload || payload_len == 0 || !result_out) return "Unknown";
 
     struct timeval tv;
     gettimeofday(&tv, NULL);
@@ -310,46 +312,42 @@ const char *classify_payload(
     flow_to_process->total_l4_data_len += payload_len;
     flow_to_process->last_seen = time_ms;
 
-    // nDPI 4.12: process packet
+    // nDPI 4.12: process packet (5 params: struct, flow, packet, len, time_ms)
     flow_to_process->detected_l7_protocol =
         ndpi_detection_process_packet(
             workflow->ndpi_struct,
             flow_to_process->ndpi_flow,
             (const unsigned char *)pkt,
             (uint16_t)pkt_size,
-            time_ms,
-            NULL);
+            time_ms);
 
     free(pkt);
 
     // nDPI 4.12: giveup se necessário
     if (!flow_to_process->detection_completed && flow_to_process->ndpi_flow) {
+        uint8_t guessed = 0;
         flow_to_process->detected_l7_protocol =
             ndpi_detection_giveup(workflow->ndpi_struct,
                                   flow_to_process->ndpi_flow,
-                                  NULL);
+                                  1, &guessed);
         flow_to_process->detection_completed = 1;
     }
 
-    // CORREÇÃO PARA nDPI 4.12: proto->proto é ndpi_master_app_protocol
-    // Precisamos acessar o campo .master_protocol que é uint16_t
-    struct ndpi_proto *proto = &flow_to_process->detected_l7_protocol;
+    struct ndpi_proto proto = flow_to_process->detected_l7_protocol;
     uint16_t best = NDPI_PROTOCOL_UNKNOWN;
     
-    // Em nDPI 4.12, ndpi_master_app_protocol é uma união/struct
-    // O campo master_protocol é o protocolo principal
-    if (proto->proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto->proto.master_protocol;
-    else if (proto->proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto->proto.app_protocol;
+    if (proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto.master_protocol;
+    else if (proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto.app_protocol;
 
     if (best != NDPI_PROTOCOL_UNKNOWN) {
         const char *proto_name = ndpi_get_proto_name(workflow->ndpi_struct, best);
-        snprintf(result_buf, sizeof(result_buf), "%s", proto_name);
+        snprintf(result_out, result_size, "%s", proto_name);
     } else {
-        snprintf(result_buf, sizeof(result_buf), "Unknown");
+        snprintf(result_out, result_size, "Unknown");
     }
 
     check_for_idle_flows(0, workflow);
-    return result_buf;
+    return result_out;
 }

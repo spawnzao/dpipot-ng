@@ -69,6 +69,9 @@ spec:
               containerPort: 8080
               hostPort: 8080
               protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
           volumeMounts:
             - name: ndpi-socket
               mountPath: /var/run/dpipot
@@ -80,14 +83,16 @@ spec:
               cpu: 500m
               memory: 256Mi
           livenessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 15
+            httpGet:
+              path: /healthz/live
+              port: 8081
+            initialDelaySeconds: 5
             periodSeconds: 10
           readinessProbe:
-            tcpSocket:
-              port: 8080
-            initialDelaySeconds: 10
+            httpGet:
+              path: /healthz/ready
+              port: 8081
+            initialDelaySeconds: 5
             periodSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false

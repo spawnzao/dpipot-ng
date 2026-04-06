@@ -63,19 +63,19 @@ void free_workflow(struct nDPI_workflow **workflow);
  * Precisamos construir um pacote sintético para o nDPI processar.
  *
  * Parâmetros:
- *   workflow  — contexto global do nDPI
- *   flow_id   — UUID do fluxo (vem do proxy Go)
- *   src_ip    — IP de origem em network byte order
- *   src_port  — porta de origem
- *   dst_ip    — IP de destino em network byte order
- *   dst_port  — porta de destino
- *   payload   — bytes do payload TCP
- *   payload_len — tamanho do payload
+ *   workflow     — contexto global do nDPI
+ *   flow_id      — UUID do fluxo (vem do proxy Go)
+ *   src_ip       — IP de origem em network byte order
+ *   src_port     — porta de origem
+ *   dst_ip       — IP de destino em network byte order
+ *   dst_port     — porta de destino
+ *   payload      — bytes do payload TCP
+ *   payload_len  — tamanho do payload
+ *   result_out   — buffer de saída para o resultado (chamador aloca)
+ *   result_size  — tamanho do buffer de saída
  *
  * Retorna:
- *   string com o nome do protocolo ("HTTP", "SSH", "MongoDB", etc.)
- *   ou "Unknown" se não conseguir classificar.
- *   A string retornada é válida até a próxima chamada — não liberar.
+ *   pointer para result_out se OK, NULL em caso de erro.
  */
 const char *classify_payload(
     struct nDPI_workflow *workflow,
@@ -85,7 +85,9 @@ const char *classify_payload(
     uint32_t              dst_ip,
     uint16_t              dst_port,
     const uint8_t        *payload,
-    uint16_t              payload_len
+    uint16_t              payload_len,
+    char                 *result_out,
+    size_t                result_size
 );
 
 /* verifica e expira fluxos ociosos */

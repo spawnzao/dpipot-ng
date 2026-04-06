@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/signal"
@@ -59,6 +60,14 @@ func main() {
 	r := router.New(cfg.Routes, cfg.DefaultRoute, log)
 	log.Info("rotas configuradas", zap.Any("routes", r.Routes()))
 
+	// inicializa health server (HTTP na porta 8081)
+	healthServer := proxypkg.NewHealthServer(
+		"0.0.0.0:8081",
+		ndpiClient,
+		producer,
+		log,
+	)
+
 	// inicializa servidor TCP
 	server := proxypkg.NewServer(
 		cfg.ListenAddr,
@@ -73,18 +82,24 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
+
 	go func() {
 		errCh <- server.ListenAndServe()
 	}()
 
-	select {
-	case sig := <-sigCh:
-		log.Info("sinal recebido, encerrando", zap.String("signal", sig.String()))
-	case err := <-errCh:
-		if err != nil {
-			log.Fatal("server error", zap.Error(err))
-		}
+	go func() {
+		errCh <- healthServer.Start()
+	}()
+
+	sig := <-sigCh
+	log.Info("sinal recebido, encerrando", zap.String("signal", sig.String()))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := healthServer.Shutdown(ctx); err != nil {
+		log.Error("health server shutdown", zap.Error(err))
 	}
 
 	log.Info("proxy encerrado")

@@ -3,6 +3,7 @@ package kafka
 import (
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
@@ -36,9 +37,9 @@ type Producer struct {
 	producer *kafka.Producer
 	topic    string
 	log      *zap.Logger
-	// canal interno com buffer para não bloquear quem chama Publish()
-	events chan *Event
-	done   chan struct{}
+	events   chan *Event
+	done     chan struct{}
+	healthy  atomic.Bool
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
@@ -59,18 +60,20 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 		producer: p,
 		topic:    topic,
 		log:      log,
-		events:   make(chan *Event, 10000), // buffer de 10k eventos em memória
+		events:   make(chan *Event, 10000),
 		done:     make(chan struct{}),
 	}
+	prod.healthy.Store(true)
 
-	// goroutine que drena o canal e publica no Kafka
-	// separada do pipe TCP — nunca bloqueia o fluxo
 	go prod.drain()
-
-	// goroutine que lida com delivery reports (erros, confirmações)
 	go prod.handleDelivery()
 
 	return prod, nil
+}
+
+// IsHealthy retorna true se o producer está conectado ao Kafka.
+func (p *Producer) IsHealthy() bool {
+	return p.healthy.Load()
 }
 
 // Publish envia um evento para o canal interno.
@@ -121,6 +124,9 @@ func (p *Producer) drain() {
 			p.log.Error("kafka produce", zap.Error(err),
 				zap.String("flow_id", event.FlowID),
 			)
+			p.healthy.Store(false)
+		} else {
+			p.healthy.Store(true)
 		}
 	}
 }

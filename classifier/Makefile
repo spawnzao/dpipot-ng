@@ -4,7 +4,7 @@ CFLAGS  = -O2 -Wall -Wextra -Wconversion -fPIC \
           -I/usr/local/include/ndpi \
           -I/usr/include/ndpi
 
-LDFLAGS = -lndpi -lpcap -lpthread -lm -lgcrypt
+LDFLAGS = -L/usr/local/lib -lndpi -lpcap -lpthread -lm -lgcrypt
 
 SRCS    = classifier.c server.c
 OBJS    = $(SRCS:.c=.o)

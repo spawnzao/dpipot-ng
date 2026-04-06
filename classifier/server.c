@@ -115,14 +115,21 @@ static void handle_connection(int client_fd)
     if (recv_all(client_fd, payload_buf, payload_len) < 0) goto done;
 
     /* --- classifica com nDPI (mutex protege o workflow) --- */
-    const char *label;
+    char label[64];
+    memset(label, 0, sizeof(label));
+
     pthread_mutex_lock(&g_workflow_mutex);
-    label = classify_payload(g_workflow,
+    const char *result = classify_payload(g_workflow,
                              flow_id,
                              src_ip, src_port,
                              dst_ip, dst_port,
-                             payload_buf, (uint16_t)payload_len);
+                             payload_buf, (uint16_t)payload_len,
+                             label, sizeof(label));
     pthread_mutex_unlock(&g_workflow_mutex);
+
+    if (!result) {
+        snprintf(label, sizeof(label), "Unknown");
+    }
 
     /* --- envia resposta: "HTTP\n" --- */
     char resp[72];

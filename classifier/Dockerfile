@@ -47,6 +47,7 @@ FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcap0.8 \
     libgcrypt20 \
+    libjson-c6 \
     && rm -rf /var/lib/apt/lists/*
 
 # copia as libs do nDPI e o binário

@@ -12,7 +12,7 @@ data:
   NDPI_SOCKET_PATH: "/var/run/dpipot/ndpi.sock"
 
   # timeout para o nDPI classificar (se exceder usa "Unknown")
-  NDPI_TIMEOUT: "500ms"
+  NDPI_TIMEOUT: "5000ms"
 
   # rotas: label nDPI → ClusterIP Service do honeypot
   # adicione novas rotas aqui sem recompilar

@@ -1,0 +1,34 @@
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+*.prof
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+LICENSE
+
+# Temporary files
+*.log
+tmp/
+temp/
+
+# OS files
+.DS_Store
+Thumbs.db

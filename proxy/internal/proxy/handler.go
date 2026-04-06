@@ -3,11 +3,14 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
@@ -16,15 +19,10 @@ import (
 )
 
 const (
-	// tamanho do buffer inicial para classificação nDPI
-	// lemos até 4KB do primeiro chunk antes de rotear
-	classifyBufferSize = 4096
-
-	// timeout para conectar ao honeypot
-	honeypotDialTimeout = 5 * time.Second
-
-	// tamanho do buffer de cópia do pipe
-	pipeBufferSize = 32 * 1024 // 32KB
+	classifyBufferSize    = 4096
+	honeypotDialTimeout  = 5 * time.Second
+	pipeBufferSize       = 32 * 1024
+	originalDstTimeout   = 2 * time.Second
 )
 
 // Handler processa uma única conexão TCP de um atacante.
@@ -61,14 +59,56 @@ func NewHandler(
 	}
 }
 
+// getOriginalDst obtém o IP e porta originais de destino usando
+// getsockopt(IP_ORIGINAL_DST) no Linux.
+// Necessário quando o tráfego é redirecionado via TPROXY/iptables.
+func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil, 0, fmt.Errorf("não é uma conexão TCP")
+	}
+
+	file, err := tcpConn.File()
+	if err != nil {
+		return nil, 0, fmt.Errorf("File(): %w", err)
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+
+	var addr syscall.RawSockaddrInet4
+	var addrLen uint32 = syscall.SizeofSockaddrInet4
+
+	// IP_ORIGINAL_DST = 80, SOL_IP = 0
+	// syscall.Getsockoptbyte não funciona para structs, usar Syscall6 diretamente
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_GETSOCKOPT,
+		uintptr(fd),
+		uintptr(syscall.SOL_IP),
+		uintptr(80), // IP_ORIGINAL_DST
+		uintptr(unsafe.Pointer(&addr)),
+		uintptr(unsafe.Pointer(&addrLen)),
+		0,
+	)
+	if errno != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_ORIGINAL_DST: %v", errno)
+	}
+
+	ip := net.IP(addr.Addr[:])
+	port := binary.BigEndian.Uint16((*[2]byte)(unsafe.Pointer(&addr.Port))[:])
+
+	return ip, port, nil
+}
+
 // Handle é o ciclo de vida completo de uma conexão:
 //
 //  1. Lê o primeiro chunk do atacante
-//  2. Classifica com nDPI
-//  3. Conecta ao honeypot correto
-//  4. Reenvia o primeiro chunk para o honeypot
-//  5. Pipe bidirecional com TeeReader para capturar payload
-//  6. Publica evento no Kafka ao final
+//  2. Obtém IP/porta original via getsockopt
+//  3. Classifica com nDPI
+//  4. Conecta ao honeypot correto
+//  5. Reenvia o primeiro chunk para o honeypot
+//  6. Pipe bidirecional com TeeReader para capturar payload
+//  7. Publica evento no Kafka ao final
 func (h *Handler) Handle() {
 	defer h.conn.Close()
 
@@ -82,9 +122,9 @@ func (h *Handler) Handle() {
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
 	firstChunk := make([]byte, classifyBufferSize)
-	h.conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err := h.conn.Read(firstChunk)
-	h.conn.SetReadDeadline(time.Time{}) // remove deadline após leitura inicial
+	h.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		if err != io.EOF {
 			log.Debug("erro lendo primeiro chunk", zap.Error(err))
@@ -93,21 +133,46 @@ func (h *Handler) Handle() {
 	}
 	firstChunk = firstChunk[:n]
 
-	// --- STEP 2: classifica com nDPI ---
+	// --- STEP 2: obtém IP/porta original via getsockopt ---
+	origDstIP, origDstPort, err := getOriginalDst(h.conn)
+	if err != nil {
+		log.Warn("falha obtendo original dst, usando local addr",
+			zap.Error(err),
+			zap.Stringer("local", dstAddr),
+		)
+		origDstIP = dstAddr.IP
+		origDstPort = uint16(dstAddr.Port)
+	}
+
+	flowInfo := &ndpi.FlowInfo{
+		SrcIP:   srcAddr.IP,
+		SrcPort: uint16(srcAddr.Port),
+		DstIP:   origDstIP,
+		DstPort: origDstPort,
+	}
+
+	log.Debug("informações do fluxo",
+		zap.String("src_ip", flowInfo.SrcIP.String()),
+		zap.Uint16("src_port", flowInfo.SrcPort),
+		zap.String("dst_ip", flowInfo.DstIP.String()),
+		zap.Uint16("dst_port", flowInfo.DstPort),
+	)
+
+	// --- STEP 3: classifica com nDPI ---
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	ndpiLabel, err := h.ndpi.Classify(ctx, h.flowID, firstChunk)
+	ndpiLabel, err := h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
 	if err != nil {
 		log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
 		ndpiLabel = "Unknown"
 	}
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
-	// --- STEP 3: resolve honeypot pelo label ---
+	// --- STEP 4: resolve honeypot pelo label ---
 	honeypotAddr, _ := h.router.Resolve(ndpiLabel)
 
-	// --- STEP 4: conecta ao honeypot ---
+	// --- STEP 5: conecta ao honeypot ---
 	honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
 	if err != nil {
 		log.Error("falha conectando ao honeypot",
@@ -118,25 +183,20 @@ func (h *Handler) Handle() {
 	}
 	defer honeypotConn.Close()
 
-	// --- STEP 5: reenvia o primeiro chunk para o honeypot ---
+	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
 	if _, err := honeypotConn.Write(firstChunk); err != nil {
 		log.Error("erro reenviando primeiro chunk", zap.Error(err))
 		return
 	}
 
-	// --- STEP 6: pipe bidirecional com captura de payload ---
-
-	// buffers para acumular payload de cada direção
+	// --- STEP 7: pipe bidirecional com captura de payload ---
 	var (
-		bufSrc bytes.Buffer // atacante → honeypot
-		bufDst bytes.Buffer // honeypot → atacante
+		bufSrc bytes.Buffer
+		bufDst bytes.Buffer
 	)
 
-	// já temos o primeiro chunk do atacante
 	bufSrc.Write(firstChunk)
 
-	// writers que capturam os bytes enquanto copiam
-	// limitWriter garante que não acumulamos mais do que maxPayloadBytes
 	teeWriterSrc := newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
 	teeWriterDst := newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
 
@@ -144,21 +204,24 @@ func (h *Handler) Handle() {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// goroutine 1: atacante → honeypot (com cópia para bufSrc)
+	// goroutine 1: atacante → honeypot
 	go func() {
 		defer wg.Done()
-		defer honeypotConn.(*net.TCPConn).CloseWrite()
-		// TeeReader: lê de conn, copia para teeWriterSrc, passa para honeypotConn
+		if tcpConn, ok := honeypotConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
 		src := io.TeeReader(h.conn, teeWriterSrc)
 		if _, err := io.Copy(honeypotConn, src); err != nil {
 			log.Debug("pipe src→dst encerrado", zap.Error(err))
 		}
 	}()
 
-	// goroutine 2: honeypot → atacante (com cópia para bufDst)
+	// goroutine 2: honeypot → atacante
 	go func() {
 		defer wg.Done()
-		defer h.conn.(*net.TCPConn).CloseWrite()
+		if tcpConn, ok := h.conn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
 		src := io.TeeReader(honeypotConn, teeWriterDst)
 		if _, err := io.Copy(h.conn, src); err != nil {
 			log.Debug("pipe dst→src encerrado", zap.Error(err))
@@ -168,13 +231,13 @@ func (h *Handler) Handle() {
 	wg.Wait()
 	duration := time.Since(startTime)
 
-	// --- STEP 7: publica evento no Kafka (assíncrono, não bloqueia) ---
+	// --- STEP 8: publica evento no Kafka ---
 	event := &kafka.Event{
 		FlowID:      h.flowID,
 		Timestamp:   time.Now(),
-		SrcIP:       srcAddr.IP.String(),
-		SrcPort:     srcAddr.Port,
-		DstPort:     dstAddr.Port,
+		SrcIP:       flowInfo.SrcIP.String(),
+		SrcPort:     int(flowInfo.SrcPort),
+		DstPort:     int(flowInfo.DstPort),
 		NDPIProto:   ndpiLabel,
 		NDPIApp:     "",
 		Honeypot:    honeypotAddr,
