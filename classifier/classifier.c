@@ -107,7 +107,7 @@ static void ndpi_idle_scan_walker(const void *A, ndpi_VISIT which,
             if (!flow->detection_completed && flow->ndpi_flow) {
                 uint8_t guessed = 0;
                 flow->detected_l7_protocol =
-                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow, 1, &guessed);
+                    ndpi_detection_giveup(workflow->ndpi_struct, flow->ndpi_flow, &guessed);
                 flow->detection_completed = 1;
             }
             workflow->ndpi_flows_idle[workflow->cur_idle_flows++] = flow;
@@ -312,14 +312,13 @@ const char *classify_payload(
     flow_to_process->total_l4_data_len += payload_len;
     flow_to_process->last_seen = time_ms;
 
-    // nDPI 4.12: process packet (5 params: struct, flow, packet, len, time_ms)
+    // nDPI 4.12: process packet (4 params: struct, flow, packet, len)
     flow_to_process->detected_l7_protocol =
         ndpi_detection_process_packet(
             workflow->ndpi_struct,
             flow_to_process->ndpi_flow,
             (const unsigned char *)pkt,
-            (uint16_t)pkt_size,
-            time_ms);
+            (uint16_t)pkt_size);
 
     free(pkt);
 
@@ -329,17 +328,17 @@ const char *classify_payload(
         flow_to_process->detected_l7_protocol =
             ndpi_detection_giveup(workflow->ndpi_struct,
                                   flow_to_process->ndpi_flow,
-                                  1, &guessed);
+                                  &guessed);
         flow_to_process->detection_completed = 1;
     }
 
     struct ndpi_proto proto = flow_to_process->detected_l7_protocol;
     uint16_t best = NDPI_PROTOCOL_UNKNOWN;
     
-    if (proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto.master_protocol;
-    else if (proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto.app_protocol;
+    if (proto.proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto.proto.master_protocol;
+    else if (proto.proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
+        best = proto.proto.app_protocol;
 
     if (best != NDPI_PROTOCOL_UNKNOWN) {
         const char *proto_name = ndpi_get_proto_name(workflow->ndpi_struct, best);
