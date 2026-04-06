@@ -2,6 +2,7 @@ package ndpi
 
 import (
 	"context"
+	//"encoding/binary"
 	"fmt"
 	"net"
 	"strings"
