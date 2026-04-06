@@ -19,7 +19,8 @@ data:
   HONEYPOT_ROUTES: >-
     HTTP=elasticpot-svc:9200,
     SSH=cowrie-svc:22,
-    FTP=dionaea-svc:21
+    FTP=dionaea-svc:21,
+    SMTP=mailoney-svc:25
 
   # honeypot padrão quando nDPI não classifica
   DEFAULT_ROUTE: "dionaea-svc:4444"

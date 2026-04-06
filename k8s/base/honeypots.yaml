@@ -104,3 +104,41 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+
+---
+# ── Mailoney (SMTP honeypot) ───────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailoney
+  namespace: dpipot
+  labels:
+    app: mailoney
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mailoney
+  template:
+    metadata:
+      labels:
+        app: mailoney
+    spec:
+      containers:
+        - name: mailoney
+          image: dtagdevsec/mailoney:24.04.1
+          ports:
+            - containerPort: 25
+              protocol: TCP
+          env:
+            - name: MALWARE_HOST
+              value: "0.0.0.0"
+            - name: MALWARE_PORT
+              value: "25"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

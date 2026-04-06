@@ -64,6 +64,25 @@ spec:
       protocol: TCP
 
 ---
+# Mailoney — honeypot SMTP
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailoney-svc
+  namespace: dpipot
+  labels:
+    app: mailoney
+spec:
+  type: ClusterIP
+  selector:
+    app: mailoney
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 25
+      protocol: TCP
+
+---
 # Kafka — broker interno para buffer de payloads
 apiVersion: v1
 kind: Service
