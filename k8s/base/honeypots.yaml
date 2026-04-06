@@ -1,0 +1,154 @@
+---
+# ── ElasticPot ───────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticpot
+  namespace: dpipot
+  labels:
+    app: elasticpot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: elasticpot
+  template:
+    metadata:
+      labels:
+        app: elasticpot
+    spec:
+      containers:
+        - name: elasticpot
+          image: ghcr.io/helpk8/elasticpot:latest
+          ports:
+            - containerPort: 9200
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+
+---
+# ── MongoDB Honeypot ─────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mongodbhp
+  namespace: dpipot
+  labels:
+    app: mongodbhp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mongodbhp
+  template:
+    metadata:
+      labels:
+        app: mongodbhp
+    spec:
+      containers:
+        - name: mongodbhp
+          # MongoDB-HoneyProxy ou similar
+          image: ghcr.io/helpk8/mongodbhp:latest
+          ports:
+            - containerPort: 27017
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+
+---
+# ── Cowrie (SSH/Telnet) ──────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: dpipot
+  labels:
+    app: cowrie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cowrie
+  template:
+    metadata:
+      labels:
+        app: cowrie
+    spec:
+      containers:
+        - name: cowrie
+          image: cowrie/cowrie:latest
+          ports:
+            - containerPort: 2222
+              protocol: TCP
+            - containerPort: 2323
+              protocol: TCP
+          env:
+            - name: COWRIE_TELNET_ENABLED
+              value: "yes"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 300m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+
+---
+# ── Dionaea (multi-protocolo genérico) ──────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dionaea
+  namespace: dpipot
+  labels:
+    app: dionaea
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dionaea
+  template:
+    metadata:
+      labels:
+        app: dionaea
+    spec:
+      containers:
+        - name: dionaea
+          image: dinotools/dionaea:latest
+          ports:
+            - containerPort: 4444
+              protocol: TCP
+            - containerPort: 21
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: false  # dionaea precisa de root para bind em portas baixas

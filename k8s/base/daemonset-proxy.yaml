@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dpipot-proxy
+  namespace: dpipot
+  labels:
+    app: dpipot-proxy
+spec:
+  selector:
+    matchLabels:
+      app: dpipot-proxy
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: dpipot-proxy
+    spec:
+      # hostNetwork: true permite que o proxy veja o tráfego real da interface
+      # de rede do node — necessário para capturar conexões dos atacantes
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+
+      # aguarda o sidecar nDPI subir antes do proxy
+      initContainers:
+        - name: wait-ndpi
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "aguardando socket nDPI..."
+              until [ -S /var/run/dpipot/ndpi.sock ]; do
+                sleep 0.5
+              done
+              echo "socket nDPI disponível"
+          volumeMounts:
+            - name: ndpi-socket
+              mountPath: /var/run/dpipot
+
+      containers:
+        # ── container 1: TCP proxy (Go) ──────────────────────────────
+        - name: proxy
+          image: ghcr.io/spawnzao/dpipot-proxy:latest
+          imagePullPolicy: Always
+          envFrom:
+            - configMapRef:
+                name: dpipot-config
+          ports:
+            - name: proxy
+              containerPort: 8080
+              hostPort: 8080       # expõe no node diretamente (hostNetwork)
+              protocol: TCP
+          volumeMounts:
+            - name: ndpi-socket
+              mountPath: /var/run/dpipot   # Unix socket compartilhado com sidecar
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+
+        # ── container 2: nDPI sidecar (C) ────────────────────────────
+        - name: ndpi-classifier
+          image: ghcr.io/spawnzao/dpipot-classifier:latest
+          imagePullPolicy: Always
+          args:
+            - /var/run/dpipot/ndpi.sock   # caminho do Unix socket
+          volumeMounts:
+            - name: ndpi-socket
+              mountPath: /var/run/dpipot   # mesmo volume que o proxy
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          livenessProbe:
+            exec:
+              # verifica se o socket existe e está acessível
+              command:
+                - test
+                - -S
+                - /var/run/dpipot/ndpi.sock
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # precisa criar o socket em /var/run/dpipot
+            runAsNonRoot: true
+            runAsUser: 1001
+
+      volumes:
+        # emptyDir compartilhado entre proxy e sidecar — fica na memória do node
+        # É aqui que o Unix socket vive
+        - name: ndpi-socket
+          emptyDir: {}
+
+      terminationGracePeriodSeconds: 30
+
+      # garante que o DaemonSet não rode em nodes do control plane
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule

@@ -1,0 +1,58 @@
+name: deploy
+
+on:
+  # roda automaticamente após o build terminar com sucesso na main
+  workflow_run:
+    workflows: ["build and push images"]
+    types:
+      - completed
+    branches:
+      - main
+
+  # permite rodar manualmente pelo GitHub UI
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'ambiente para deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+
+jobs:
+  deploy:
+    name: deploy no microk8s
+    runs-on: self-hosted   # runner rodando na sua máquina com microk8s
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: define ambiente
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "target=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          else
+            echo "target=dev" >> $GITHUB_OUTPUT
+          fi
+
+      - name: aplica manifests no microk8s
+        run: |
+          microk8s kubectl apply -k k8s/overlays/${{ steps.env.outputs.target }}
+
+      - name: aguarda rollout
+        run: |
+          microk8s kubectl rollout status \
+            daemonset/dpipot-proxy \
+            -n dpipot \
+            --timeout=120s
+
+      - name: verifica pods
+        run: |
+          microk8s kubectl get pods -n dpipot -o wide

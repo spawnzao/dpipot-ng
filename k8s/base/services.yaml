@@ -1,0 +1,102 @@
+---
+# ElasticPot — simula Elasticsearch vulnerável na porta 9200
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticpot-svc
+  namespace: dpipot
+  labels:
+    app: elasticpot
+spec:
+  type: ClusterIP
+  selector:
+    app: elasticpot
+  ports:
+    - name: http
+      port: 9200
+      targetPort: 9200
+      protocol: TCP
+
+---
+# MongoDB honeypot — simula MongoDB na porta 27017
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodbhp-svc
+  namespace: dpipot
+  labels:
+    app: mongodbhp
+spec:
+  type: ClusterIP
+  selector:
+    app: mongodbhp
+  ports:
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+      protocol: TCP
+
+---
+# Cowrie — simula SSH/Telnet
+apiVersion: v1
+kind: Service
+metadata:
+  name: cowrie-svc
+  namespace: dpipot
+  labels:
+    app: cowrie
+spec:
+  type: ClusterIP
+  selector:
+    app: cowrie
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 2222    # cowrie escuta em porta alta internamente
+      protocol: TCP
+    - name: telnet
+      port: 23
+      targetPort: 2323
+      protocol: TCP
+
+---
+# Dionaea — honeypot genérico multi-protocolo
+apiVersion: v1
+kind: Service
+metadata:
+  name: dionaea-svc
+  namespace: dpipot
+  labels:
+    app: dionaea
+spec:
+  type: ClusterIP
+  selector:
+    app: dionaea
+  ports:
+    - name: generic
+      port: 4444
+      targetPort: 4444
+      protocol: TCP
+    - name: ftp
+      port: 21
+      targetPort: 21
+      protocol: TCP
+
+---
+# Kafka — broker interno para buffer de payloads
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-svc
+  namespace: dpipot
+  labels:
+    app: kafka
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+      protocol: TCP

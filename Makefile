@@ -1,63 +1,46 @@
-REGISTRY  ?= ghcr.io/spawnzao
-VERSION   ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 NAMESPACE ?= dpipot
 
-.PHONY: all build push deploy-dev deploy-prod test clean
+.PHONY: addons deploy-dev deploy-prod status logs-proxy logs-ndpi test clean
 
-all: build
+# ── setup microk8s ────────────────────────────────────────────────────────────
 
-# ── build ────────────────────────────────────────────────────────────────────
+addons:
+	microk8s enable dns storage
 
-build: build-proxy build-classifier
-
-build-proxy:
-	docker build \
-		--tag $(REGISTRY)/dpipot-proxy:$(VERSION) \
-		--tag $(REGISTRY)/dpipot-proxy:latest \
-		./proxy
-
-build-classifier:
-	docker build \
-		--tag $(REGISTRY)/dpipot-classifier:$(VERSION) \
-		--tag $(REGISTRY)/dpipot-classifier:latest \
-		./classifier
-
-# ── push ─────────────────────────────────────────────────────────────────────
-
-push: push-proxy push-classifier
-
-push-proxy:
-	docker push $(REGISTRY)/dpipot-proxy:$(VERSION)
-	docker push $(REGISTRY)/dpipot-proxy:latest
-
-push-classifier:
-	docker push $(REGISTRY)/dpipot-classifier:$(VERSION)
-	docker push $(REGISTRY)/dpipot-classifier:latest
-
-# ── deploy ───────────────────────────────────────────────────────────────────
+# ── pull e deploy (imagens vêm do ghcr.io via GitHub Actions) ────────────────
 
 deploy-dev:
-	kubectl apply -k k8s/overlays/dev
+	microk8s kubectl apply -k k8s/overlays/dev
+	microk8s kubectl rollout status daemonset/dpipot-proxy -n $(NAMESPACE) --timeout=120s
 
 deploy-prod:
-	kubectl apply -k k8s/overlays/prod
+	microk8s kubectl apply -k k8s/overlays/prod
+	microk8s kubectl rollout status daemonset/dpipot-proxy -n $(NAMESPACE) --timeout=120s
 
-# ── testes ───────────────────────────────────────────────────────────────────
+# força o microk8s a puxar a imagem mais nova do ghcr.io
+update:
+	microk8s kubectl rollout restart daemonset/dpipot-proxy -n $(NAMESPACE)
 
-test: test-proxy
+# ── observabilidade ───────────────────────────────────────────────────────────
 
-test-proxy:
+status:
+	microk8s kubectl get pods -n $(NAMESPACE) -o wide
+
+logs-proxy:
+	microk8s kubectl logs -n $(NAMESPACE) -l app=dpipot-proxy -c proxy -f
+
+logs-ndpi:
+	microk8s kubectl logs -n $(NAMESPACE) -l app=dpipot-proxy -c ndpi-classifier -f
+
+logs-kafka:
+	microk8s kubectl logs -n $(NAMESPACE) -l app=kafka -f
+
+# ── testes ────────────────────────────────────────────────────────────────────
+
+test:
 	cd proxy && go test ./...
 
-# ── desenvolvimento local ─────────────────────────────────────────────────────
-
-# roda o proxy localmente (requer nDPI socket e Kafka disponíveis)
-run-proxy:
-	cd proxy && go run ./cmd/proxy
-
-# ── limpeza ──────────────────────────────────────────────────────────────────
+# ── limpeza ───────────────────────────────────────────────────────────────────
 
 clean:
-	docker rmi $(REGISTRY)/dpipot-proxy:$(VERSION) 2>/dev/null || true
-	docker rmi $(REGISTRY)/dpipot-classifier:$(VERSION) 2>/dev/null || true
-	cd proxy && go clean ./...
+	microk8s kubectl delete -k k8s/overlays/dev --ignore-not-found

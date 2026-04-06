@@ -1,0 +1,32 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dpipot
+
+resources:
+  - ../../base
+  - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
+
+# em prod: imagens com tag de versão explícita (nunca "latest" em prod)
+images:
+  - name: ghcr.io/spawnzao/dpipot-proxy
+    newTag: "1.0.0"
+  - name: ghcr.io/spawnzao/dpipot-classifier
+    newTag: "1.0.0"
+
+# substitui o emptyDir do Kafka pela PVC
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: kafka
+        namespace: dpipot
+      spec:
+        template:
+          spec:
+            volumes:
+              - name: kafka-data
+                emptyDir: null
+                persistentVolumeClaim:
+                  claimName: kafka-pvc

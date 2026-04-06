@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: dpipot
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - services.yaml
+  - daemonset-proxy.yaml
+  - honeypots.yaml
+  - kafka.yaml
