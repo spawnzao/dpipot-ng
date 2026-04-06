@@ -19,7 +19,8 @@ spec:
     spec:
       containers:
         - name: elasticpot
-          image: ghcr.io/helpk8/elasticpot:latest
+          # imagem pública do ElasticPot disponível no Docker Hub
+          image: dtagdevsec/elasticpot:24.04
           ports:
             - containerPort: 9200
               protocol: TCP
@@ -30,10 +31,6 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1000
 
 ---
 # ── MongoDB Honeypot ─────────────────────────────────────────────────
@@ -56,8 +53,8 @@ spec:
     spec:
       containers:
         - name: mongodbhp
-          # MongoDB-HoneyProxy ou similar
-          image: ghcr.io/helpk8/mongodbhp:latest
+          # imagem pública do MongoDB honeypot
+          image: dtagdevsec/mongodbhoney:24.04
           ports:
             - containerPort: 27017
               protocol: TCP
@@ -68,10 +65,6 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1000
 
 ---
 # ── Cowrie (SSH/Telnet) ──────────────────────────────────────────────
@@ -110,10 +103,6 @@ spec:
             limits:
               cpu: 300m
               memory: 256Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: true
-            runAsUser: 1000
 
 ---
 # ── Dionaea (multi-protocolo genérico) ──────────────────────────────
@@ -136,7 +125,7 @@ spec:
     spec:
       containers:
         - name: dionaea
-          image: dinotools/dionaea:latest
+          image: dtagdevsec/dionaea:24.04
           ports:
             - containerPort: 4444
               protocol: TCP
@@ -149,6 +138,3 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            runAsNonRoot: false  # dionaea precisa de root para bind em portas baixas
