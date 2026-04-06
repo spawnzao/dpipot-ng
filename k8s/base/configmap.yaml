@@ -18,9 +18,7 @@ data:
   # adicione novas rotas aqui sem recompilar
   HONEYPOT_ROUTES: >-
     HTTP=elasticpot-svc:9200,
-    MongoDB=mongodbhp-svc:27017,
     SSH=cowrie-svc:22,
-    SMTP=mailoney-svc:25,
     FTP=dionaea-svc:21
 
   # honeypot padrão quando nDPI não classifica
