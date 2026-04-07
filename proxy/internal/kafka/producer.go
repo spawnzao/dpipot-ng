@@ -1,7 +1,6 @@
 package kafka
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
@@ -11,68 +10,25 @@ import (
 	"go.uber.org/zap"
 )
 
-func ensureTopicExists(brokers, topic string, log *zap.Logger) error {
-	adminClient, err := kafka.NewAdminClientFromClient(kafka.NewConfigMap(
-		"bootstrap.servers": brokers,
-	))
-	if err != nil {
-		return fmt.Errorf("create admin client: %w", err)
-	}
-	defer adminClient.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	topicSpec := []kafka.TopicSpecification{
-		{
-			Topic:             topic,
-			NumPartitions:     3,
-			ReplicationFactor: 1,
-		},
-	}
-
-	results, err := adminClient.CreateTopics(ctx, topicSpec)
-	if err != nil {
-		return fmt.Errorf("create topics: %w", err)
-	}
-
-	for _, result := range results {
-		if result.Error.Code() != kafka.ErrTopicAlreadyExists {
-			log.Info("tópico criado",
-				zap.String("topic", topic),
-				zap.String("error", result.Error.String()),
-			)
-		}
-	}
-
-	return nil
-}
-
-// Event é o schema do evento publicado no Kafka.
-// O ML vai consumir esse evento e adicionar attack_type e cve.
 type Event struct {
-	FlowID      string    `json:"flow_id"`
-	Timestamp   time.Time `json:"timestamp"`
-	SrcIP       string    `json:"src_ip"`
-	SrcPort     int       `json:"src_port"`
-	DstIP       string    `json:"dst_ip"`    // IP de destino original
-	DstPort     int       `json:"dst_port"`  // porta original (SO_ORIGINAL_DST)
-	NDPIProto   string    `json:"ndpi_proto"`
-	NDPIApp     string    `json:"ndpi_app"`
-	Honeypot    string    `json:"honeypot"`     // para qual honeypot foi roteado
-	HoneypotError string  `json:"honeypot_error"` // erro na conexão ao honeypot (se houver)
-	PayloadSrc  []byte    `json:"payload_src"` // bytes atacante → honeypot
-	PayloadDst  []byte    `json:"payload_dst"` // bytes honeypot → atacante
-	PayloadSize int64     `json:"payload_size"`
-
-	// Preenchido pelo ML depois (começa vazio)
-	AttackType string `json:"attack_type,omitempty"`
-	CVE        string `json:"cve,omitempty"`
-	Severity   string `json:"severity,omitempty"`
+	FlowID        string    `json:"flow_id"`
+	Timestamp     time.Time `json:"timestamp"`
+	SrcIP         string    `json:"src_ip"`
+	SrcPort       int       `json:"src_port"`
+	DstIP         string    `json:"dst_ip"`
+	DstPort       int       `json:"dst_port"`
+	NDPIProto     string    `json:"ndpi_proto"`
+	NDPIApp       string    `json:"ndpi_app"`
+	Honeypot      string    `json:"honeypot"`
+	HoneypotError string    `json:"honeypot_error"`
+	PayloadSrc    []byte    `json:"payload_src"`
+	PayloadDst    []byte    `json:"payload_dst"`
+	PayloadSize   int64     `json:"payload_size"`
+	AttackType    string    `json:"attack_type,omitempty"`
+	CVE           string    `json:"cve,omitempty"`
+	Severity      string    `json:"severity,omitempty"`
 }
 
-// Producer publica eventos no Kafka de forma assíncrona.
-// Nunca bloqueia o pipe TCP — usa canal interno com buffer.
 type Producer struct {
 	producer *kafka.Producer
 	topic    string
@@ -83,19 +39,15 @@ type Producer struct {
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
-	if err := ensureTopicExists(brokers, topic, log); err != nil {
-		log.Warn("falha ao criar tópico, continuando mesmo assim", zap.Error(err))
-	}
-
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers":            brokers,
-		"acks":                         "1",        // leader ack — balanço entre durabilidade e velocidade
+		"acks":                         "1",
 		"retries":                      3,
 		"retry.backoff.ms":             100,
 		"queue.buffering.max.messages": 100000,
-		"queue.buffering.max.kbytes":   1048576,    // 1GB buffer interno
-		"linger.ms":                    5,          // agrupa mensagens por até 5ms
-		"allow.auto.create.topics":      "true",     // permite criação automática de tópicos
+		"queue.buffering.max.kbytes":   1048576,
+		"linger.ms":                    5,
+		"allow.auto.create.topics":     "true",
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kafka producer: %w", err)
@@ -116,14 +68,10 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 	return prod, nil
 }
 
-// IsHealthy retorna true se o producer está conectado ao Kafka.
 func (p *Producer) IsHealthy() bool {
 	return p.healthy.Load()
 }
 
-// Publish envia um evento para o canal interno.
-// Retorna imediatamente — nunca bloqueia o pipe TCP.
-// Se o canal estiver cheio (10k eventos), o evento é descartado com log de warning.
 func (p *Producer) Publish(event *Event) {
 	select {
 	case p.events <- event:
@@ -134,16 +82,13 @@ func (p *Producer) Publish(event *Event) {
 	}
 }
 
-// Close drena o canal e fecha o producer graciosamente.
 func (p *Producer) Close() {
 	close(p.events)
 	<-p.done
-	p.producer.Flush(5000) // aguarda até 5s para entregar mensagens pendentes
+	p.producer.Flush(5000)
 	p.producer.Close()
 }
 
-// drain lê do canal interno e publica no Kafka.
-// Roda em goroutine separada.
 func (p *Producer) drain() {
 	defer close(p.done)
 
@@ -154,8 +99,6 @@ func (p *Producer) drain() {
 			continue
 		}
 
-		// usa flow_id como partition key — garante que
-		// todos os eventos do mesmo fluxo vão para a mesma partição
 		err = p.producer.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
 				Topic:     &p.topic,
@@ -176,7 +119,6 @@ func (p *Producer) drain() {
 	}
 }
 
-// handleDelivery processa confirmações e erros de entrega do Kafka.
 func (p *Producer) handleDelivery() {
 	for e := range p.producer.Events() {
 		switch ev := e.(type) {
