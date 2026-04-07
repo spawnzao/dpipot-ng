@@ -177,6 +177,8 @@ func (h *Handler) Handle() {
 		wg            sync.WaitGroup
 		teeWriterSrc  *limitedTeeWriter
 		teeWriterDst  *limitedTeeWriter
+		honeypotConn  net.Conn
+		err           error
 	)
 	var origDstIP net.IP
 	var origDstPort uint16
@@ -184,7 +186,7 @@ func (h *Handler) Handle() {
 	// --- STEP 1: lê primeiro chunk para classificação ---
 	firstChunk := make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
-	n, err := h.conn.Read(firstChunk)
+	n, err = h.conn.Read(firstChunk)
 	h.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		if err != io.EOF {
@@ -241,7 +243,7 @@ func (h *Handler) Handle() {
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
 	// --- STEP 5: tenta conectar ao honeypot ---
-	honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+	honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
 	if err != nil {
 		log.Error("falha conectando ao honeypot",
 			zap.String("honeypot", honeypotAddr),
