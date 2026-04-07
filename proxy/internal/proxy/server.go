@@ -3,6 +3,8 @@ package proxy
 import (
 	"fmt"
 	"net"
+	"os"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,12 +43,51 @@ func NewServer(
 	}
 }
 
+// listenTransparent cria um listener TCP com IP_TRANSPARENT habilitado.
+// Necessário para TPROXY - permite bind em IPs não-locais.
+func listenTransparent(addr string) (net.Listener, error) {
+	tcpAddr, err := net.ResolveTCPAddr("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("resolve addr: %w", err)
+	}
+
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return nil, fmt.Errorf("socket: %w", err)
+	}
+
+	if err := syscall.SetsockoptInt(fd, syscall.SOL_IP, syscall.IP_TRANSPARENT, 1); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("setsockopt IP_TRANSPARENT: %w", err)
+	}
+
+	sa := &syscall.SockaddrInet4{Port: tcpAddr.Port}
+	if len(tcpAddr.IP) == 0 {
+		sa.Addr = [4]byte{0, 0, 0, 0}
+	} else {
+		copy(sa.Addr[:], tcpAddr.IP.To4())
+	}
+
+	if err := syscall.Bind(fd, sa); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("bind: %w", err)
+	}
+
+	if err := syscall.Listen(fd, 128); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("listen: %w", err)
+	}
+
+	f := os.NewFile(uintptr(fd), "tproxy-listener")
+	return net.FileListener(f)
+}
+
 // ListenAndServe abre o listener TCP e aceita conexões indefinidamente.
 // Bloqueia até que o listener seja fechado (graceful shutdown via contexto).
 func (s *Server) ListenAndServe() error {
-	ln, err := net.Listen("tcp", s.listenAddr)
+	ln, err := listenTransparent(s.listenAddr)
 	if err != nil {
-		return fmt.Errorf("listen %s: %w", s.listenAddr, err)
+		return fmt.Errorf("listen transparent %s: %w", s.listenAddr, err)
 	}
 	defer ln.Close()
 
