@@ -143,3 +143,47 @@ spec:
               cpu: 200m
               memory: 128Mi
 
+---
+# ── Wordpot (HTTP honeypot) ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpot
+  namespace: dpipot
+  labels:
+    app: wordpot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpot
+  template:
+    metadata:
+      labels:
+        app: wordpot
+    spec:
+      containers:
+        - name: wordpot
+          image: dtagdevsec/wordpot:24.04.1
+          env:
+            - name: PORT
+              value: "8088"
+          ports:
+            - containerPort: 8088
+              protocol: TCP
+          volumeMounts:
+            - name: wordpot-logs
+              mountPath: /opt/wordpot/logs
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+      securityContext:
+        runAsUser: 0
+      volumes:
+        - name: wordpot-logs
+          emptyDir: {}
+

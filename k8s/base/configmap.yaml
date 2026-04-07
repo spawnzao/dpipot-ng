@@ -23,7 +23,7 @@ data:
     SMTP=mailoney-svc:25
 
   # honeypot padrão quando nDPI não classifica
-  DEFAULT_ROUTE: "dionaea-svc:4444"
+  DEFAULT_ROUTE: "wordpot-svc:80"
 
   # Kafka
   KAFKA_BROKERS: "kafka-svc:9092"
