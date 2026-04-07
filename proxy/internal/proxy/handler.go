@@ -175,6 +175,8 @@ func (h *Handler) Handle() {
 		honeypotError string
 		startTime     time.Time
 		wg            sync.WaitGroup
+		teeWriterSrc  *limitedTeeWriter
+		teeWriterDst  *limitedTeeWriter
 	)
 	var origDstIP net.IP
 	var origDstPort uint16
@@ -258,8 +260,8 @@ func (h *Handler) Handle() {
 	}
 
 	// --- STEP 7: pipe bidirecional com captura de payload ---
-	teeWriterSrc := newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
-	teeWriterDst := newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
+	teeWriterSrc = newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
+	teeWriterDst = newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
 
 	startTime = time.Now()
 	wg.Add(2)
