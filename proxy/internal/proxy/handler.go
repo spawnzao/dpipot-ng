@@ -16,6 +16,7 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
+	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -61,7 +62,7 @@ func NewHandler(
 
 // getOriginalDst obtém o IP e porta originais de destino usando
 // getsockopt(IP_ORIGINAL_DST) no Linux.
-// Necessário quando o tráfego é redirecionado via TPROXY/iptables.
+// Funciona com REDIRECT.
 func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
@@ -98,6 +99,38 @@ func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 	port := binary.BigEndian.Uint16((*[2]byte)(unsafe.Pointer(&addr.Port))[:])
 
 	return ip, port, nil
+}
+
+// getTproxyDst obtém o IP e porta originais quando o tráfego vem via TPROXY.
+// Usa IP_PKTINFO para obter o endereço de destino original do pacote.
+func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil, 0, fmt.Errorf("não é uma conexão TCP")
+	}
+
+	file, err := tcpConn.File()
+	if err != nil {
+		return nil, 0, fmt.Errorf("File(): %w", err)
+	}
+	defer file.Close()
+
+	fd := int(file.Fd())
+	pc := ipv4.NewConn(file)
+
+	dstIP, err := pc.DestinationAddress()
+	if err != nil {
+		return nil, 0, fmt.Errorf("IP_PKTINFO: %w", err)
+	}
+
+	localAddr := pc.LocalAddr()
+	if localAddr == nil {
+		return nil, 0, fmt.Errorf("LocalAddr returned nil")
+	}
+
+	port := uint16(localAddr.(*net.TCPAddr).Port)
+
+	return net.IP(dstIP), port, nil
 }
 
 // Handle é o ciclo de vida completo de uma conexão:
@@ -147,15 +180,20 @@ func (h *Handler) Handle() {
 	firstChunk = firstChunk[:n]
 	bufSrc.Write(firstChunk)
 
-	// --- STEP 2: obtém IP/porta original via getsockopt ---
-	origDstIP, origDstPort, err = getOriginalDst(h.conn)
+	// --- STEP 2: obtém IP/porta original ---
+	// Primeiro tenta TPROXY (IP_PKTINFO), depois REDIRECT (IP_ORIGINAL_DST)
+	origDstIP, origDstPort, err = getTproxyDst(h.conn)
 	if err != nil {
-		log.Warn("falha obtendo original dst, usando local addr",
-			zap.Error(err),
-			zap.Stringer("local", dstAddr),
-		)
-		origDstIP = dstAddr.IP
-		origDstPort = uint16(dstAddr.Port)
+		log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
+		origDstIP, origDstPort, err = getOriginalDst(h.conn)
+		if err != nil {
+			log.Warn("falha obtendo original dst, usando local addr",
+				zap.Error(err),
+				zap.Stringer("local", dstAddr),
+			)
+			origDstIP = dstAddr.IP
+			origDstPort = uint16(dstAddr.Port)
+		}
 	}
 
 	flowInfo := &ndpi.FlowInfo{
