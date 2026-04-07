@@ -118,13 +118,20 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) handle(conn net.Conn) {
-	// configura keepalive TCP para detectar conexões mortas
-	if tcpConn, ok := conn.(*net.TCPConn); ok {
-		tcpConn.SetKeepAlive(true)
-		tcpConn.SetKeepAlivePeriod(30 * time.Second)
-	}
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("handler recovered from panic", zap.Any("panic", r))
+		}
+		conn.Close()
+	}()
 
 	flowID := uuid.New().String()
+	log := s.log.With(zap.String("flow_id", flowID))
+
+	log.Info("handler started",
+		zap.String("local_addr", conn.LocalAddr().String()),
+		zap.String("remote_addr", conn.RemoteAddr().String()),
+	)
 
 	h := NewHandler(
 		flowID,
@@ -133,7 +140,9 @@ func (s *Server) handle(conn net.Conn) {
 		s.router,
 		s.producer,
 		s.maxPayloadBytes,
-		s.log.With(zap.String("flow_id", flowID)),
+		log,
 	)
 	h.Handle()
+
+	log.Info("handler finished")
 }
