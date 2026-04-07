@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	classifyBufferSize   = 4096
-	honeypotDialTimeout = 5 * time.Second
-	originalDstTimeout  = 2 * time.Second
+	classifyBufferSize    = 4096
+	honeypotDialTimeout  = 5 * time.Second
+	originalDstTimeout   = 2 * time.Second
 )
 
 // Handler processa uma única conexão TCP de um atacante.
