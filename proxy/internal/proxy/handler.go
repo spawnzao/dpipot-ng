@@ -162,10 +162,11 @@ func (h *Handler) Handle() {
 
 	log := h.log.With(
 		zap.String("flow_id", h.flowID),
-		zap.String("src", srcAddr.String()),
+		zap.Stringer("src", srcAddr),
+		zap.Stringer("dst", dstAddr),
 	)
 
-	// variáveis para o evento
+	log.Info("🔍 Handle() iniciado")
 	var (
 		bufSrc       bytes.Buffer
 		bufDst       bytes.Buffer

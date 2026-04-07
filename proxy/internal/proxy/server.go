@@ -98,21 +98,18 @@ func (s *Server) ListenAndServe() error {
 		conn, err := ln.Accept()
 		if err != nil {
 			s.log.Warn("accept error", zap.Error(err))
-			// listener fechado — shutdown gracioso
 			if strings.Contains(err.Error(), "use of closed network connection") {
 				return nil
 			}
 			continue
 		}
 
-		// log da conexão aceita
-		s.log.Info("conexão aceita",
+		remoteAddr := conn.RemoteAddr().String()
+		s.log.Info("🎯 conexão aceita",
 			zap.String("local_addr", conn.LocalAddr().String()),
-			zap.String("remote_addr", conn.RemoteAddr().String()),
+			zap.String("remote_addr", remoteAddr),
 		)
 
-		// cada conexão roda em goroutine própria
-		// goroutines Go são leves (~2KB de stack) — suporta milhares simultâneas
 		go s.handle(conn)
 	}
 }
