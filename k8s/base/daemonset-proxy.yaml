@@ -162,10 +162,13 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
           securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            runAsNonRoot: true
-            runAsUser: 1000
+            runAsNonRoot: false
+            runAsUser: 0
 
       volumes:
         - name: ndpi-socket
