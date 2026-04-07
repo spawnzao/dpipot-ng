@@ -105,10 +105,10 @@ func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 //  1. Lê o primeiro chunk do atacante
 //  2. Obtém IP/porta original via getsockopt
 //  3. Classifica com nDPI
-//  4. Conecta ao honeypot correto
-//  5. Reenvia o primeiro chunk para o honeypot
-//  6. Pipe bidirecional com TeeReader para capturar payload
-//  7. Publica evento no Kafka ao final
+//  4. Resolve honeypot pelo label
+//  5. Tenta conectar ao honeypot (pode falhar)
+//  6. Se conectado: pipe bidirecional com captura de payload
+//  7. Sempre: publica evento no Kafka (mesmo se honeypot falhar)
 func (h *Handler) Handle() {
 	defer h.conn.Close()
 
@@ -120,6 +120,16 @@ func (h *Handler) Handle() {
 		zap.String("src", srcAddr.String()),
 	)
 
+	// variáveis para o evento
+	var (
+		bufSrc     bytes.Buffer
+		bufDst     bytes.Buffer
+		ndpiLabel  = "Unknown"
+		honeypotAddr string
+		honeypotError string
+		startTime     time.Time
+	)
+
 	// --- STEP 1: lê primeiro chunk para classificação ---
 	firstChunk := make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
@@ -129,9 +139,11 @@ func (h *Handler) Handle() {
 		if err != io.EOF {
 			log.Debug("erro lendo primeiro chunk", zap.Error(err))
 		}
-		return
+		honeypotError = fmt.Sprintf("read error: %v", err)
+		goto publish
 	}
 	firstChunk = firstChunk[:n]
+	bufSrc.Write(firstChunk)
 
 	// --- STEP 2: obtém IP/porta original via getsockopt ---
 	origDstIP, origDstPort, err := getOriginalDst(h.conn)
@@ -162,7 +174,7 @@ func (h *Handler) Handle() {
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
-	ndpiLabel, err := h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
 	if err != nil {
 		log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
 		ndpiLabel = "Unknown"
@@ -170,37 +182,32 @@ func (h *Handler) Handle() {
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
 	// --- STEP 4: resolve honeypot pelo label ---
-	honeypotAddr, _ := h.router.Resolve(ndpiLabel)
+	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
-	// --- STEP 5: conecta ao honeypot ---
+	// --- STEP 5: tenta conectar ao honeypot ---
 	honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
 	if err != nil {
 		log.Error("falha conectando ao honeypot",
 			zap.String("honeypot", honeypotAddr),
 			zap.Error(err),
 		)
-		return
+		honeypotError = fmt.Sprintf("connection failed: %v", err)
+		goto publish
 	}
 	defer honeypotConn.Close()
 
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
 	if _, err := honeypotConn.Write(firstChunk); err != nil {
 		log.Error("erro reenviando primeiro chunk", zap.Error(err))
-		return
+		honeypotError = fmt.Sprintf("write failed: %v", err)
+		goto publish
 	}
 
 	// --- STEP 7: pipe bidirecional com captura de payload ---
-	var (
-		bufSrc bytes.Buffer
-		bufDst bytes.Buffer
-	)
-
-	bufSrc.Write(firstChunk)
-
 	teeWriterSrc := newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
 	teeWriterDst := newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
 
-	startTime := time.Now()
+	startTime = time.Now()
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -229,31 +236,43 @@ func (h *Handler) Handle() {
 	}()
 
 	wg.Wait()
-	duration := time.Since(startTime)
 
-	// --- STEP 8: publica evento no Kafka ---
+publish:
+	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
+	duration := time.Since(startTime)
 	event := &kafka.Event{
 		FlowID:      h.flowID,
 		Timestamp:   time.Now(),
-		SrcIP:       flowInfo.SrcIP.String(),
-		SrcPort:     int(flowInfo.SrcPort),
-		DstPort:     int(flowInfo.DstPort),
+		SrcIP:       srcAddr.IP.String(),
+		SrcPort:     srcAddr.Port,
+		DstIP:       origDstIP.String(),
+		DstPort:     int(origDstPort),
 		NDPIProto:   ndpiLabel,
 		NDPIApp:     "",
 		Honeypot:    honeypotAddr,
+		HoneypotError: honeypotError,
 		PayloadSrc:  bufSrc.Bytes(),
 		PayloadDst:  bufDst.Bytes(),
 		PayloadSize: int64(bufSrc.Len() + bufDst.Len()),
 	}
 	h.producer.Publish(event)
 
-	log.Info("fluxo encerrado",
-		zap.String("proto", ndpiLabel),
-		zap.String("honeypot", honeypotAddr),
-		zap.Int("payload_src_bytes", bufSrc.Len()),
-		zap.Int("payload_dst_bytes", bufDst.Len()),
-		zap.Duration("duration", duration),
-	)
+	if honeypotError != "" {
+		log.Info("fluxo encerrado com erro",
+			zap.String("proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr),
+			zap.String("error", honeypotError),
+			zap.Int("payload_src_bytes", bufSrc.Len()),
+		)
+	} else {
+		log.Info("fluxo encerrado",
+			zap.String("proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr),
+			zap.Int("payload_src_bytes", bufSrc.Len()),
+			zap.Int("payload_dst_bytes", bufDst.Len()),
+			zap.Duration("duration", duration),
+		)
+	}
 }
 
 // limitedTeeWriter é um io.Writer que copia para um buffer

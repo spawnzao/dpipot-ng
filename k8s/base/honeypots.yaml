@@ -165,11 +165,8 @@ spec:
       containers:
         - name: wordpot
           image: dtagdevsec/wordpot:24.04.1
-          env:
-            - name: PORT
-              value: "8088"
           ports:
-            - containerPort: 8088
+            - containerPort: 80
               protocol: TCP
           volumeMounts:
             - name: wordpot-logs

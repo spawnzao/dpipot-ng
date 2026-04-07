@@ -17,10 +17,12 @@ type Event struct {
 	Timestamp   time.Time `json:"timestamp"`
 	SrcIP       string    `json:"src_ip"`
 	SrcPort     int       `json:"src_port"`
+	DstIP       string    `json:"dst_ip"`    // IP de destino original
 	DstPort     int       `json:"dst_port"`  // porta original (SO_ORIGINAL_DST)
 	NDPIProto   string    `json:"ndpi_proto"`
 	NDPIApp     string    `json:"ndpi_app"`
-	Honeypot    string    `json:"honeypot"`  // para qual honeypot foi roteado
+	Honeypot    string    `json:"honeypot"`     // para qual honeypot foi roteado
+	HoneypotError string  `json:"honeypot_error"` // erro na conexão ao honeypot (se houver)
 	PayloadSrc  []byte    `json:"payload_src"` // bytes atacante → honeypot
 	PayloadDst  []byte    `json:"payload_dst"` // bytes honeypot → atacante
 	PayloadSize int64     `json:"payload_size"`
