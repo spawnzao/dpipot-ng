@@ -29,23 +29,21 @@ spec:
             - name: KAFKA_PROCESS_ROLES
               value: "broker,controller"
             - name: KAFKA_LISTENERS
-              value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+              value: "PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:9094"
             - name: KAFKA_ADVERTISED_LISTENERS
-              value: "PLAINTEXT://kafka-svc:9092"
+              value: "PLAINTEXT://kafka-svc:9092,EXTERNAL://172.18.209.55:30092"
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT"
             - name: KAFKA_CONTROLLER_LISTENER_NAMES
               value: "CONTROLLER"
-            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
-              value: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
             - name: KAFKA_CONTROLLER_QUORUM_VOTERS
               value: "1@localhost:9093"
             - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
               value: "1"
             - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
               value: "true"
-            # retém mensagens por 7 dias antes de descartar
             - name: KAFKA_LOG_RETENTION_HOURS
               value: "168"
-            # tamanho máximo por partição: 10GB
             - name: KAFKA_LOG_RETENTION_BYTES
               value: "10737418240"
           resources:

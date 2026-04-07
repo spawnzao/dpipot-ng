@@ -12,20 +12,22 @@ import (
 )
 
 type Event struct {
-	FlowID      string `json:"flow_id"`
-	Timestamp   string `json:"timestamp"`
-	SrcIP       string `json:"src_ip"`
-	SrcPort     int    `json:"src_port"`
-	DstPort     int    `json:"dst_port"`
-	NDPIProto   string `json:"ndpi_proto"`
-	NDPIApp     string `json:"ndpi_app"`
-	Honeypot    string `json:"honeypot"`
-	PayloadSrc  []byte `json:"payload_src"`
-	PayloadDst  []byte `json:"payload_dst"`
-	PayloadSize int64  `json:"payload_size"`
-	AttackType  string `json:"attack_type,omitempty"`
-	CVE         string `json:"cve,omitempty"`
-	Severity    string `json:"severity,omitempty"`
+	FlowID        string `json:"flow_id"`
+	Timestamp     string `json:"timestamp"`
+	SrcIP         string `json:"src_ip"`
+	SrcPort       int    `json:"src_port"`
+	DstIP         string `json:"dst_ip"`
+	DstPort       int    `json:"dst_port"`
+	NDPIProto     string `json:"ndpi_proto"`
+	NDPIApp       string `json:"ndpi_app"`
+	Honeypot      string `json:"honeypot"`
+	HoneypotError string `json:"honeypot_error,omitempty"`
+	PayloadSrc    []byte `json:"payload_src"`
+	PayloadDst    []byte `json:"payload_dst"`
+	PayloadSize   int64  `json:"payload_size"`
+	AttackType    string `json:"attack_type,omitempty"`
+	CVE           string `json:"cve,omitempty"`
+	Severity      string `json:"severity,omitempty"`
 }
 
 func main() {
@@ -103,6 +105,7 @@ func main() {
 			fmt.Println("  🌐 INFORMAÇÕES DE REDE")
 			fmt.Printf("  ├── Src IP:       %s\n", event.SrcIP)
 			fmt.Printf("  ├── Src Port:     %d\n", event.SrcPort)
+			fmt.Printf("  ├── Dst IP:       %s\n", event.DstIP)
 			fmt.Printf("  └── Dst Port:     %d\n", event.DstPort)
 			fmt.Println()
 			fmt.Println("  🔍 CLASSIFICAÇÃO nDPI")
@@ -110,6 +113,9 @@ func main() {
 			fmt.Printf("  └── App:           %s\n", event.NDPIApp)
 			fmt.Println()
 			fmt.Printf("  🎯 Honeypot:      %s\n", event.Honeypot)
+			if event.HoneypotError != "" {
+				fmt.Printf("  ❌ Honeypot Error: %s\n", event.HoneypotError)
+			}
 			fmt.Println()
 			fmt.Println("  📦 PAYLOADS")
 			payloadSrcStr := string(event.PayloadSrc)
