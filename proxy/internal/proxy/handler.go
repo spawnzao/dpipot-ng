@@ -183,7 +183,7 @@ func (h *Handler) Handle() {
 	}
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
-	// --- STEP 4: resolve honeypot pelo label ---
+	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
 	// --- STEP 5: tenta conectar ao honeypot ---

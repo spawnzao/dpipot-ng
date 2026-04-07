@@ -20,10 +20,64 @@ spec:
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-
-      # initContainer removido — causava deadlock porque o sidecar nDPI
-      # só sobe depois do initContainer terminar. A espera pelo socket
-      # é feita internamente pelo waitForNDPI() no main.go do proxy.
+      initContainers:
+        - name: iptables-setup
+          image: ubuntu:24.04
+          imagePullPolicy: Always
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              
+              apt-get update && apt-get install -y iptables iptables-mod-tproxy
+              
+              # Habilitar IP forwarding
+              sysctl -w net.ipv4.ip_forward=1
+              sysctl -w net.ipv4.conf.all.rp_filter=0
+              sysctl -w net.ipv4.conf.default.rp_filter=0
+              
+              # Limpar regras existentes
+              iptables -t mangle -F TEST-TPROXY 2>/dev/null || true
+              iptables -t mangle -X TEST-TPROXY 2>/dev/null || true
+              iptables -t nat -F TEST-NAT 2>/dev/null || true
+              iptables -t nat -X TEST-NAT 2>/dev/null || true
+              
+              # Criar chains
+              iptables -t mangle -N TEST-TPROXY || true
+              iptables -t nat -N TEST-NAT || true
+              
+              # Marcar pacotes destinados às portas 50000-55000
+              iptables -t mangle -A TEST-TPROXY -p tcp --dport 50000:55000 -j MARK --set-mark 1
+              
+              # TPROXY: redirecionar para proxy na porta 8080
+              # O TPROXY preserva o IP e porta originais!
+              iptables -t mangle -A TEST-TPROXY -p tcp --dport 50000:55000 -j TPROXY --tproxy-mark 1 --on-port 8080 --on-ip 127.0.0.1
+              
+              # Aplicar na PREROUTING (antes do routing decision)
+              iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
+              
+              # Também aplicar no OUTPUT para tráfego local
+              iptables -t mangle -A OUTPUT -p tcp -m mark --mark 1 -j TPROXY --tproxy-mark 1 --on-port 8080 --on-ip 127.0.0.1
+              
+              echo "iptables TPROXY: portas 50000-55000 -> proxy:8080"
+              echo "Regras mangle ativas:"
+              iptables -t mangle -L TEST-TPROXY -n || true
+              
+              # Sair para permitir que o resto do pod inicie
+              echo "Init concluído!"
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_BIND_SERVICE
+              drop:
+                - ALL
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+            runAsUser: 0
 
       containers:
         # ── container 1: nDPI sidecar (C) ────────────────────────────

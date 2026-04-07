@@ -7,6 +7,7 @@ resources:
   - namespace.yaml
   - configmap.yaml
   - services.yaml
+  - network-policy.yaml
   - daemonset-proxy.yaml
   - honeypots.yaml
   - kafka.yaml

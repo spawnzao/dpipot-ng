@@ -1,0 +1,51 @@
+---
+# NetworkPolicy para isolar honeypots
+# Apenas o proxy pode comunicar com os honeypots
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: honeypots-isolation
+  namespace: dpipot
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values:
+          - dpipot-proxy
+          - kafka
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: dpipot
+          podSelector:
+            matchLabels:
+              app: dpipot-proxy
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 22
+        - protocol: TCP
+          port: 2222
+        - protocol: TCP
+          port: 2323
+        - protocol: TCP
+          port: 21
+        - protocol: TCP
+          port: 25
+        - protocol: TCP
+          port: 4444
+        - protocol: TCP
+          port: 9200
+  egress:
+    # Honeypots podem precisar de DNS e resolver outros serviços
+    - to:
+        - namespaceSelector: {}
+      ports:
+        - protocol: UDP
+          port: 53

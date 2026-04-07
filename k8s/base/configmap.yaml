@@ -4,33 +4,16 @@ metadata:
   name: dpipot-config
   namespace: dpipot
 data:
-  # endereço onde o proxy TCP escuta conexões dos atacantes
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
-
-  # caminho do Unix socket compartilhado com o sidecar nDPI
-  # deve ser o mesmo mountPath do volume ndpi-socket nos dois containers
   NDPI_SOCKET_PATH: "/var/run/dpipot/ndpi.sock"
-
-  # timeout para o nDPI classificar (se exceder usa "Unknown")
   NDPI_TIMEOUT: "5000ms"
-
-  # rotas: label nDPI → ClusterIP Service do honeypot
-  # adicione novas rotas aqui sem recompilar
   HONEYPOT_ROUTES: >-
-    HTTP=elasticpot-svc:9200,
+    HTTP=wordpot-svc:80,
     SSH=cowrie-svc:22,
     FTP=dionaea-svc:21,
     SMTP=mailoney-svc:25
-
-  # honeypot padrão quando nDPI não classifica
   DEFAULT_ROUTE: "wordpot-svc:80"
-
-  # Kafka
   KAFKA_BROKERS: "kafka-svc:9092"
   KAFKA_TOPIC: "dpipot.payloads"
-
-  # 0 = captura payload completo (sem limite)
   MAX_PAYLOAD_BYTES: "0"
-
-  # nível de log: debug, info, warn, error
   LOG_LEVEL: "info"

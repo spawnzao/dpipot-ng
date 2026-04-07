@@ -3,39 +3,44 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
 
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
-// Isso facilita a configuração via ConfigMap no Kubernetes sem recompilar.
 type Config struct {
-	// Endereço onde o proxy escuta conexões dos atacantes
-	ListenAddr string
-
-	// Caminho do Unix socket do sidecar nDPI
-	NDPISocketPath string
-
-	// Timeout para classificação nDPI (se exceder, usa protocolo "Unknown")
-	NDPITimeout time.Duration
-
-	// Rotas: label nDPI → endereço do honeypot (ClusterIP Service do K8s)
-	// Exemplo: "HTTP=elasticpot-svc:9200,SSH=cowrie-svc:22"
-	Routes map[string]string
-
-	// Endereço do honeypot padrão quando nDPI não classifica
-	DefaultRoute string
-
-	// Configuração do Kafka
-	KafkaBrokers string
-	KafkaTopic   string
-
-	// Quantos bytes do payload capturar por direção (0 = ilimitado)
+	ListenAddr      string
+	NDPISocketPath  string
+	NDPITimeout     time.Duration
+	Routes          map[string]string
+	DefaultRoute    string
+	KafkaBrokers    string
+	KafkaTopic      string
 	MaxPayloadBytes int64
+	LogLevel        string
+}
 
-	// Nível de log: debug, info, warn, error
-	LogLevel string
+func Load() (*Config, error) {
+	cfg := &Config{
+		ListenAddr:      getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
+		NDPISocketPath:  getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
+		NDPITimeout:     getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
+		DefaultRoute:    getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
+		KafkaBrokers:    getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
+		KafkaTopic:      getEnv("KAFKA_TOPIC", "dpipot.payloads"),
+		MaxPayloadBytes: getInt64("MAX_PAYLOAD_BYTES", 0),
+		LogLevel:        getEnv("LOG_LEVEL", "info"),
+	}
+
+	routesRaw := getEnv("HONEYPOT_ROUTES",
+		"HTTP=elasticpot-svc:9200,MongoDB=mongodbhp-svc:27017,SSH=cowrie-svc:22")
+	routes, err := parseRoutes(routesRaw)
+	if err != nil {
+		return nil, fmt.Errorf("HONEYPOT_ROUTES inválido: %w", err)
+	}
+	cfg.Routes = routes
+
+	return cfg, nil
 }
 
 func Load() (*Config, error) {
