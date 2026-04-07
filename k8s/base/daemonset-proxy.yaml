@@ -30,7 +30,7 @@ spec:
             - |
               set -e
               
-              apt-get update && apt-get install -y iptables
+              apt-get update && apt-get install -y iptables iproute2
               
               # Habilitar IP forwarding
               sysctl -w net.ipv4.ip_forward=1
