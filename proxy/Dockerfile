@@ -3,6 +3,8 @@
 # ── stage 1: build ──────────────────────────────────────────────────
 FROM golang:1.23-bookworm AS builder
 
+ENV GOTOOLCHAIN=local
+
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
