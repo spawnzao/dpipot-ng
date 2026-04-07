@@ -278,7 +278,7 @@ func (h *Handler) Handle() {
 			tcpConn.CloseWrite()
 		}
 		src := io.TeeReader(h.conn, teeWriterSrc)
-		if _, err := io.Copy(honeypotConn, src); err != nil {
+		if _, err = io.Copy(honeypotConn, src); err != nil {
 			log.Debug("pipe src→dst encerrado", zap.Error(err))
 		}
 	}()
@@ -290,7 +290,7 @@ func (h *Handler) Handle() {
 			tcpConn.CloseWrite()
 		}
 		src := io.TeeReader(honeypotConn, teeWriterDst)
-		if _, err := io.Copy(h.conn, src); err != nil {
+		if _, err = io.Copy(h.conn, src); err != nil {
 			log.Debug("pipe dst→src encerrado", zap.Error(err))
 		}
 	}()
