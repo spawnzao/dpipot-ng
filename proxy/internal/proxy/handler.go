@@ -122,13 +122,15 @@ func (h *Handler) Handle() {
 
 	// variáveis para o evento
 	var (
-		bufSrc     bytes.Buffer
-		bufDst     bytes.Buffer
-		ndpiLabel  = "Unknown"
+		bufSrc       bytes.Buffer
+		bufDst       bytes.Buffer
+		ndpiLabel    = "Unknown"
 		honeypotAddr string
 		honeypotError string
 		startTime     time.Time
 	)
+	var origDstIP net.IP
+	var origDstPort uint16
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
 	firstChunk := make([]byte, classifyBufferSize)
@@ -146,7 +148,7 @@ func (h *Handler) Handle() {
 	bufSrc.Write(firstChunk)
 
 	// --- STEP 2: obtém IP/porta original via getsockopt ---
-	origDstIP, origDstPort, err := getOriginalDst(h.conn)
+	origDstIP, origDstPort, err = getOriginalDst(h.conn)
 	if err != nil {
 		log.Warn("falha obtendo original dst, usando local addr",
 			zap.Error(err),
