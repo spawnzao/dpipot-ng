@@ -100,6 +100,12 @@ func (s *Server) ListenAndServe() error {
 			return fmt.Errorf("accept: %w", err)
 		}
 
+		// log da conexão aceita
+		s.log.Info("conexão aceita",
+			zap.String("local_addr", conn.LocalAddr().String()),
+			zap.String("remote_addr", conn.RemoteAddr().String()),
+		)
+
 		// cada conexão roda em goroutine própria
 		// goroutines Go são leves (~2KB de stack) — suporta milhares simultâneas
 		go s.handle(conn)
