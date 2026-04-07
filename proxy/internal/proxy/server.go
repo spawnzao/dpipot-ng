@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
@@ -62,16 +61,12 @@ func listenTransparent(addr string) (net.Listener, error) {
 		return nil, fmt.Errorf("setsockopt IP_TRANSPARENT: %w", err)
 	}
 
-	sa := &syscall.SockaddrInet4{Port: tcpAddr.Port}
-	if len(tcpAddr.IP) == 0 {
-		sa.Addr = [4]byte{0, 0, 0, 0}
-	} else {
-		copy(sa.Addr[:], tcpAddr.IP.To4())
-	}
+	// Bind em 0.0.0.0 para capturar conexões locais
+	sa := &syscall.SockaddrInet4{Port: tcpAddr.Port, Addr: [4]byte{0, 0, 0, 0}}
 
 	if err := syscall.Bind(fd, sa); err != nil {
 		syscall.Close(fd)
-		return nil, fmt.Errorf("bind: %w", err)
+		return nil, fmt.Errorf("bind 0.0.0.0:%d: %w", tcpAddr.Port, err)
 	}
 
 	if err := syscall.Listen(fd, 128); err != nil {
