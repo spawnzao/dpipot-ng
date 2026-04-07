@@ -55,17 +55,6 @@ jobs:
           go-version: '1.23'
           cache: false
 
-      - name: go mod tidy
-        run: |
-          cd proxy
-          go mod tidy
-          go mod download
-
-      - name: verify proxy build
-        run: |
-          cd proxy
-          go build -v ./cmd/proxy
-
       - name: build e push proxy
         uses: docker/build-push-action@v6.10.0
         with:
