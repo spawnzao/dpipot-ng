@@ -85,7 +85,11 @@ func main() {
 	errCh := make(chan error, 2)
 
 	go func() {
-		errCh <- server.ListenAndServe()
+		err := server.ListenAndServe()
+		if err != nil {
+			log.Error("proxy ListenAndServe falhou", zap.Error(err))
+		}
+		errCh <- err
 	}()
 
 	go func() {
