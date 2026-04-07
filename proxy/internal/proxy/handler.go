@@ -182,9 +182,10 @@ func (h *Handler) Handle() {
 		firstChunk    []byte
 		ctx           context.Context
 		cancel        context.CancelFunc
+		origDstIP     net.IP
+		origDstPort   uint16
+		flowInfo      *ndpi.FlowInfo
 	)
-	var origDstIP net.IP
-	var origDstPort uint16
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
 	firstChunk = make([]byte, classifyBufferSize)
@@ -217,7 +218,7 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	flowInfo := &ndpi.FlowInfo{
+	flowInfo = &ndpi.FlowInfo{
 		SrcIP:   srcAddr.IP,
 		SrcPort: uint16(srcAddr.Port),
 		DstIP:   origDstIP,
