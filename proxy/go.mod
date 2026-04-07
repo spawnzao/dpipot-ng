@@ -6,7 +6,7 @@ require (
 	github.com/confluentinc/confluent-kafka-go/v2 v2.14.0
 	github.com/google/uuid v1.6.0
 	go.uber.org/zap v1.27.1
-	golang.org/x/net v0.33.0
+	golang.org/x/net v0.29.0
 )
 
 require (
