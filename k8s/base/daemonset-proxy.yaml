@@ -42,12 +42,14 @@ spec:
               sysctl -w net.ipv4.conf.default.route_localnet=1
               
               # Criar tabela de roteamento local para TPROXY
-              echo "=== Configurando ip rule ==="
+              echo "=== Configurando ip rule e route ==="
+              # Adicionar tabela 100 se não existir
+              grep -q "100" /etc/iproute2/rt_tables || echo "100 tproxy" >> /etc/iproute2/rt_tables
+              
               ip rule del fwmark 0x1 lookup 100 2>&1 || true
               ip rule add fwmark 0x1 lookup 100 2>&1 || echo "FALHA: ip rule add"
               ip rule list | grep fwmark || echo "FALHA: regra nao encontrada"
               
-              echo "=== Configurando ip route ==="
               ip route del local default dev lo table 100 2>&1 || true
               ip route add local default dev lo table 100 2>&1 || echo "FALHA: ip route add"
               ip route list table 100 2>&1 || echo "FALHA: rota nao encontrada"
