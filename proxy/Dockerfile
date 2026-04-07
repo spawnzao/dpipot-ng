@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ── stage 1: build ──────────────────────────────────────────────────
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.23-bookworm AS builder
 
 RUN apt-get update && apt-get install -y \
     build-essential \
