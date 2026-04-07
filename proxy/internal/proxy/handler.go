@@ -16,7 +16,6 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
-	"golang.org/x/net/ipv4"
 )
 
 const (
@@ -103,6 +102,13 @@ func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 
 // getTproxyDst obtém o IP e porta originais quando o tráfego vem via TPROXY.
 // Usa IP_PKTINFO para obter o endereço de destino original do pacote.
+// Estrutura in_pktinfo: https://elixir.bootlin.com/linux/v5.15/source/include/uapi/linux/in.h#L240
+type inPktInfo struct {
+	ifIndex  uint32
+	specDst  [4]byte
+	addr     [4]byte
+}
+
 func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
@@ -116,21 +122,28 @@ func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 	defer file.Close()
 
 	fd := int(file.Fd())
-	pc := ipv4.NewConn(file)
 
-	dstIP, err := pc.DestinationAddress()
-	if err != nil {
-		return nil, 0, fmt.Errorf("IP_PKTINFO: %w", err)
+	var pktInfo inPktInfo
+	var pktInfoLen uint32 = uint32(unsafe.Sizeof(pktInfo))
+
+	// IP_PKTINFO = 25, SOL_IP = 0
+	_, _, errno := syscall.Syscall6(
+		syscall.SYS_GETSOCKOPT,
+		uintptr(fd),
+		uintptr(syscall.SOL_IP),
+		uintptr(25), // IP_PKTINFO
+		uintptr(unsafe.Pointer(&pktInfo)),
+		uintptr(unsafe.Pointer(&pktInfoLen)),
+		0,
+	)
+	if errno != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_PKTINFO: %v", errno)
 	}
 
-	localAddr := pc.LocalAddr()
-	if localAddr == nil {
-		return nil, 0, fmt.Errorf("LocalAddr returned nil")
-	}
+	ip := net.IP(pktInfo.addr[:])
+	localAddr := conn.LocalAddr().(*net.TCPAddr)
 
-	port := uint16(localAddr.(*net.TCPAddr).Port)
-
-	return net.IP(dstIP), port, nil
+	return ip, uint16(localAddr.Port), nil
 }
 
 // Handle é o ciclo de vida completo de uma conexão:
@@ -157,10 +170,11 @@ func (h *Handler) Handle() {
 	var (
 		bufSrc       bytes.Buffer
 		bufDst       bytes.Buffer
-		ndpiLabel    = "Unknown"
-		honeypotAddr string
+		ndpiLabel     = "Unknown"
+		honeypotAddr  string
 		honeypotError string
 		startTime     time.Time
+		wg            sync.WaitGroup
 	)
 	var origDstIP net.IP
 	var origDstPort uint16
@@ -248,7 +262,6 @@ func (h *Handler) Handle() {
 	teeWriterDst := newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
 
 	startTime = time.Now()
-	var wg sync.WaitGroup
 	wg.Add(2)
 
 	// goroutine 1: atacante → honeypot

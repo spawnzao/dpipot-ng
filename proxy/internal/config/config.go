@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,30 +33,6 @@ func Load() (*Config, error) {
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 	}
 
-	routesRaw := getEnv("HONEYPOT_ROUTES",
-		"HTTP=elasticpot-svc:9200,MongoDB=mongodbhp-svc:27017,SSH=cowrie-svc:22")
-	routes, err := parseRoutes(routesRaw)
-	if err != nil {
-		return nil, fmt.Errorf("HONEYPOT_ROUTES inválido: %w", err)
-	}
-	cfg.Routes = routes
-
-	return cfg, nil
-}
-
-func Load() (*Config, error) {
-	cfg := &Config{
-		ListenAddr:      getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
-		NDPISocketPath:  getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
-		NDPITimeout:     getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
-		DefaultRoute:    getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
-		KafkaBrokers:    getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
-		KafkaTopic:      getEnv("KAFKA_TOPIC", "dpipot.payloads"),
-		MaxPayloadBytes: getInt64("MAX_PAYLOAD_BYTES", 0),
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
-	}
-
-	// parseia as rotas do formato "HTTP=elasticpot-svc:9200,SSH=cowrie-svc:22"
 	routesRaw := getEnv("HONEYPOT_ROUTES",
 		"HTTP=elasticpot-svc:9200,MongoDB=mongodbhp-svc:27017,SSH=cowrie-svc:22")
 	routes, err := parseRoutes(routesRaw)
