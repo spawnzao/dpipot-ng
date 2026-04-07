@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -96,8 +97,12 @@ func (s *Server) ListenAndServe() error {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			s.log.Warn("accept error", zap.Error(err))
 			// listener fechado — shutdown gracioso
-			return fmt.Errorf("accept: %w", err)
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				return nil
+			}
+			continue
 		}
 
 		// log da conexão aceita
