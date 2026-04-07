@@ -55,6 +55,11 @@ jobs:
           go mod tidy
           go mod download
 
+      - name: verify proxy build
+        run: |
+          cd proxy
+          go build -v ./cmd/proxy
+
       - name: build e push proxy
         uses: docker/build-push-action@v6.10.0
         with:
