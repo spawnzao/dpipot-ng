@@ -179,12 +179,16 @@ func (h *Handler) Handle() {
 		teeWriterDst  *limitedTeeWriter
 		honeypotConn  net.Conn
 		err           error
+		n             int
+		firstChunk    []byte
+		ctx           context.Context
+		cancel        context.CancelFunc
 	)
 	var origDstIP net.IP
 	var origDstPort uint16
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
-	firstChunk := make([]byte, classifyBufferSize)
+	firstChunk = make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err = h.conn.Read(firstChunk)
 	h.conn.SetReadDeadline(time.Time{})
@@ -229,7 +233,7 @@ func (h *Handler) Handle() {
 	)
 
 	// --- STEP 3: classifica com nDPI ---
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 
 	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
@@ -255,7 +259,7 @@ func (h *Handler) Handle() {
 	defer honeypotConn.Close()
 
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
-	if _, err := honeypotConn.Write(firstChunk); err != nil {
+	if _, err = honeypotConn.Write(firstChunk); err != nil {
 		log.Error("erro reenviando primeiro chunk", zap.Error(err))
 		honeypotError = fmt.Sprintf("write failed: %v", err)
 		goto publish
