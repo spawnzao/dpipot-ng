@@ -49,6 +49,12 @@ jobs:
       - name: configura buildx
         uses: docker/setup-buildx-action@v3.8.0
 
+      - name: go mod tidy
+        run: |
+          cd proxy
+          go mod tidy
+          go mod download
+
       - name: build e push proxy
         uses: docker/build-push-action@v6.10.0
         with:
