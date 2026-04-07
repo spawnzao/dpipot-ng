@@ -42,6 +42,8 @@ spec:
               sysctl -w net.ipv4.conf.default.route_localnet=1
               
               # Criar tabela de roteamento local para TPROXY
+              ip rule del fwmark 0x1 lookup 100 2>/dev/null || true
+              ip route del local default dev lo table 100 2>/dev/null || true
               ip rule add fwmark 0x1 lookup 100 2>/dev/null || true
               ip route add local default dev lo table 100 2>/dev/null || true
               
@@ -58,6 +60,9 @@ spec:
               # TPROXY: redirecionar para proxy na porta 8080
               # O TPROXY preserva o IP e porta originais!
               iptables -t mangle -A TEST-TPROXY -p tcp --dport 50000:55000 -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
+              
+              # Remover regra existente da PREROUTING antes de adicionar
+              iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
               
               # Aplicar na PREROUTING (antes do routing decision)
               iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
