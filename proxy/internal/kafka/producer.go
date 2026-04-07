@@ -1,6 +1,7 @@
 package kafka
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
@@ -9,6 +10,43 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 	"go.uber.org/zap"
 )
+
+func ensureTopicExists(brokers, topic string, log *zap.Logger) error {
+	adminClient, err := kafka.NewAdminClientFromClient(kafka.NewConfigMap(
+		"bootstrap.servers": brokers,
+	))
+	if err != nil {
+		return fmt.Errorf("create admin client: %w", err)
+	}
+	defer adminClient.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	topicSpec := []kafka.TopicSpecification{
+		{
+			Topic:             topic,
+			NumPartitions:     3,
+			ReplicationFactor: 1,
+		},
+	}
+
+	results, err := adminClient.CreateTopics(ctx, topicSpec)
+	if err != nil {
+		return fmt.Errorf("create topics: %w", err)
+	}
+
+	for _, result := range results {
+		if result.Error.Code() != kafka.ErrTopicAlreadyExists {
+			log.Info("tópico criado",
+				zap.String("topic", topic),
+				zap.String("error", result.Error.String()),
+			)
+		}
+	}
+
+	return nil
+}
 
 // Event é o schema do evento publicado no Kafka.
 // O ML vai consumir esse evento e adicionar attack_type e cve.
@@ -45,6 +83,10 @@ type Producer struct {
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
+	if err := ensureTopicExists(brokers, topic, log); err != nil {
+		log.Warn("falha ao criar tópico, continuando mesmo assim", zap.Error(err))
+	}
+
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers":            brokers,
 		"acks":                         "1",        // leader ack — balanço entre durabilidade e velocidade
