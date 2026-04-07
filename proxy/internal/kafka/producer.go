@@ -53,6 +53,7 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 		"queue.buffering.max.messages": 100000,
 		"queue.buffering.max.kbytes":   1048576,    // 1GB buffer interno
 		"linger.ms":                    5,          // agrupa mensagens por até 5ms
+		"allow.auto.create.topics":      "true",     // permite criação automática de tópicos
 	})
 	if err != nil {
 		return nil, fmt.Errorf("kafka producer: %w", err)
