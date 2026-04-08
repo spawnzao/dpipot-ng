@@ -98,7 +98,6 @@ spec:
         - name: ndpi-classifier
           image: ghcr.io/spawnzao/dpipot-classifier:latest
           imagePullPolicy: Always
-          imagePullPolicy: Always
           args:
             - /var/run/dpipot/ndpi.sock
           volumeMounts:
@@ -128,7 +127,6 @@ spec:
         # ── container 2: TCP proxy (Go) ──────────────────────────────
         - name: proxy
           image: library/dpipot-proxy:local
-          imagePullPolicy: Never
           imagePullPolicy: Never
           envFrom:
             - configMapRef:
