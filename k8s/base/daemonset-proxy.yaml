@@ -23,7 +23,7 @@ spec:
       initContainers:
         - name: iptables-setup
           image: ubuntu:24.04
-          imagePullPolicy: Always
+          imagePullPolicy: Never
           command:
             - /bin/sh
             - -c
@@ -97,7 +97,7 @@ spec:
         # sobe primeiro na lista para criar o socket antes do proxy tentar conectar
         - name: ndpi-classifier
           image: ghcr.io/spawnzao/dpipot-classifier:latest
-          imagePullPolicy: Always
+          imagePullPolicy: Never
           args:
             - /var/run/dpipot/ndpi.sock
           volumeMounts:
@@ -126,8 +126,8 @@ spec:
 
         # ── container 2: TCP proxy (Go) ──────────────────────────────
         - name: proxy
-          image: ghcr.io/spawnzao/dpipot-proxy:latest
-          imagePullPolicy: Always
+          image: ghcr.io/spawnzao/dpipot-proxy:local
+          imagePullPolicy: Never
           envFrom:
             - configMapRef:
                 name: dpipot-config
