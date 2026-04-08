@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	classifyBufferSize    = 4096
-	honeypotDialTimeout  = 5 * time.Second
-	originalDstTimeout   = 2 * time.Second
+	classifyBufferSize  = 4096
+	honeypotDialTimeout = 5 * time.Second
+	originalDstTimeout  = 2 * time.Second
 )
 
 // Handler processa uma única conexão TCP de um atacante.
@@ -103,9 +103,9 @@ func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 // Usa IP_PKTINFO para obter o endereço de destino original do pacote.
 // Estrutura in_pktinfo: https://elixir.bootlin.com/linux/v5.15/source/include/uapi/linux/in.h#L240
 type inPktInfo struct {
-	ifIndex  uint32
-	specDst  [4]byte
-	addr     [4]byte
+	ifIndex uint32
+	specDst [4]byte
+	addr    [4]byte
 }
 
 func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
@@ -122,10 +122,10 @@ func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 
 	fd := int(file.Fd())
 
+	// Tenta IP_PKTINFO primeiro
 	var pktInfo inPktInfo
 	var pktInfoLen uint32 = uint32(unsafe.Sizeof(pktInfo))
 
-	// IP_PKTINFO = 25, SOL_IP = 0
 	_, _, errno := syscall.Syscall6(
 		syscall.SYS_GETSOCKOPT,
 		uintptr(fd),
@@ -139,10 +139,35 @@ func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 		return nil, 0, fmt.Errorf("getsockopt IP_PKTINFO: %v", errno)
 	}
 
-	ip := net.IP(pktInfo.addr[:])
-	localAddr := conn.LocalAddr().(*net.TCPAddr)
+	// specDst contém o IP de destino original antes do TPROXY
+	ip := net.IP(pktInfo.specDst[:])
 
-	return ip, uint16(localAddr.Port), nil
+	// Se specDst for zero, usa o IP do conn local (addr do socket original)
+	if ip.Equal(net.IPv4zero) {
+		ip = net.IP(pktInfo.addr[:])
+	}
+
+	// Obtém a porta original usando IP_ORIGINAL_DSTADDR (20)
+	var origDstAddr [4]byte
+	var origDstLen uint32 = 4
+	syscall.Syscall6(
+		syscall.SYS_GETSOCKOPT,
+		uintptr(fd),
+		uintptr(syscall.SOL_IP),
+		uintptr(20), // IP_ORIGINAL_DSTADDR
+		uintptr(unsafe.Pointer(&origDstAddr)),
+		uintptr(unsafe.Pointer(&origDstLen)),
+		0,
+	)
+	origPort := uint16(origDstAddr[0])<<8 | uint16(origDstAddr[1])
+
+	// Se a porta for 0, usa a porta local (porta do socket que recebeu a conexão)
+	localAddr := conn.LocalAddr().(*net.TCPAddr)
+	if origPort == 0 {
+		origPort = uint16(localAddr.Port)
+	}
+
+	return ip, origPort, nil
 }
 
 // Handle é o ciclo de vida completo de uma conexão:
@@ -168,8 +193,8 @@ func (h *Handler) Handle() {
 
 	log.Info("🔍 Handle() iniciado")
 	var (
-		bufSrc       bytes.Buffer
-		bufDst       bytes.Buffer
+		bufSrc        bytes.Buffer
+		bufDst        bytes.Buffer
 		ndpiLabel     = "Unknown"
 		honeypotAddr  string
 		honeypotError string
@@ -210,14 +235,21 @@ func (h *Handler) Handle() {
 		log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
 		origDstIP, origDstPort, err = getOriginalDst(h.conn)
 		if err != nil {
-			log.Warn("falha obtendo original dst, usando local addr",
+			log.Debug("REDIRECT falhou, usando fallback",
 				zap.Error(err),
 				zap.Stringer("local", dstAddr),
 			)
-			origDstIP = dstAddr.IP
+			// Fallback: usa IP do src como origDst e porta local como origDstPort
+			origDstIP = srcAddr.IP
 			origDstPort = uint16(dstAddr.Port)
 		}
 	}
+
+	log.Debug("IP original via TPROXY/REDIRECT",
+		zap.Stringer("origDstIP", origDstIP),
+		zap.Uint16("origDstPort", origDstPort),
+		zap.Stringer("localAddr", dstAddr),
+	)
 
 	flowInfo = &ndpi.FlowInfo{
 		SrcIP:   srcAddr.IP,
@@ -303,19 +335,19 @@ publish:
 	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
 	duration := time.Since(startTime)
 	event := &kafka.Event{
-		FlowID:      h.flowID,
-		Timestamp:   time.Now(),
-		SrcIP:       srcAddr.IP.String(),
-		SrcPort:     srcAddr.Port,
-		DstIP:       origDstIP.String(),
-		DstPort:     int(origDstPort),
-		NDPIProto:   ndpiLabel,
-		NDPIApp:     "",
-		Honeypot:    honeypotAddr,
+		FlowID:        h.flowID,
+		Timestamp:     time.Now(),
+		SrcIP:         srcAddr.IP.String(),
+		SrcPort:       srcAddr.Port,
+		DstIP:         origDstIP.String(),
+		DstPort:       int(origDstPort),
+		NDPIProto:     ndpiLabel,
+		NDPIApp:       "",
+		Honeypot:      honeypotAddr,
 		HoneypotError: honeypotError,
-		PayloadSrc:  bufSrc.Bytes(),
-		PayloadDst:  bufDst.Bytes(),
-		PayloadSize: int64(bufSrc.Len() + bufDst.Len()),
+		PayloadSrc:    bufSrc.Bytes(),
+		PayloadDst:    bufDst.Bytes(),
+		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
 	}
 	h.producer.Publish(event)
 
