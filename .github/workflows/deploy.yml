@@ -33,6 +33,28 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
+      - name: wait for microk8s
+        run: |
+          echo "=== Checking MicroK8s status ==="
+          microk8s status || true
+          
+          echo "=== Checking API server ==="
+          curl -k https://127.0.0.1:16443/healthz || true
+          
+          echo "=== Checking kubectl ==="
+          microk8s kubectl version --client || true
+          
+          for i in {1..30}; do
+            if microk8s kubectl get nodes &>/dev/null; then
+              echo "MicroK8s is ready"
+              exit 0
+            fi
+            echo "Waiting for MicroK8s API... ($i/30)"
+            sleep 2
+          done
+          echo "MicroK8s API not available"
+          exit 1
+
       - name: define ambiente
         id: env
         run: |
