@@ -22,8 +22,8 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       initContainers:
         - name: iptables-setup
-          image: ubuntu:24.04
-          imagePullPolicy: Never
+          image: docker.io/library/ubuntu:24.04
+          imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
             - -c
@@ -97,7 +97,7 @@ spec:
         # sobe primeiro na lista para criar o socket antes do proxy tentar conectar
         - name: ndpi-classifier
           image: ghcr.io/spawnzao/dpipot-classifier:latest
-          imagePullPolicy: Never
+          imagePullPolicy: Always
           args:
             - /var/run/dpipot/ndpi.sock
           volumeMounts:

@@ -20,3 +20,7 @@ classifier/*.a
 
 # WSL FIles
 *Zone.Identifier
+
+
+DOCUMENTATION.md
+POST_REBOOT.md

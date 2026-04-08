@@ -11,3 +11,11 @@ resources:
   - daemonset-proxy.yaml
   - honeypots.yaml
   - kafka.yaml
+
+images:
+  - name: ghcr.io/spawnzao/dpipot-classifier
+    newTag: local
+  - name: ghcr.io/spawnzao/dpipot-proxy
+    newTag: local
+  - name: ubuntu
+    newName: docker.io/library/ubuntu
