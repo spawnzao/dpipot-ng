@@ -42,8 +42,13 @@ func main() {
 
 	// aguarda o sidecar nDPI estar disponível antes de aceitar tráfego
 	// importante no Kubernetes onde os containers do Pod sobem em paralelo
-	log.Info("aguardando sidecar nDPI...")
-	ndpiClient := ndpi.NewClient(cfg.NDPISocketPath, cfg.NDPITimeout)
+	log.Info("inicializando nDPI...")
+	ndpiClient, err := ndpi.NewClient(cfg.NDPISocketPath, cfg.NDPITimeout)
+	if err != nil {
+		log.Fatal("nDPI init failed", zap.Error(err))
+	}
+	log.Info("nDPI inicializado com sucesso via CGO")
+
 	if err := waitForNDPI(ndpiClient, 30*time.Second, log); err != nil {
 		log.Fatal("sidecar nDPI não ficou disponível", zap.Error(err))
 	}
