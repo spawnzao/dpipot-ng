@@ -70,13 +70,14 @@ jobs:
 
       - name: aguarda rollout
         run: |
-          for i in {1..30}; do
-            READY=$(microk8s kubectl get ds dpipot-proxy -n dpipot -o jsonpath='{.status.readyReplicas}')
+          for i in {1..60}; do
+            microk8s kubectl get pods -n dpipot -l app=dpipot-proxy 2>/dev/null || true
+            READY=$(microk8s kubectl get ds dpipot-proxy -n dpipot -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
             if [ "$READY" = "1" ]; then
               echo "DaemonSet ready!"
               exit 0
             fi
-            echo "Aguardando... ($i/30) ready=$READY"
+            echo "Aguardando... ($i/60) ready=$READY"
             sleep 5
           done
           echo "Timeout, verificando status..."
