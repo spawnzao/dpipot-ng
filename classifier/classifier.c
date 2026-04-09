@@ -321,6 +321,11 @@ const char *classify_payload(
             time_ms,
             NULL);
 
+    /* Debug - usa funções auxiliares do nDPI */
+    uint16_t master = ndpi_get_flow_masterprotocol(flow_to_process->ndpi_flow);
+    uint16_t app = ndpi_get_flow_appprotocol(flow_to_process->ndpi_flow);
+    fprintf(stderr, "[classifier] after process_packet: master=%u app=%u\n", master, app);
+
     free(pkt);
 
     // nDPI 4.12: giveup se necessário
@@ -333,13 +338,11 @@ const char *classify_payload(
         flow_to_process->detection_completed = 1;
     }
 
-    struct ndpi_proto proto = flow_to_process->detected_l7_protocol;
-    uint16_t best = NDPI_PROTOCOL_UNKNOWN;
-    
-    if (proto.proto.master_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto.proto.master_protocol;
-    else if (proto.proto.app_protocol != NDPI_PROTOCOL_UNKNOWN)
-        best = proto.proto.app_protocol;
+    // Usa funções auxiliares para obter os protocolos
+    uint16_t best = ndpi_get_flow_masterprotocol(flow_to_process->ndpi_flow);
+    if (best == NDPI_PROTOCOL_UNKNOWN) {
+        best = ndpi_get_flow_appprotocol(flow_to_process->ndpi_flow);
+    }
 
     if (best != NDPI_PROTOCOL_UNKNOWN) {
         const char *proto_name = ndpi_get_proto_name(workflow->ndpi_struct, best);
@@ -347,6 +350,8 @@ const char *classify_payload(
     } else {
         snprintf(result_out, result_size, "Unknown");
     }
+
+    fprintf(stderr, "[classifier] nDPI result: %s (best=%u)\n", result_out, best);
 
     check_for_idle_flows(0, workflow);
     return result_out;

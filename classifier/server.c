@@ -114,6 +114,13 @@ static void handle_connection(int client_fd)
 
     if (recv_all(client_fd, payload_buf, payload_len) < 0) goto done;
 
+    /* Debug: mostra os primeiros bytes do payload */
+    fprintf(stderr, "[classifier] received: src_ip=%u.%u.%u.%u:%u dst_ip=%u.%u.%u.%u:%u payload_len=%u first_bytes=%02x%02x%02x%02x\n",
+            (src_ip >> 24) & 0xFF, (src_ip >> 16) & 0xFF, (src_ip >> 8) & 0xFF, src_ip & 0xFF, src_port,
+            (dst_ip >> 24) & 0xFF, (dst_ip >> 16) & 0xFF, (dst_ip >> 8) & 0xFF, dst_ip & 0xFF, dst_port,
+            payload_len,
+            payload_buf[0], payload_buf[1], payload_buf[2], payload_buf[3]);
+
     /* --- classifica com nDPI (mutex protege o workflow) --- */
     char label[64];
     memset(label, 0, sizeof(label));

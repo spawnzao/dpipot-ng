@@ -239,8 +239,8 @@ func (h *Handler) Handle() {
 				zap.Error(err),
 				zap.Stringer("local", dstAddr),
 			)
-			// Fallback: usa IP do src como origDst e porta local como origDstPort
-			origDstIP = srcAddr.IP
+			// Fallback: usa dstAddr como origDst (o IP que o cliente Tentou alcançar)
+			origDstIP = dstAddr.IP
 			origDstPort = uint16(dstAddr.Port)
 		}
 	}
@@ -251,11 +251,12 @@ func (h *Handler) Handle() {
 		zap.Stringer("localAddr", dstAddr),
 	)
 
+	// Para nDPI, usa dstAddr diretamente (o IP/porta que o cliente tentou alcançar)
 	flowInfo = &ndpi.FlowInfo{
 		SrcIP:   srcAddr.IP,
 		SrcPort: uint16(srcAddr.Port),
-		DstIP:   origDstIP,
-		DstPort: origDstPort,
+		DstIP:   dstAddr.IP,
+		DstPort: uint16(dstAddr.Port),
 	}
 
 	log.Debug("informações do fluxo",
@@ -263,6 +264,8 @@ func (h *Handler) Handle() {
 		zap.Uint16("src_port", flowInfo.SrcPort),
 		zap.String("dst_ip", flowInfo.DstIP.String()),
 		zap.Uint16("dst_port", flowInfo.DstPort),
+		zap.Stringer("origDstIP", origDstIP),
+		zap.Uint16("origDstPort", origDstPort),
 	)
 
 	// --- STEP 3: classifica com nDPI ---
