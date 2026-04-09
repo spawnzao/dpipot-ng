@@ -68,21 +68,11 @@ jobs:
         run: |
           microk8s kubectl apply -k k8s/overlays/${{ steps.env.outputs.target }}
 
-      - name: aguarda rollout
+      - name: verifica pods
         run: |
-          for i in {1..60}; do
-            # Verifica diretamente pelos pods
-            POD_STATUS=$(microk8s kubectl get pods -n dpipot -l app=dpipot-proxy -o jsonpath='{.items[*].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "")
-            if echo "$POD_STATUS" | grep -q "True True"; then
-              echo "Pods ready!"
-              exit 0
-            fi
-            echo "Aguardando... ($i/60) pods_status=$POD_STATUS"
-            sleep 5
-          done
-          echo "Timeout, verificando status..."
-          microk8s kubectl get pods -n dpipot -l app=dpipot-proxy
-          microk8s kubectl describe pods -n dpipot -l app=dpipot-proxy | tail -10
+          echo "Aguardando 30 segundos para stabilização..."
+          sleep 30
+          microk8s kubectl get pods -n dpipot -o wide
 
       - name: verifica pods
         run: |
