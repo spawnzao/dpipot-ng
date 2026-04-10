@@ -1,0 +1,126 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/spawnzao/dpipot-ng/classifier/internal/capture"
+	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
+	"github.com/spawnzao/dpipot-ng/classifier/internal/flowtracker"
+	"github.com/spawnzao/dpipot-ng/classifier/internal/ndpi"
+	"go.uber.org/zap"
+)
+
+var (
+	interfaceName = flag.String("interface", "eth1", "Interface to capture packets")
+	listenAddr    = flag.String("listen", "127.0.0.1:9090", "gRPC listen address")
+	ttlMinutes    = flag.Int("ttl", 5, "Flow entry TTL in minutes")
+	logLevel      = flag.String("log", "info", "Log level (debug, info, warn, error)")
+)
+
+func main() {
+	flag.Parse()
+
+	logger, err := zap.NewDevelopment()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to init logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer logger.Sync()
+
+	logger.Info("starting classifier",
+		zap.String("interface", *interfaceName),
+		zap.String("listen", *listenAddr),
+		zap.Int("ttl_minutes", *ttlMinutes),
+	)
+
+	flowTable := flow.NewTable(flow.TableConfig{
+		TTL:          time.Duration(*ttlMinutes) * time.Minute,
+		CleanupEvery: 1 * time.Minute,
+	})
+	if flowTable == nil {
+		logger.Fatal("failed to create flow table")
+	}
+
+	afConfig := capture.Config{
+		Interface:   *interfaceName,
+		SnapLen:     65535,
+		Promiscuous: true,
+	}
+
+	af, err := capture.NewAFPacket(afConfig)
+	if err != nil {
+		logger.Fatal("failed to create AF_PACKET capturer",
+			zap.Error(err),
+			zap.String("interface", *interfaceName),
+		)
+	}
+	defer af.Close()
+
+	logger.Info("AF_PACKET capturer initialized", zap.String("interface", *interfaceName))
+
+	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{
+		FlowTable: flowTable,
+		Logger:    logger,
+	})
+	if err != nil {
+		logger.Fatal("failed to create nDPI handler",
+			zap.Error(err),
+		)
+	}
+	defer ndpiHandler.Close()
+
+	logger.Info("nDPI handler initialized")
+
+	ftServer := flowtracker.NewServer(flowtracker.ServerConfig{
+		FlowTable:  flowTable,
+		Logger:     logger,
+		ListenAddr: *listenAddr,
+	})
+
+	go func() {
+		if err := ftServer.Start(*listenAddr); err != nil {
+			logger.Error("FlowTracker server failed", zap.Error(err))
+		}
+	}()
+
+	logger.Info("FlowTracker gRPC server started", zap.String("addr", *listenAddr))
+
+	af.Start()
+
+	go func() {
+		for {
+			select {
+			case packet, ok := <-af.Packets():
+				if !ok {
+					return
+				}
+				ndpiHandler.ProcessPacket(packet.Data)
+			case err, ok := <-af.Errors():
+				if !ok {
+					return
+				}
+				logger.Error("AF_PACKET error", zap.Error(err))
+			}
+		}
+	}()
+
+	logger.Info("classifier is running")
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+
+	logger.Info("shutting down classifier")
+
+	ftServer.Stop()
+	af.Close()
+	ndpiHandler.Close()
+	flowTable.Close()
+
+	logger.Info("classifier stopped")
+}

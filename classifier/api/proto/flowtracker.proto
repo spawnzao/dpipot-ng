@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package api;
+
+option go_package = "github.com/spawnzao/dpipot-ng/classifier/api/proto";
+
+service FlowTracker {
+  rpc QueryFlow(QueryFlowRequest) returns (QueryFlowResponse);
+  rpc StreamFlows(StreamFlowsRequest) returns (stream FlowEvent);
+}
+
+message QueryFlowRequest {
+  string flow_id = 1;
+}
+
+message QueryFlowResponse {
+  string protocol = 1;
+  string master_protocol = 2;
+  uint32 category = 3;
+  bool found = 4;
+}
+
+message StreamFlowsRequest {
+  // Filter by protocols (optional)
+  repeated string protocols = 1;
+}
+
+message FlowEvent {
+  string flow_id = 1;
+  string protocol = 2;
+  string master_protocol = 3;
+  uint32 category = 4;
+  string src_ip = 5;
+  uint32 src_port = 6;
+  string dst_ip = 7;
+  uint32 dst_port = 8;
+  uint32 protocol_num = 9;
+  int64 timestamp = 10;
+}
