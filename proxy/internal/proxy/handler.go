@@ -3,6 +3,8 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -12,10 +14,13 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -36,6 +41,7 @@ type Handler struct {
 
 	// captura dos payloads para o Kafka
 	maxPayloadBytes int64
+	flowTracker     *flowtracker.Client
 }
 
 func NewHandler(
@@ -46,6 +52,7 @@ func NewHandler(
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
 	log *zap.Logger,
+	flowTracker *flowtracker.Client,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -55,6 +62,7 @@ func NewHandler(
 		producer:        producer,
 		maxPayloadBytes: maxPayloadBytes,
 		log:             log,
+		flowTracker:     flowTracker,
 	}
 }
 
@@ -193,24 +201,25 @@ func (h *Handler) Handle() {
 
 	log.Info("🔍 Handle() iniciado")
 	var (
-		bufSrc        bytes.Buffer
-		bufDst        bytes.Buffer
-		ndpiLabel     = "Unknown"
-		honeypotAddr  string
-		honeypotError string
-		startTime     time.Time
-		wg            sync.WaitGroup
-		teeWriterSrc  *limitedTeeWriter
-		teeWriterDst  *limitedTeeWriter
-		honeypotConn  net.Conn
-		err           error
-		n             int
-		firstChunk    []byte
-		ctx           context.Context
-		cancel        context.CancelFunc
-		origDstIP     net.IP
-		origDstPort   uint16
-		flowInfo      *ndpi.FlowInfo
+		bufSrc           bytes.Buffer
+		bufDst           bytes.Buffer
+		ndpiLabel        = "Unknown"
+		honeypotAddr     string
+		honeypotError    string
+		startTime        time.Time
+		wg               sync.WaitGroup
+		teeWriterSrc     *limitedTeeWriter
+		teeWriterDst     *limitedTeeWriter
+		honeypotConn     net.Conn
+		err              error
+		n                int
+		firstChunk       []byte
+		ctx              context.Context
+		cancel           context.CancelFunc
+		origDstIP        net.IP
+		origDstPort      uint16
+		flowInfo         *ndpi.FlowInfo
+		flowIDForTracker string
 	)
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
@@ -268,19 +277,98 @@ func (h *Handler) Handle() {
 		zap.Uint16("origDstPort", origDstPort),
 	)
 
-	// --- STEP 3: classifica com nDPI ---
-	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
+	// --- STEP 3: classifica com nDPI (via FlowTracker ou local) ---
+	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
-	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
-	if err != nil {
-		log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
-		ndpiLabel = "Unknown"
+	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
+		proto, masterProto, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
+		if err == nil && found && proto != "" {
+			ndpiLabel = proto
+			if ndpiLabel == "" {
+				ndpiLabel = masterProto
+			}
+			log.Info("fluxo classificado via FlowTracker", zap.String("proto", ndpiLabel), zap.String("flow_id", flowIDForTracker))
+		} else {
+			log.Debug("FlowTracker não tem classificação, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
+			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+			if err != nil {
+				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+				ndpiLabel = "Unknown"
+			}
+		}
+	} else {
+		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+		if err != nil {
+			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+			ndpiLabel = "Unknown"
+		}
 	}
+
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+
+	// --- STEP 4.5: verifica se precisa de MITM ---
+	// Se é SSH, usa MITM para estabelecer conexão corretamente
+	if mitm.IsSSH(firstChunk) {
+		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr))
+
+		hostKey, err := generateSSHHostKey()
+		if err != nil {
+			log.Error("falha gerando host key SSH", zap.Error(err))
+			honeypotError = fmt.Sprintf("MITM setup failed: %v", err)
+			goto publish
+		}
+
+		mitmConfig := mitm.SSHMITMConfig{
+			HostKey:    hostKey,
+			TargetAddr: honeypotAddr,
+		}
+
+		mitmLogger := func(format string, args ...interface{}) {
+			log.Info("SSH-MITM: "+format, zap.Any("args", args))
+		}
+
+		err = mitm.HandleSSH(h.conn, mitmConfig, mitmLogger)
+		if err != nil {
+			log.Error("MITM SSH falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("MITM failed: %v", err)
+		}
+		goto publish
+	}
+
+	// Se é TLS, usa MITM
+	if mitm.IsTLS(firstChunk) {
+		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
+
+		cert, err := mitm.GenerateSelfSignedTLS()
+		if err != nil {
+			log.Error("falha gerando certificado TLS", zap.Error(err))
+			honeypotError = fmt.Sprintf("TLS MITM setup failed: %v", err)
+			goto publish
+		}
+
+		mitmConfig := mitm.TLSMITMConfig{
+			Cert:       cert,
+			TargetAddr: honeypotAddr,
+		}
+
+		mitmLogger := func(format string, args ...interface{}) {
+			log.Info("TLS-MITM: "+format, zap.Any("args", args))
+		}
+
+		err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
+		if err != nil {
+			log.Error("MITM TLS falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("MITM failed: %v", err)
+		}
+		goto publish
+	}
 
 	// --- STEP 5: tenta conectar ao honeypot ---
 	honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
@@ -403,4 +491,39 @@ func (w *limitedTeeWriter) Write(p []byte) (int, error) {
 		return n, fmt.Errorf("limitedTeeWriter: %w", err)
 	}
 	return len(p), nil // retorna len original, não o truncado
+}
+
+func generateSSHHostKey() (ssh.Signer, error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, fmt.Errorf("falha gerando chave RSA: %w", err)
+	}
+
+	signer, err := ssh.NewSignerFromKey(privateKey)
+	if err != nil {
+		return nil, fmt.Errorf("falha criando signer SSH: %w", err)
+	}
+
+	return signer, nil
+}
+
+func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) string {
+	srcIP4 := srcIP.To4()
+	dstIP4 := dstIP.To4()
+
+	if srcIP4 == nil {
+		srcIP4 = srcIP
+	}
+	if dstIP4 == nil {
+		dstIP4 = dstIP
+	}
+
+	src := fmt.Sprintf("%s:%d", srcIP4.String(), srcPort)
+	dst := fmt.Sprintf("%s:%d", dstIP4.String(), dstPort)
+
+	if bytes.Compare(srcIP4, dstIP4) > 0 || (bytes.Equal(srcIP4, dstIP4) && srcPort > dstPort) {
+		src, dst = dst, src
+	}
+
+	return fmt.Sprintf("%s-%s-%d", src, dst, protocol)
 }

@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
@@ -23,6 +24,7 @@ type Server struct {
 	producer        *kafka.Producer
 	maxPayloadBytes int64
 	log             *zap.Logger
+	flowTracker     *flowtracker.Client
 }
 
 func NewServer(
@@ -32,6 +34,7 @@ func NewServer(
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
 	log *zap.Logger,
+	flowTracker *flowtracker.Client,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -40,6 +43,7 @@ func NewServer(
 		producer:        producer,
 		maxPayloadBytes: maxPayloadBytes,
 		log:             log,
+		flowTracker:     flowTracker,
 	}
 }
 
@@ -133,6 +137,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.producer,
 		s.maxPayloadBytes,
 		log,
+		s.flowTracker,
 	)
 	h.Handle()
 

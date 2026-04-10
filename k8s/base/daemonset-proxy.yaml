@@ -93,42 +93,17 @@ spec:
             runAsUser: 0
 
       containers:
-        # ── container 1: nDPI sidecar (C) ────────────────────────────
-        # sobe primeiro na lista para criar o socket antes do proxy tentar conectar
-        - name: ndpi-classifier
-          image: docker.io/library/dpipot-classifier:local
-          imagePullPolicy: Never
-          args:
-            - /var/run/dpipot/ndpi.sock
-          volumeMounts:
-            - name: ndpi-socket
-              mountPath: /var/run/dpipot
-          resources:
-            requests:
-              cpu: 200m
-              memory: 128Mi
-            limits:
-              cpu: 1000m
-              memory: 512Mi
-          livenessProbe:
-            exec:
-              command:
-                - test
-                - -S
-                - /var/run/dpipot/ndpi.sock
-            initialDelaySeconds: 5
-            periodSeconds: 10
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: false
-            runAsNonRoot: true
-            runAsUser: 1001
-
-        # ── container 2: TCP proxy (Go) ──────────────────────────────
+        # ── container: TCP proxy (Go) com nDPI integrado via CGO ─────────────────────
         - name: proxy
-          image: docker.io/library/dpipot-proxy:local
-          imagePullPolicy: Never
-          imageID: ""
+          image: localhost:32000/dpipot-proxy:4.12
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CLASSIFIER_ENABLED
+              value: "true"
+            - name: CLASSIFIER_HOST
+              value: "127.0.0.1"
+            - name: CLASSIFIER_PORT
+              value: "9090"
           envFrom:
             - configMapRef:
                 name: dpipot-config
@@ -140,9 +115,6 @@ spec:
             - name: health
               containerPort: 8081
               protocol: TCP
-          volumeMounts:
-            - name: ndpi-socket
-              mountPath: /var/run/dpipot
           resources:
             requests:
               cpu: 100m
@@ -165,6 +137,32 @@ spec:
           securityContext:
             capabilities:
               add:
+                - NET_ADMIN
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+
+        # ── container: Classifier (AF_PACKET + nDPI) ────────────────────────────────
+        - name: classifier
+          image: localhost:32000/dpipot-classifier:4.12
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-interface=eth1"
+            - "-listen=127.0.0.1:9090"
+            - "-ttl=5"
+            - "-log=debug"
+          resources:
+            requests:
+              cpu: 200m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          securityContext:
+            capabilities:
+              add:
+                - NET_RAW
                 - NET_ADMIN
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

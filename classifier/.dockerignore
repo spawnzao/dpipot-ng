@@ -3,9 +3,6 @@
 *.a
 *.so
 
-# Binary
-classifier
-
 # IDE
 .vscode/
 .idea/

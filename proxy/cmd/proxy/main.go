@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/config"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	kafkapkg "github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	proxypkg "github.com/spawnzao/dpipot-ng/proxy/internal/proxy"
@@ -40,19 +41,12 @@ func main() {
 		zap.Any("routes", cfg.Routes),
 	)
 
-	// aguarda o sidecar nDPI estar disponível antes de aceitar tráfego
-	// importante no Kubernetes onde os containers do Pod sobem em paralelo
 	log.Info("inicializando nDPI...")
-	ndpiClient, err := ndpi.NewClient(cfg.NDPISocketPath, cfg.NDPITimeout)
+	ndpiClient, err := ndpi.NewClient(cfg.NDPISocketPath, cfg.NDPITimeout, log)
 	if err != nil {
 		log.Fatal("nDPI init failed", zap.Error(err))
 	}
-	log.Info("nDPI inicializado com sucesso via CGO")
-
-	if err := waitForNDPI(ndpiClient, 30*time.Second, log); err != nil {
-		log.Fatal("sidecar nDPI não ficou disponível", zap.Error(err))
-	}
-	log.Info("sidecar nDPI disponível")
+	log.Info("nDPI inicializado via CGO integrado")
 
 	// inicializa Kafka producer
 	producer, err := kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, log)
@@ -64,6 +58,10 @@ func main() {
 	// inicializa router
 	r := router.New(cfg.Routes, cfg.DefaultRoute, log)
 	log.Info("rotas configuradas", zap.Any("routes", r.Routes()))
+
+	// inicializa FlowTracker client
+	flowTracker := flowtracker.NewClient(*cfg, log)
+	log.Info("FlowTracker inicializado", zap.Bool("enabled", flowTracker.IsEnabled()))
 
 	// inicializa health server (HTTP na porta 8081)
 	healthServer := proxypkg.NewHealthServer(
@@ -81,6 +79,7 @@ func main() {
 		producer,
 		cfg.MaxPayloadBytes,
 		log,
+		flowTracker,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

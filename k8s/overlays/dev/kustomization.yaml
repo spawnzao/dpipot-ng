@@ -6,12 +6,12 @@ namespace: dpipot
 resources:
   - ../../base
 
-# dev usa tag "main" — atualizada a cada push na branch main
+# dev usa imagens locais para testes
 images:
-  - name: ghcr.io/spawnzao/dpipot-proxy
-    newTag: main
-  - name: ghcr.io/spawnzao/dpipot-classifier
-    newTag: main
+  - name: localhost:32000/dpipot-proxy
+    newTag: "4.12"
+  - name: localhost:32000/dpipot-classifier
+    newTag: "4.12"
 
 patches:
   # log mais verbose em dev
@@ -30,7 +30,7 @@ patches:
                 env:
                   - name: LOG_LEVEL
                     value: "debug"
-              - name: ndpi-classifier
+              - name: classifier
                 imagePullPolicy: Always
 
   # Kafka mais leve em dev

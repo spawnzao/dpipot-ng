@@ -8,10 +8,10 @@ package gondpi
 import "C"
 
 import (
+	"errors"
 	"sync"
 	"unsafe"
 
-	"github.com/pkg/errors"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi/gondpi/types"
 )
 
@@ -47,7 +47,6 @@ type NdpiFlow struct {
 func NewNdpiFlow() (*NdpiFlow, error) {
 	ndpiFlow := C.ndpi_flow_struct_malloc()
 	if ndpiFlow == nil {
-		C.ndpi_flow_struct_free(ndpiFlow)
 		err := errors.New("null ndpi flow struct")
 		return nil, err
 	}
@@ -102,17 +101,11 @@ type NdpiDetectionModule struct {
 }
 
 func NdpiDetectionModuleInitialize(prefs uint32, detectionBitmask []uint32) (*NdpiDetectionModule, error) {
-	gCtx := C.ndpi_global_context_create()
-	if gCtx == nil {
-		err := errors.New("failed to create nDPI global context")
-		return nil, err
-	}
-
 	ndpiBitmask := &C.NDPI_PROTOCOL_BITMASK{}
 	ndpiBitmask.fds_bits = *(*[NdpiBitmaskSize]C.uint32_t)(unsafe.Pointer(&detectionBitmask[0]))
-	ndpi := C.ndpi_detection_module_create(gCtx, ndpiBitmask)
+
+	ndpi := C.ndpi_detection_module_create(ndpiBitmask)
 	if ndpi == nil {
-		C.ndpi_global_context_destroy(gCtx)
 		err := errors.New("null ndpi detection module struct")
 		return nil, err
 	}
@@ -132,12 +125,12 @@ func (dm *NdpiDetectionModule) PacketProcessing(flow *NdpiFlow, ipPacket []byte,
 	ipPktLen := C.ushort(ipPacketLen)
 	ipPktTs := C.uint64_t(timestamp)
 
-	proto := C.ndpi_packet_processing(dm.NdpiPtr, flow.NdpiFlowPtr, ipPktPtr, ipPktLen, ipPktTs)
+	proto := C.ndpi_detection_process_wrapper(dm.NdpiPtr, flow.NdpiFlowPtr, ipPktPtr, ipPktLen, ipPktTs)
 
 	ndpiProto := NdpiProto{
-		MasterProtocolId: types.NdpiProtocol(proto.proto.master_protocol),
-		AppProtocolId:    types.NdpiProtocol(proto.proto.app_protocol),
-		CategoryId:       NdpiCategoryToId(proto.category),
+		MasterProtocolId: types.NdpiProtocol(proto.master_protocol),
+		AppProtocolId:    types.NdpiProtocol(proto.app_protocol),
+		CategoryId:       NdpiCategoryToId(C.ndpi_protocol_category_t(proto.category)),
 	}
 
 	return ndpiProto

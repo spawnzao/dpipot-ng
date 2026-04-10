@@ -10,27 +10,33 @@ import (
 
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
 type Config struct {
-	ListenAddr      string
-	NDPISocketPath  string
-	NDPITimeout     time.Duration
-	Routes          map[string]string
-	DefaultRoute    string
-	KafkaBrokers    string
-	KafkaTopic      string
-	MaxPayloadBytes int64
-	LogLevel        string
+	ListenAddr        string
+	NDPISocketPath    string
+	NDPITimeout       time.Duration
+	Routes            map[string]string
+	DefaultRoute      string
+	KafkaBrokers      string
+	KafkaTopic        string
+	MaxPayloadBytes   int64
+	LogLevel          string
+	ClassifierEnabled bool
+	ClassifierHost    string
+	ClassifierPort    int
 }
 
 func Load() (*Config, error) {
 	cfg := &Config{
-		ListenAddr:      getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
-		NDPISocketPath:  getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
-		NDPITimeout:     getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
-		DefaultRoute:    getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
-		KafkaBrokers:    getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
-		KafkaTopic:      getEnv("KAFKA_TOPIC", "dpipot.payloads"),
-		MaxPayloadBytes: getInt64("MAX_PAYLOAD_BYTES", 0),
-		LogLevel:        getEnv("LOG_LEVEL", "info"),
+		ListenAddr:        getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
+		NDPISocketPath:    getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
+		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
+		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
+		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
+		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.payloads"),
+		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 0),
+		LogLevel:          getEnv("LOG_LEVEL", "info"),
+		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",
+		ClassifierHost:    getEnv("CLASSIFIER_HOST", "127.0.0.1"),
+		ClassifierPort:    getInt("CLASSIFIER_PORT", 9090),
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",
@@ -85,6 +91,18 @@ func getInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func getInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
 	if err != nil {
 		return fallback
 	}
