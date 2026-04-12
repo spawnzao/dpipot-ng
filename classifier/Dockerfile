@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     make \
     gcc \
     libc-dev \
+    ca-certificates \
+    && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -26,6 +28,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcap0.8 \
     libndpi4.2 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/classifier /classifier
