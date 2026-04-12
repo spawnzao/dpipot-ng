@@ -19,7 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN cd /tmp && \
+RUN rm -rf /usr/include/ndpi && \
+    cd /tmp && \
     git clone --depth 1 --branch 4.12-stable https://github.com/ntop/nDPI.git && \
     cd nDPI && \
     ./autogen.sh && \
@@ -27,7 +28,7 @@ RUN cd /tmp && \
     make -j$(nproc) && \
     make install && \
     ldconfig && \
-    cd / && rm -rf nDPI
+    rm -rf /tmp/nDPI /tmp/nDPI-*
 
 WORKDIR /build
 
