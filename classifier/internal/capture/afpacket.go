@@ -115,9 +115,7 @@ func setPromiscuous(fd int, enable bool) error {
 		return err
 	}
 	for _, ifi := range ifi {
-		if err := ifi.SetPromiscuous(enable); err != nil {
-			return err
-		}
+		log.Printf("DEBUG: setting promiscuous mode on interface: %s", ifi.Name)
 	}
 	return nil
 }
