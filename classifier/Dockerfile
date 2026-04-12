@@ -40,7 +40,8 @@ FROM alpine:3.19
 
 RUN apk add --no-cache libpcap
 
-COPY --from=builder /usr/local/lib/libndpi.so.5 /usr/local/lib/libndpi.so.5
+COPY --from=builder /usr/local/lib/libndpi.so.4.12.0 /usr/local/lib/libndpi.so.4.12.0
+COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
