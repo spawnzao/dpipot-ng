@@ -138,8 +138,8 @@ extern ndpi_proto_result_t ndpi_classify_packet(struct ndpi_detection_module_str
     
     struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms, &input_info);
     
-    result.master_protocol = proto.master_protocol;
-    result.app_protocol = proto.app_protocol;
+    result.master_protocol = proto.proto.master_protocol;
+    result.app_protocol = proto.proto.app_protocol;
     result.category = proto.category;
     
     return result;
