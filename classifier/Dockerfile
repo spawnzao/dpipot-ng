@@ -21,7 +21,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux go build -o classifier ./cmd
+RUN CGO_ENABLED=1 GOOS=linux go build -mod=mod -o classifier ./cmd
 
 FROM debian:bookworm-slim
 
