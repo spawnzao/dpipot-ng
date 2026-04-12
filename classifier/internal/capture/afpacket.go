@@ -79,6 +79,11 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		return nil, fmt.Errorf("bind failed: %w", err)
 	}
 
+	if err := setNonblock(fd, true); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("set nonblock failed: %w", err)
+	}
+
 	af := &AFPacket{
 		iface:   cfg.Interface,
 		fd:      fd,
@@ -207,6 +212,20 @@ func isEagain(err error) bool {
 	}
 	log.Printf("DEBUG: isEagain checking err=%v, errno=%d, EAGAIN=%d, EWOULDBLOCK=%d", err, int(errno), int(syscall.EAGAIN), int(syscall.EWOULDBLOCK))
 	return errno == syscall.EAGAIN || errno == syscall.EWOULDBLOCK
+}
+
+func setNonblock(fd int, nonblock bool) error {
+	flags, err := syscall.Fcntl(fd, syscall.F_GETFL, 0)
+	if err != nil {
+		return err
+	}
+	if nonblock {
+		flags |= syscall.O_NONBLOCK
+	} else {
+		flags &= ^syscall.O_NONBLOCK
+	}
+	_, err = syscall.Fcntl(fd, syscall.F_SETFL, flags)
+	return err
 }
 
 var _ unsafe.Pointer
