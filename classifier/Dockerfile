@@ -14,17 +14,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     libtool \
     pkg-config \
-    && apt-get remove -y --purge libndpi-dev libndpi4 2>/dev/null || true \
-    && rm -rf /usr/include/ndpi \
     && update-ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get remove -y --purge libndpi-dev libndpi4 2>/dev/null || true \
+    && rm -rf /usr/include/ndpi
 
-RUN rm -rf /usr/include/ndpi && \
+RUN rm -rf /usr/include/ndpi /usr/local/include/ndpi && \
     cd /tmp && \
     git clone --depth 1 --branch 4.12-stable https://github.com/ntop/nDPI.git && \
     cd nDPI && \
     ./autogen.sh && \
-    ./configure --enable-experimental-features && \
+    ./configure --prefix=/usr/local --enable-experimental-features && \
     make -j$(nproc) && \
     make install && \
     ldconfig && \
@@ -50,8 +50,7 @@ COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
-RUN ldconfig && \
-    echo "/usr/local/lib" > /etc/ld.so.conf.d/ndpi.conf && ldconfig
+RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/ndpi.conf && ldconfig
 
 COPY --from=builder /build/classifier /classifier
 
