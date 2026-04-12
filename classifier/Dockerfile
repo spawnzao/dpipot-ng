@@ -34,7 +34,7 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 GOOS=linux go build -mod=mod -o classifier ./cmd
+RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi" GOOS=linux go build -mod=mod -o classifier ./cmd
 
 FROM debian:bookworm-slim
 
