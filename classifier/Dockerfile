@@ -45,7 +45,7 @@ COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
-RUN echo "/usr/local/lib" > /etc/ld.so.conf.d/ndpi.conf && ldconfig
+RUN mkdir -p /etc/ld.so.conf.d && echo "/usr/local/lib" > /etc/ld.so.conf.d/ndpi.conf && ldconfig
 
 COPY --from=builder /build/classifier /classifier
 
