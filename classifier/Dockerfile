@@ -43,11 +43,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/local/lib/libndpi.so.5 /usr/local/lib/libndpi.so.5
+COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
-RUN ldconfig
+RUN ldconfig && \
+    echo "/usr/local/lib" > /etc/ld.so.conf.d/ndpi.conf && ldconfig
 
 COPY --from=builder /build/classifier /classifier
 
