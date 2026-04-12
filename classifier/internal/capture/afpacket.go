@@ -137,7 +137,7 @@ func (a *AFPacket) readLoop() {
 		if err != nil {
 			log.Printf("DEBUG: recvfrom error: %v", err)
 			if isEagain(err) {
-				time.Sleep(time.Millisecond)
+				time.Sleep(time.Millisecond * 10)
 				continue
 			}
 			select {
