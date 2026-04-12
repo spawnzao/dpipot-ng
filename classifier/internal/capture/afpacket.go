@@ -129,7 +129,7 @@ func (a *AFPacket) readLoop() {
 		}
 
 		log.Printf("DEBUG: about to call recvfrom on fd=%d", a.fd)
-		n, _, err := syscall.Recvfrom(a.fd, buf, 0)
+		n, _, err := syscall.Recvfrom(a.fd, buf, syscall.MSG_DONTWAIT)
 		a.mu.RUnlock()
 
 		log.Printf("DEBUG: recvfrom returned n=%d, err=%v", n, err)
