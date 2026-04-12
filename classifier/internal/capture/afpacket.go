@@ -5,9 +5,10 @@ import (
 	"log"
 	"net"
 	"sync"
-	"syscall"
 	"time"
 	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -53,34 +54,34 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		cfg.Timeout = Timeout
 	}
 
-	fd, err := syscall.Socket(syscall.AF_PACKET, syscall.SOCK_RAW, syscall.ETH_P_ALL)
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, unix.ETH_P_ALL)
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
 
 	if err := setBufferSize(fd, BufferSize); err != nil {
-		syscall.Close(fd)
+		unix.Close(fd)
 		return nil, fmt.Errorf("set buffer size failed: %w", err)
 	}
 
 	ifIndex, err := getInterfaceIndex(cfg.Interface)
 	if err != nil {
-		syscall.Close(fd)
+		unix.Close(fd)
 		return nil, fmt.Errorf("get interface index failed: %w", err)
 	}
 
-	sockaddr := syscall.SockaddrLinklayer{
-		Protocol: syscall.ETH_P_ALL,
+	sockaddr := unix.SockaddrLinklayer{
+		Protocol: unix.ETH_P_ALL,
 		Ifindex:  ifIndex,
 	}
 
-	if err := syscall.Bind(fd, &sockaddr); err != nil {
-		syscall.Close(fd)
+	if err := unix.Bind(fd, &sockaddr); err != nil {
+		unix.Close(fd)
 		return nil, fmt.Errorf("bind failed: %w", err)
 	}
 
 	if err := setNonblock(fd, true); err != nil {
-		syscall.Close(fd)
+		unix.Close(fd)
 		return nil, fmt.Errorf("set nonblock failed: %w", err)
 	}
 
@@ -104,7 +105,7 @@ func getInterfaceIndex(iface string) (int, error) {
 }
 
 func setBufferSize(fd int, size int) error {
-	return syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_RCVBUF, size)
+	return unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, size)
 }
 
 func (a *AFPacket) Start() {
@@ -134,7 +135,7 @@ func (a *AFPacket) readLoop() {
 		}
 
 		log.Printf("DEBUG: about to call recvfrom on fd=%d", a.fd)
-		n, _, err := syscall.Recvfrom(a.fd, buf, syscall.MSG_DONTWAIT)
+		n, _, err := unix.Recvfrom(a.fd, buf, unix.MSG_DONTWAIT)
 		a.mu.RUnlock()
 
 		log.Printf("DEBUG: recvfrom returned n=%d, err=%v", n, err)
@@ -192,7 +193,7 @@ func (a *AFPacket) Close() error {
 	close(a.done)
 
 	if a.fd > 0 {
-		syscall.Close(a.fd)
+		unix.Close(a.fd)
 		a.fd = -1
 	}
 
@@ -205,26 +206,26 @@ func (a *AFPacket) Close() error {
 }
 
 func isEagain(err error) bool {
-	errno, ok := err.(syscall.Errno)
+	errno, ok := err.(unix.Errno)
 	if !ok {
-		log.Printf("DEBUG: isEagain err is not syscall.Errno, type=%T", err)
+		log.Printf("DEBUG: isEagain err is not unix.Errno, type=%T", err)
 		return false
 	}
-	log.Printf("DEBUG: isEagain checking err=%v, errno=%d, EAGAIN=%d, EWOULDBLOCK=%d", err, int(errno), int(syscall.EAGAIN), int(syscall.EWOULDBLOCK))
-	return errno == syscall.EAGAIN || errno == syscall.EWOULDBLOCK
+	log.Printf("DEBUG: isEagain checking err=%v, errno=%d, EAGAIN=%d, EWOULDBLOCK=%d", err, int(errno), int(unix.EAGAIN), int(unix.EWOULDBLOCK))
+	return errno == unix.EAGAIN || errno == unix.EWOULDBLOCK
 }
 
 func setNonblock(fd int, nonblock bool) error {
-	flags, err := syscall.Fcntl(fd, syscall.F_GETFL, 0)
+	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		return err
 	}
 	if nonblock {
-		flags |= syscall.O_NONBLOCK
+		flags |= int(unix.O_NONBLOCK)
 	} else {
-		flags &= ^syscall.O_NONBLOCK
+		flags &= ^int(unix.O_NONBLOCK)
 	}
-	_, err = syscall.Fcntl(fd, syscall.F_SETFL, flags)
+	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
 	return err
 }
 
