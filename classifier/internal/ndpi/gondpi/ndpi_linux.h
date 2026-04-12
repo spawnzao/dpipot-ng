@@ -11,8 +11,6 @@ extern ndpi_proto_result_t ndpi_classify_packet(struct ndpi_detection_module_str
                                                  struct ndpi_flow_struct *,
                                                  const unsigned char *,
                                                  const unsigned short,
-                                                 const uint8_t *,
-                                                 const uint8_t *,
                                                  const uint8_t,
                                                  const uint16_t,
                                                  const uint16_t,
@@ -43,7 +41,7 @@ extern uint8_t ndpi_flow_get_protocol_id_already_guessed(struct ndpi_flow_struct
 extern uint8_t ndpi_flow_get_host_already_guessed(struct ndpi_flow_struct *);
 extern uint8_t ndpi_flow_get_fail_with_unknown(struct ndpi_flow_struct *);
 extern uint8_t ndpi_flow_get_init_finished(struct ndpi_flow_struct *);
-extern uint8_t ndpi_flow_get_setup_packet_direction(struct ndpi_flow_struct *);
+extern uint8_t ndpi_flow_get_client_packet_direction(struct ndpi_flow_struct *);
 extern uint8_t ndpi_flow_get_packet_direction(struct ndpi_flow_struct *);
 extern uint8_t ndpi_flow_get_is_ipv6(struct ndpi_flow_struct *);
 
