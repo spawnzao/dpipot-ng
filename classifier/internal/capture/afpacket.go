@@ -64,7 +64,7 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		return nil, fmt.Errorf("set buffer size failed: %w", err)
 	}
 
-	if err := setPromiscuous(fd, true); err != nil {
+	if err := setPromiscuous(fd, cfg.Interface, true); err != nil {
 		unix.Close(fd)
 		return nil, fmt.Errorf("set promiscuous failed: %w", err)
 	}
@@ -120,14 +120,46 @@ func getInterfaceIndex(iface string) (int, error) {
 	return ifi.Index, nil
 }
 
-func setPromiscuous(fd int, enable bool) error {
-	ifi, err := net.Interfaces()
-	if err != nil {
-		return err
+func setPromiscuous(fd int, iface string, enable bool) error {
+	log.Printf("DEBUG: setting promiscuous mode on interface: %s (fd=%d)", iface, fd)
+
+	var ifreq struct {
+		name  [unix.IFNAMSIZ]byte
+		flags uint16
 	}
-	for _, ifi := range ifi {
-		log.Printf("DEBUG: setting promiscuous mode on interface: %s", ifi.Name)
+	copy(ifreq.name[:], iface)
+
+	_, _, errno := unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(fd),
+		uintptr(unix.SIOCGIFFLAGS),
+		uintptr(unsafe.Pointer(&ifreq)),
+	)
+	if errno != 0 {
+		return fmt.Errorf("SIOCGIFFLAGS ioctl failed: %w", errno)
 	}
+
+	log.Printf("DEBUG: current flags for %s: 0x%x", iface, ifreq.flags)
+
+	if enable {
+		ifreq.flags |= unix.IFF_PROMISC
+		log.Printf("DEBUG: enabling PROMISC on %s", iface)
+	} else {
+		ifreq.flags &^= unix.IFF_PROMISC
+		log.Printf("DEBUG: disabling PROMISC on %s", iface)
+	}
+
+	_, _, errno = unix.Syscall(
+		unix.SYS_IOCTL,
+		uintptr(fd),
+		uintptr(unix.SIOCSIFFLAGS),
+		uintptr(unsafe.Pointer(&ifreq)),
+	)
+	if errno != 0 {
+		return fmt.Errorf("SIOCSIFFLAGS ioctl failed: %w", errno)
+	}
+
+	log.Printf("DEBUG: promiscuous mode %s on %s", map[bool]string{true: "enabled", false: "disabled"}[enable], iface)
 	return nil
 }
 
