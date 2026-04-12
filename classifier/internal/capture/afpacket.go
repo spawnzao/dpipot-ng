@@ -2,6 +2,7 @@ package capture
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"syscall"
@@ -142,6 +143,8 @@ func (a *AFPacket) readLoop() {
 		if n == 0 {
 			continue
 		}
+
+		log.Printf("DEBUG: received packet from AF_PACKET, size=%d", n)
 
 		packet := &Packet{
 			Data:      make([]byte, n),
