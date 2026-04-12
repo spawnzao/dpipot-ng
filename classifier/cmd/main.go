@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -90,6 +91,9 @@ func main() {
 
 	logger.Info("FlowTracker TCP server started", zap.String("addr", *listenAddr))
 
+	var packetCount int64
+	var errorCount int64
+
 	af.Start()
 
 	go func() {
@@ -99,11 +103,16 @@ func main() {
 				if !ok {
 					return
 				}
+				atomic.AddInt64(&packetCount, 1)
+				if packetCount%100 == 0 {
+					logger.Debug("packets received", zap.Int64("count", packetCount))
+				}
 				ndpiHandler.ProcessPacket(packet.Data)
 			case err, ok := <-af.Errors():
 				if !ok {
 					return
 				}
+				atomic.AddInt64(&errorCount, 1)
 				logger.Error("AF_PACKET error", zap.Error(err))
 			}
 		}
