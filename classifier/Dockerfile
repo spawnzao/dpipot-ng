@@ -38,7 +38,7 @@ RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/li
 
 FROM alpine:3.19
 
-RUN apk add --no-cache libpcap libndpi
+RUN apk add --no-cache libpcap
 
 COPY --from=builder /usr/local/lib/libndpi.so.5 /usr/local/lib/libndpi.so.5
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
