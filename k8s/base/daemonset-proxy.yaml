@@ -148,7 +148,7 @@ spec:
           image: localhost:32000/dpipot-classifier:4.12
           imagePullPolicy: IfNotPresent
           args:
-            - "-interface=eth1"
+            - "-interface=ens192"
             - "-listen=127.0.0.1:9090"
             - "-ttl=5"
             - "-log=debug"

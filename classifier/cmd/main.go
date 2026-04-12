@@ -17,7 +17,7 @@ import (
 
 var (
 	interfaceName = flag.String("interface", "eth1", "Interface to capture packets")
-	listenAddr    = flag.String("listen", "127.0.0.1:9090", "gRPC listen address")
+	listenAddr    = flag.String("listen", "127.0.0.1:9090", "TCP listen address")
 	ttlMinutes    = flag.Int("ttl", 5, "Flow entry TTL in minutes")
 	logLevel      = flag.String("log", "info", "Log level (debug, info, warn, error)")
 )
@@ -88,7 +88,7 @@ func main() {
 		}
 	}()
 
-	logger.Info("FlowTracker gRPC server started", zap.String("addr", *listenAddr))
+	logger.Info("FlowTracker TCP server started", zap.String("addr", *listenAddr))
 
 	af.Start()
 

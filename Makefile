@@ -13,12 +13,12 @@ build: build-proxy build-classifier
 
 build-proxy:
 	@echo "=== Build Proxy (Go) ==="
-	cd proxy && go build -o dpipot-proxy ./cmd/proxy
+	cd proxy && GOWORK=off go build -mod=mod -o dpipot-proxy ./cmd/proxy
 	@echo "Proxy: proxy/dpipot-proxy"
 
 build-classifier:
-	@echo "=== Build Classifier (C) ==="
-	cd classifier && make
+	@echo "=== Build Classifier (Go) ==="
+	cd classifier && GOWORK=off CGO_ENABLED=1 go build -mod=mod -o classifier ./cmd
 	@echo "Classifier: classifier/classifier"
 
 # ===========================================

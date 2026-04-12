@@ -1,8 +1,8 @@
 package flowtracker
 
 import (
-	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net"
 	"time"
 
@@ -78,44 +78,57 @@ func (s *Server) Start(addr string) error {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	for {
+		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-	buf := make([]byte, 4096)
-	n, err := conn.Read(buf)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Debug("failed to read request", zap.Error(err))
+		buf := make([]byte, 4096)
+		n, err := conn.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				if s.logger != nil {
+					s.logger.Debug("client disconnected")
+				}
+			} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				if s.logger != nil {
+					s.logger.Debug("connection timeout")
+				}
+			} else {
+				if s.logger != nil {
+					s.logger.Debug("failed to read request", zap.Error(err))
+				}
+			}
+			return
 		}
-		return
-	}
 
-	var req QueryRequest
-	if err := json.Unmarshal(buf[:n], &req); err != nil {
-		if s.logger != nil {
-			s.logger.Debug("failed to parse request", zap.Error(err))
+		if n == 0 {
+			return
 		}
-		return
-	}
 
-	entry, ok := s.flowTable.Get(req.FlowID)
-	if !ok {
-		resp := QueryResponse{Found: false}
+		var req QueryRequest
+		if err := json.Unmarshal(buf[:n], &req); err != nil {
+			if s.logger != nil {
+				s.logger.Debug("failed to parse request", zap.Error(err))
+			}
+			continue
+		}
+
+		entry, ok := s.flowTable.Get(req.FlowID)
+		if !ok {
+			resp := QueryResponse{Found: false}
+			data, _ := json.Marshal(resp)
+			conn.Write(data)
+			continue
+		}
+
+		resp := QueryResponse{
+			Found:          true,
+			Protocol:       entry.Protocol,
+			MasterProtocol: entry.MasterProtocol,
+			Category:       entry.Category,
+		}
 		data, _ := json.Marshal(resp)
 		conn.Write(data)
-		return
 	}
-
-	resp := QueryResponse{
-		Found:          true,
-		Protocol:       entry.Protocol,
-		MasterProtocol: entry.MasterProtocol,
-		Category:       entry.Category,
-	}
-	data, _ := json.Marshal(resp)
-
-	length := uint16(len(data))
-	binary.Write(conn, binary.BigEndian, length)
-	conn.Write(data)
 }
 
 func (s *Server) Stop() {
