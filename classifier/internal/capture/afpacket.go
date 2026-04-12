@@ -179,19 +179,6 @@ func (a *AFPacket) readLoop() {
 		}
 
 		log.Printf("DEBUG: received packet from AF_PACKET, size=%d", n)
-			select {
-			case a.errors <- fmt.Errorf("recvfrom failed: %w", err):
-			case <-a.done:
-			}
-			continue
-		}
-
-		if n == 0 {
-			log.Printf("DEBUG: recv returned 0, continuing")
-			continue
-		}
-
-		log.Printf("DEBUG: received packet from AF_PACKET, size=%d", n)
 
 		packet := &Packet{
 			Data:      make([]byte, n),
