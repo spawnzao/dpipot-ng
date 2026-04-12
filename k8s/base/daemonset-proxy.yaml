@@ -93,7 +93,7 @@ spec:
       containers:
         # ── container: TCP proxy (Go) com nDPI integrado via CGO ─────────────────────
         - name: proxy
-          image: ghcr.io/spawnzao/dpipot-ng/dpipot-proxy:latest
+          image: ghcr.io/spawnzao/dpipot-proxy:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: CLASSIFIER_ENABLED
@@ -143,7 +143,7 @@ spec:
 
         # ── container: Classifier (AF_PACKET + nDPI) ────────────────────────────────
         - name: classifier
-          image: ghcr.io/spawnzao/dpipot-ng/dpipot-classifier:latest
+          image: ghcr.io/spawnzao/dpipot-classifier:latest
           imagePullPolicy: IfNotPresent
           args:
             - "-interface=ens192"

@@ -8,9 +8,9 @@ resources:
 
 # dev usa imagens do GHCR
 images:
-  - name: ghcr.io/spawnzao/dpipot-ng/dpipot-proxy
+  - name: ghcr.io/spawnzao/dpipot-proxy
     newTag: "latest"
-  - name: ghcr.io/spawnzao/dpipot-ng/dpipot-classifier
+  - name: ghcr.io/spawnzao/dpipot-classifier
     newTag: "latest"
 
 patches:
