@@ -115,18 +115,23 @@ func (a *AFPacket) readLoop() {
 	for {
 		select {
 		case <-a.done:
+			log.Printf("DEBUG: AF_PACKET loop exiting due to done")
 			return
 		default:
 		}
 
 		a.mu.RLock()
 		if a.closed {
+			log.Printf("DEBUG: AF_PACKET loop exiting due to closed")
 			a.mu.RUnlock()
 			return
 		}
 
+		log.Printf("DEBUG: about to call recvfrom on fd=%d", a.fd)
 		n, _, err := syscall.Recvfrom(a.fd, buf, 0)
 		a.mu.RUnlock()
+
+		log.Printf("DEBUG: recvfrom returned n=%d, err=%v", n, err)
 
 		if err != nil {
 			log.Printf("DEBUG: recvfrom error: %v", err)
