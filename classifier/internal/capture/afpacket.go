@@ -129,6 +129,7 @@ func (a *AFPacket) readLoop() {
 		a.mu.RUnlock()
 
 		if err != nil {
+			log.Printf("DEBUG: recvfrom error: %v", err)
 			if isEagain(err) {
 				time.Sleep(time.Millisecond)
 				continue
@@ -141,6 +142,7 @@ func (a *AFPacket) readLoop() {
 		}
 
 		if n == 0 {
+			log.Printf("DEBUG: recv returned 0, continuing")
 			continue
 		}
 
