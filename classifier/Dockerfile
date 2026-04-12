@@ -1,23 +1,20 @@
 # syntax=docker/dockerfile:1
 
-FROM debian:bookworm-slim AS builder
+FROM golang:1.26-alpine AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    golang-go \
+RUN apk add --no-cache \
     libpcap-dev \
     git \
     make \
     gcc \
-    libc-dev \
-    ca-certificates \
+    musl-dev \
+    linux-headers \
     autoconf \
     automake \
     libtool \
-    pkg-config \
-    && update-ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get remove -y --purge libndpi-dev libndpi4 2>/dev/null || true \
-    && rm -rf /usr/include/ndpi
+    pkgconfig \
+    cargo \
+    && rm -rf /var/cache/apk/*
 
 RUN rm -rf /usr/include/ndpi /usr/local/include/ndpi && \
     cd /tmp && \
@@ -39,14 +36,11 @@ COPY . .
 
 RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi" GOOS=linux go build -mod=mod -o classifier ./cmd
 
-FROM debian:bookworm-slim
+FROM alpine:3.19
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcap0.8 \
-    ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache libpcap libndpi
 
-COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
+COPY --from=builder /usr/local/lib/libndpi.so.5 /usr/local/lib/libndpi.so.5
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
