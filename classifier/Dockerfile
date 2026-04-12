@@ -14,7 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     libtool \
     pkg-config \
-    && apt-get remove -y libndpi-dev 2>/dev/null || true \
+    && apt-get remove -y --purge libndpi-dev libndpi4 2>/dev/null || true \
+    && rm -rf /usr/include/ndpi \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
