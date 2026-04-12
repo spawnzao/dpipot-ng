@@ -85,10 +85,21 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		return nil, fmt.Errorf("bind failed: %w", err)
 	}
 
-	if err := setNonblock(fd, true); err != nil {
+	log.Printf("DEBUG: socket bound to interface, setting blocking mode")
+
+	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+	if err != nil {
 		unix.Close(fd)
-		return nil, fmt.Errorf("set nonblock failed: %w", err)
+		return nil, fmt.Errorf("get flags failed: %w", err)
 	}
+	flags &= ^int(unix.O_NONBLOCK)
+	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("set blocking failed: %w", err)
+	}
+
+	log.Printf("DEBUG: socket set to blocking mode")
 
 	af := &AFPacket{
 		iface:   cfg.Interface,
@@ -150,18 +161,24 @@ func (a *AFPacket) readLoop() {
 			return
 		}
 
-		log.Printf("DEBUG: about to call recvfrom on fd=%d", a.fd)
-		n, _, err := unix.Recvfrom(a.fd, buf, unix.MSG_DONTWAIT)
+		log.Printf("DEBUG: about to call recvfrom on fd=%d (blocking)", a.fd)
+		n, _, err := unix.Recvfrom(a.fd, buf, 0)
 		a.mu.RUnlock()
 
 		log.Printf("DEBUG: recvfrom returned n=%d, err=%v", n, err)
 
 		if err != nil {
 			log.Printf("DEBUG: recvfrom error: %v", err)
-			if isEagain(err) {
-				time.Sleep(time.Millisecond * 10)
-				continue
-			}
+			time.Sleep(time.Millisecond * 10)
+			continue
+		}
+
+		if n == 0 {
+			log.Printf("DEBUG: recv returned 0, continuing")
+			continue
+		}
+
+		log.Printf("DEBUG: received packet from AF_PACKET, size=%d", n)
 			select {
 			case a.errors <- fmt.Errorf("recvfrom failed: %w", err):
 			case <-a.done:
