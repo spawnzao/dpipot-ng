@@ -200,6 +200,7 @@ func (a *AFPacket) Close() error {
 }
 
 func isEagain(err error) bool {
+	log.Printf("DEBUG: isEagain checking err=%v, type=%T, EAGAIN=%v", err, err, syscall.EAGAIN)
 	return err == syscall.EAGAIN || err == syscall.EWOULDBLOCK
 }
 
