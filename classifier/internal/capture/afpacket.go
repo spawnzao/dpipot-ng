@@ -64,6 +64,11 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		return nil, fmt.Errorf("set buffer size failed: %w", err)
 	}
 
+	if err := setPromiscuous(fd, true); err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("set promiscuous failed: %w", err)
+	}
+
 	ifIndex, err := getInterfaceIndex(cfg.Interface)
 	if err != nil {
 		unix.Close(fd)
@@ -102,6 +107,19 @@ func getInterfaceIndex(iface string) (int, error) {
 		return 0, fmt.Errorf("InterfaceByName failed: %w", err)
 	}
 	return ifi.Index, nil
+}
+
+func setPromiscuous(fd int, enable bool) error {
+	ifi, err := net.Interfaces()
+	if err != nil {
+		return err
+	}
+	for _, ifi := range ifi {
+		if err := ifi.SetPromiscuous(enable); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func setBufferSize(fd int, size int) error {
