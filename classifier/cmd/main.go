@@ -97,6 +97,8 @@ func main() {
 	af.Start()
 
 	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
 		for {
 			select {
 			case packet, ok := <-af.Packets():
@@ -104,8 +106,8 @@ func main() {
 					return
 				}
 				atomic.AddInt64(&packetCount, 1)
-				if packetCount%100 == 0 {
-					logger.Debug("packets received", zap.Int64("count", packetCount))
+				if packetCount%10 == 0 {
+					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))
 				}
 				ndpiHandler.ProcessPacket(packet.Data)
 			case err, ok := <-af.Errors():
@@ -114,6 +116,8 @@ func main() {
 				}
 				atomic.AddInt64(&errorCount, 1)
 				logger.Error("AF_PACKET error", zap.Error(err))
+			case <-ticker.C:
+				logger.Info("classifier stats", zap.Int64("packets", packetCount), zap.Int64("errors", errorCount))
 			}
 		}
 	}()
