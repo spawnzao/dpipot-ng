@@ -101,7 +101,7 @@ extern ndpi_proto_defaults_t *ndpi_proto_defaults_get(struct ndpi_detection_modu
     for (uint32_t i = 0; i < NDPI_MAX_SUPPORTED_PROTOCOLS + NDPI_MAX_NUM_CUSTOM_PROTOCOLS; i++)
     {
         is_clear_text_proto[i] = pd[i].isClearTextProto;
-        is_app_protocol[i] = false;
+        is_app_protocol[i] = pd[i].isAppProtocol;
     }
 
     return pd;
