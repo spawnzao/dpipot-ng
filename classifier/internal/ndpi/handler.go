@@ -149,6 +149,18 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
+	if h.logger != nil {
+		h.logger.Debug("processing packet",
+			zap.String("flow_id", flowID),
+			zap.String("src", srcIP.String()),
+			zap.String("dst", dstIP.String()),
+			zap.Uint16("src_port", srcPort),
+			zap.Uint16("dst_port", dstPort),
+			zap.Uint8("proto", protocol),
+			zap.Int("payload_len", len(payload)),
+		)
+	}
+
 	flowInfo, err := h.ndpiDM.ProcessPacketFlow(srcIP, dstIP, srcPort, dstPort, protocol, payload)
 	if err != nil {
 		if h.logger != nil {
