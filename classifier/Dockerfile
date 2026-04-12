@@ -1,8 +1,16 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.26-alpine AS builder
+FROM debian:bookworm-slim AS builder
 
-RUN apk add --no-cache git gcc musl-dev linux-headers libpcap-dev libndpi-dev
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    golang-go \
+    libpcap-dev \
+    libndpi-dev \
+    git \
+    make \
+    gcc \
+    libc-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
@@ -13,9 +21,12 @@ COPY . .
 
 RUN CGO_ENABLED=1 GOOS=linux go build -o classifier ./cmd
 
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
-RUN apk add --no-cache libpcap libndpi
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpcap0.8 \
+    libndpi4.2 \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/classifier /classifier
 
