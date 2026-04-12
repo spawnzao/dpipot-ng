@@ -200,8 +200,13 @@ func (a *AFPacket) Close() error {
 }
 
 func isEagain(err error) bool {
-	log.Printf("DEBUG: isEagain checking err=%v, type=%T, EAGAIN=%v", err, err, syscall.EAGAIN)
-	return err == syscall.EAGAIN || err == syscall.EWOULDBLOCK
+	errno, ok := err.(syscall.Errno)
+	if !ok {
+		log.Printf("DEBUG: isEagain err is not syscall.Errno, type=%T", err)
+		return false
+	}
+	log.Printf("DEBUG: isEagain checking err=%v, errno=%d, EAGAIN=%d, EWOULDBLOCK=%d", err, int(errno), int(syscall.EAGAIN), int(syscall.EWOULDBLOCK))
+	return errno == syscall.EAGAIN || errno == syscall.EWOULDBLOCK
 }
 
 var _ unsafe.Pointer
