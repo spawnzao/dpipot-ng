@@ -9,15 +9,13 @@ spec:
   selector:
     matchLabels:
       app: dpipot-proxy
-  updateStrategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
   template:
     metadata:
       labels:
         app: dpipot-proxy
     spec:
+      imagePullSecrets:
+        - name: ghcr-secret
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       initContainers:
@@ -95,7 +93,7 @@ spec:
       containers:
         # ── container: TCP proxy (Go) com nDPI integrado via CGO ─────────────────────
         - name: proxy
-          image: localhost:32000/dpipot-proxy:4.12
+          image: ghcr.io/spawnzao/dpipot-ng/dpipot-proxy:latest
           imagePullPolicy: IfNotPresent
           env:
             - name: CLASSIFIER_ENABLED
@@ -145,7 +143,7 @@ spec:
 
         # ── container: Classifier (AF_PACKET + nDPI) ────────────────────────────────
         - name: classifier
-          image: localhost:32000/dpipot-classifier:4.12
+          image: ghcr.io/spawnzao/dpipot-ng/dpipot-classifier:latest
           imagePullPolicy: IfNotPresent
           args:
             - "-interface=ens192"

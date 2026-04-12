@@ -6,12 +6,12 @@ namespace: dpipot
 resources:
   - ../../base
 
-# dev usa imagens locais para testes
+# dev usa imagens do GHCR
 images:
-  - name: localhost:32000/dpipot-proxy
-    newTag: "4.12"
-  - name: localhost:32000/dpipot-classifier
-    newTag: "4.12"
+  - name: ghcr.io/spawnzao/dpipot-ng/dpipot-proxy
+    newTag: "latest"
+  - name: ghcr.io/spawnzao/dpipot-ng/dpipot-classifier
+    newTag: "latest"
 
 patches:
   # log mais verbose em dev
