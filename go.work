@@ -3,4 +3,5 @@ go 1.26.1
 use (
 	./classifier
 	./proxy
+	./tools/debug_afpacket
 )
