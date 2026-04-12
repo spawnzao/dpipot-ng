@@ -111,6 +111,7 @@ func (a *AFPacket) readLoop() {
 	defer a.wg.Done()
 
 	buf := make([]byte, MaxPacketSize)
+	log.Printf("DEBUG: AF_PACKET read loop started, fd=%d", a.fd)
 
 	for {
 		select {
