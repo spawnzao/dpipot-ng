@@ -1,6 +1,7 @@
 package capture
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -17,6 +18,7 @@ const (
 	Promiscuous   = true
 	Timeout       = 100 * time.Millisecond
 	MaxPacketSize = 65535
+	ETH_P_ALL     = 0x0003
 )
 
 type Packet struct {
@@ -54,16 +56,14 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		cfg.Timeout = Timeout
 	}
 
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, unix.ETH_P_ALL)
+	ethproto := htons(ETH_P_ALL)
+	log.Printf("DEBUG: ETH_P_ALL = 0x%04x (network byte order)", ethproto)
+
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, int(ethproto))
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
 	log.Printf("DEBUG: socket created fd=%d, AF_PACKET, SOCK_RAW, ETH_P_ALL", fd)
-
-	if err := setBufferSize(fd, BufferSize); err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("set buffer size failed: %w", err)
-	}
 
 	ifIndex, err := getInterfaceIndex(cfg.Interface)
 	if err != nil {
@@ -72,8 +72,9 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	}
 	log.Printf("DEBUG: interface %s has index %d", cfg.Interface, ifIndex)
 
+	// ORDEM CERTA: bind PRIMEIRO
 	sockaddr := unix.SockaddrLinklayer{
-		Protocol: unix.ETH_P_ALL,
+		Protocol: ethproto,
 		Ifindex:  ifIndex,
 	}
 
@@ -83,6 +84,7 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	}
 	log.Printf("DEBUG: socket bound to interface %s (index=%d)", cfg.Interface, ifIndex)
 
+	// DEPOIS do bind: adicionar PACKET_MR_PROMISC
 	mreq := unix.PacketMreq{
 		Ifindex: int32(ifIndex),
 		Type:    unix.PACKET_MR_PROMISC,
@@ -91,17 +93,28 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	if err != nil {
 		log.Printf("DEBUG: PACKET_ADD_MEMBERSHIP failed: %v (continuing anyway)", err)
 	} else {
-		log.Printf("DEBUG: PACKET_MR_PROMISC membership added")
+		log.Printf("DEBUG: PACKET_MR_PROMISC membership added AFTER bind")
 	}
 
-	log.Printf("DEBUG: setting non-blocking mode")
-	err = unix.SetNonblock(fd, true)
+	// FORÇAR modo blocking explicitamente (remover non-blocking)
+	log.Printf("DEBUG: forcing blocking mode (removing O_NONBLOCK)")
+	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		unix.Close(fd)
-		return nil, fmt.Errorf("set nonblock failed: %w", err)
+		return nil, fmt.Errorf("FcntlInt F_GETFL failed: %w", err)
 	}
+	flags &^= int(unix.O_NONBLOCK)
+	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("FcntlInt F_SETFL failed: %w", err)
+	}
+	log.Printf("DEBUG: socket now in blocking mode")
 
-	log.Printf("DEBUG: socket set to non-blocking mode")
+	if err := setBufferSize(fd, BufferSize); err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("set buffer size failed: %w", err)
+	}
 
 	af := &AFPacket{
 		iface:   cfg.Interface,
@@ -178,16 +191,9 @@ func (a *AFPacket) readLoop() {
 	defer a.wg.Done()
 
 	buf := make([]byte, MaxPacketSize)
-	log.Printf("DEBUG: AF_PACKET read loop started, fd=%d", a.fd)
+	log.Printf("DEBUG: AF_PACKET read loop started, fd=%d (blocking mode)", a.fd)
 
 	for {
-		select {
-		case <-a.done:
-			log.Printf("DEBUG: AF_PACKET loop exiting due to done")
-			return
-		default:
-		}
-
 		a.mu.RLock()
 		if a.closed {
 			log.Printf("DEBUG: AF_PACKET loop exiting due to closed")
@@ -195,14 +201,15 @@ func (a *AFPacket) readLoop() {
 			return
 		}
 
-		log.Printf("DEBUG: about to call recvfrom on fd=%d (non-blocking)", a.fd)
+		// Modo blocking - recvfrom vai bloquear até receber dados
+		log.Printf("DEBUG: calling recvfrom on fd=%d (blocking)", a.fd)
 		n, _, err := unix.Recvfrom(a.fd, buf, 0)
 		a.mu.RUnlock()
 
 		if err != nil {
 			errno, ok := err.(unix.Errno)
 			if ok && (errno == unix.EAGAIN || errno == unix.EWOULDBLOCK) {
-				log.Printf("DEBUG: recvfrom EAGAIN, no data available")
+				log.Printf("DEBUG: recvfrom EAGAIN (should not happen in blocking mode)")
 				time.Sleep(time.Millisecond * 10)
 				continue
 			}
@@ -286,6 +293,12 @@ func setNonblock(fd int, nonblock bool) error {
 	}
 	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
 	return err
+}
+
+func htons(i uint16) uint16 {
+	b := make([]byte, 2)
+	binary.BigEndian.PutUint16(b, i)
+	return binary.LittleEndian.Uint16(b)
 }
 
 var _ unsafe.Pointer
