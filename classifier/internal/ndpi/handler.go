@@ -3,8 +3,6 @@ package ndpi
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
-	"log"
 	"net"
 	"sync"
 	"time"
@@ -151,15 +149,6 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	firstBytes := ""
-	if len(payload) > 8 {
-		firstBytes = fmt.Sprintf("%x", payload[:8])
-	}
-
-	// Use log.Printf to ensure these debug messages appear
-	log.Printf("DEBUG processing packet: flow_id=%s src=%s dst=%s src_port=%d dst_port=%d proto=%d payload_len=%d first_bytes=%s",
-		flowID, srcIP.String(), dstIP.String(), srcPort, dstPort, protocol, len(payload), firstBytes)
-
 	if h.logger != nil {
 		h.logger.Debug("processing packet",
 			zap.String("flow_id", flowID),
@@ -169,35 +158,42 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			zap.Uint16("dst_port", dstPort),
 			zap.Uint8("proto", protocol),
 			zap.Int("payload_len", len(payload)),
-			zap.String("first_bytes", firstBytes),
 		)
 	}
 
-	// Build complete IP packet with headers
-	ipPacket := h.buildIPv4Packet(srcIP, dstIP, srcPort, dstPort, protocol, payload)
-
-	// Use log.Printf to ensure this debug message appears
-	log.Printf("DEBUG nDPI input: flow_id=%s ip_packet_len=%d ip_first_20=%x", flowID, len(ipPacket), ipPacket[:min(20, len(ipPacket))])
-
-	if h.logger != nil {
-		h.logger.Debug("nDPI input",
-			zap.String("flow_id", flowID),
-			zap.Int("ip_packet_len", len(ipPacket)),
-			zap.String("ip_first_bytes", fmt.Sprintf("%x", ipPacket[:min(20, len(ipPacket))])),
-		)
-	}
-
-	flowInfo, err := h.ndpiDM.ProcessPacketFlow(srcIP, dstIP, srcPort, dstPort, protocol, payload)
+	// Use PacketProcessing directly (like proxy does)
+	ndpiFlow, err := gondpi.NewNdpiFlow()
 	if err != nil {
 		if h.logger != nil {
-			h.logger.Debug("nDPI classification failed", zap.Error(err), zap.String("flow_id", flowID))
+			h.logger.Debug("nDPI flow creation failed", zap.Error(err))
 		}
 		return
 	}
+	defer ndpiFlow.Close()
 
-	masterProto := flowInfo.MasterProtocolId.ToName()
-	appProto := flowInfo.AppProtocolId.ToName()
-	category := uint32(flowInfo.CategoryId)
+	srcIP4 := srcIP.To4()
+	dstIP4 := dstIP.To4()
+	if srcIP4 == nil || dstIP4 == nil {
+		return
+	}
+
+	// Build complete IP packet for nDPI (same as proxy)
+	ipPacket := buildIPv4PacketForNDPI(payload, srcIP4, dstIP4, srcPort, dstPort, protocol)
+
+	if h.logger != nil {
+		h.logger.Debug("nDPI classifying packet",
+			zap.String("flow_id", flowID),
+			zap.Int("ipPacketLen", len(ipPacket)),
+			zap.Int("payloadLen", len(payload)),
+		)
+	}
+
+	ts := time.Now().UnixMilli()
+	proto := h.ndpiDM.PacketProcessing(ndpiFlow, ipPacket, uint16(len(ipPacket)), ts)
+
+	masterProto := proto.MasterProtocolId.ToName()
+	appProto := proto.AppProtocolId.ToName()
+	category := uint32(proto.CategoryId)
 
 	if h.logger != nil {
 		h.logger.Debug("classified flow",
@@ -227,4 +223,65 @@ func (h *Handler) Close() {
 		h.ndpiDM.Close()
 	}
 	h.wg.Wait()
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func buildIPv4PacketForNDPI(payload []byte, srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) []byte {
+	tcpHeaderLen := 20
+	totalLen := 20 + tcpHeaderLen + len(payload)
+
+	packet := make([]byte, totalLen)
+
+	packet[0] = 0x45 // IPv4, IHL=5
+	packet[1] = 0x00 // DSCP
+	binary.BigEndian.PutUint16(packet[2:], uint16(totalLen))
+	binary.BigEndian.PutUint16(packet[4:], uint16(54321))
+	binary.BigEndian.PutUint16(packet[6:], 0x4000) // Don't fragment
+	packet[8] = 64                                 // TTL
+	packet[9] = protocol                           // TCP (6)
+
+	binary.BigEndian.PutUint16(packet[10:], 0)
+
+	copy(packet[12:16], srcIP)
+	copy(packet[16:20], dstIP)
+
+	ipChecksum := calculateIPChecksum(packet[:20])
+	binary.BigEndian.PutUint16(packet[10:], ipChecksum)
+
+	tcpOffset := 20
+	binary.BigEndian.PutUint16(packet[tcpOffset:], srcPort)
+	binary.BigEndian.PutUint16(packet[tcpOffset+2:], dstPort)
+	binary.BigEndian.PutUint32(packet[tcpOffset+4:], 0)      // Seq
+	binary.BigEndian.PutUint32(packet[tcpOffset+8:], 0)      // Ack
+	packet[tcpOffset+12] = 0x50                              // Data offset
+	packet[tcpOffset+13] = 0x18                              // Flags: SYN + ACK
+	binary.BigEndian.PutUint16(packet[tcpOffset+14:], 65535) // Window
+	binary.BigEndian.PutUint16(packet[tcpOffset+16:], 0)     // Checksum
+
+	copy(packet[tcpOffset+20:], payload)
+
+	return packet
+}
+
+func calculateIPChecksum(header []byte) uint16 {
+	var sum uint32
+	for i := 0; i < len(header); i += 2 {
+		var word uint16
+		if i+1 < len(header) {
+			word = uint16(header[i])<<8 | uint16(header[i+1])
+		} else {
+			word = uint16(header[i]) << 8
+		}
+		sum += uint32(word)
+	}
+	for sum>>16 != 0 {
+		sum = (sum & 0xFFFF) + (sum >> 16)
+	}
+	return uint16(^sum)
 }
