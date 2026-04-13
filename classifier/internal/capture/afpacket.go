@@ -54,11 +54,19 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		cfg.Timeout = Timeout
 	}
 
-	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, 0)
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
-	log.Printf("DEBUG: socket created fd=%d, AF_INET, SOCK_RAW, IPPROTO_RAW", fd)
+	log.Printf("DEBUG: socket created fd=%d, AF_INET, SOCK_RAW, protocol=0 (all)", fd)
+
+	var one int = 1
+	err = unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_HDRINCL, one)
+	if err != nil {
+		log.Printf("DEBUG: IP_HDRINCL failed: %v (continuing)", err)
+	} else {
+		log.Printf("DEBUG: IP_HDRINCL enabled")
+	}
 
 	if err := setBufferSize(fd, BufferSize); err != nil {
 		unix.Close(fd)
