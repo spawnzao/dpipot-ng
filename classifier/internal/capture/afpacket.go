@@ -54,44 +54,15 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		cfg.Timeout = Timeout
 	}
 
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, unix.ETH_P_ALL)
+	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_RAW, unix.IPPROTO_RAW)
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
-	log.Printf("DEBUG: socket created fd=%d, AF_PACKET, SOCK_RAW, ETH_P_ALL", fd)
+	log.Printf("DEBUG: socket created fd=%d, AF_INET, SOCK_RAW, IPPROTO_RAW", fd)
 
 	if err := setBufferSize(fd, BufferSize); err != nil {
 		unix.Close(fd)
 		return nil, fmt.Errorf("set buffer size failed: %w", err)
-	}
-
-	ifIndex, err := getInterfaceIndex(cfg.Interface)
-	if err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("get interface index failed: %w", err)
-	}
-	log.Printf("DEBUG: interface %s has index %d", cfg.Interface, ifIndex)
-
-	sockaddr := unix.SockaddrLinklayer{
-		Protocol: unix.ETH_P_ALL,
-		Ifindex:  ifIndex,
-	}
-
-	if err := unix.Bind(fd, &sockaddr); err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("bind failed: %w", err)
-	}
-	log.Printf("DEBUG: socket bound to interface %s (index=%d)", cfg.Interface, ifIndex)
-
-	mreq := unix.PacketMreq{
-		Ifindex: int32(ifIndex),
-		Type:    unix.PACKET_MR_PROMISC,
-	}
-	err = unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq)
-	if err != nil {
-		log.Printf("DEBUG: PACKET_ADD_MEMBERSHIP failed: %v (continuing anyway)", err)
-	} else {
-		log.Printf("DEBUG: PACKET_MR_PROMISC membership added")
 	}
 
 	log.Printf("DEBUG: setting non-blocking mode")
@@ -206,7 +177,7 @@ func (a *AFPacket) readLoop() {
 				time.Sleep(time.Millisecond * 10)
 				continue
 			}
-			log.Printf("DEBUG: recvfrom error: %v", err)
+			log.Printf("DEBUG: recvfrom error: %v (errno=%d)", err, int(errno))
 			time.Sleep(time.Millisecond * 10)
 			continue
 		}
@@ -226,6 +197,7 @@ func (a *AFPacket) readLoop() {
 
 		select {
 		case a.packets <- packet:
+			log.Printf("DEBUG: packet sent to channel, size=%d", n)
 		case <-a.done:
 			return
 		}
