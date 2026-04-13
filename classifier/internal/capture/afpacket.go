@@ -27,6 +27,7 @@ type Packet struct {
 type AFPacket struct {
 	iface   string
 	fd      int
+	ifindex int
 	closed  bool
 	mu      sync.RWMutex
 	wg      sync.WaitGroup
@@ -71,39 +72,25 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 
 	ifIndex, err := getInterfaceIndex(cfg.Interface)
 	if err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("get interface index failed: %w", err)
+		log.Printf("DEBUG: get interface index failed: %v, will capture from any interface", err)
+		ifIndex = 0
+	} else {
+		log.Printf("DEBUG: interface %s has index %d, will filter packets", cfg.Interface, ifIndex)
 	}
 
-	sockaddr := unix.SockaddrLinklayer{
-		Protocol: unix.ETH_P_ALL,
-		Ifindex:  ifIndex,
-	}
-
-	if err := unix.Bind(fd, &sockaddr); err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("bind failed: %w", err)
-	}
-
-	log.Printf("DEBUG: socket bound to interface, setting blocking mode")
-
-	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
+	log.Printf("DEBUG: creating socket WITHOUT bind (capturing from any interface)")
+	err = unix.SetNonblock(fd, true)
 	if err != nil {
 		unix.Close(fd)
-		return nil, fmt.Errorf("get flags failed: %w", err)
-	}
-	flags &= ^int(unix.O_NONBLOCK)
-	_, err = unix.FcntlInt(uintptr(fd), unix.F_SETFL, flags)
-	if err != nil {
-		unix.Close(fd)
-		return nil, fmt.Errorf("set blocking failed: %w", err)
+		return nil, fmt.Errorf("set nonblock failed: %w", err)
 	}
 
-	log.Printf("DEBUG: socket set to blocking mode")
+	log.Printf("DEBUG: socket set to non-blocking mode")
 
 	af := &AFPacket{
 		iface:   cfg.Interface,
 		fd:      fd,
+		ifindex: ifIndex,
 		packets: make(chan *Packet, 1000),
 		errors:  make(chan error, 10),
 		done:    make(chan struct{}),
@@ -193,13 +180,17 @@ func (a *AFPacket) readLoop() {
 			return
 		}
 
-		log.Printf("DEBUG: about to call recvfrom on fd=%d (blocking)", a.fd)
-		n, _, err := unix.Recvfrom(a.fd, buf, 0)
+		log.Printf("DEBUG: about to call recvfrom on fd=%d (non-blocking)", a.fd)
+		n, addr, err := unix.Recvfrom(a.fd, buf, 0)
 		a.mu.RUnlock()
 
-		log.Printf("DEBUG: recvfrom returned n=%d, err=%v", n, err)
-
 		if err != nil {
+			errno, ok := err.(unix.Errno)
+			if ok && (errno == unix.EAGAIN || errno == unix.EWOULDBLOCK) {
+				log.Printf("DEBUG: recvfrom EAGAIN, no data available")
+				time.Sleep(time.Millisecond * 10)
+				continue
+			}
 			log.Printf("DEBUG: recvfrom error: %v", err)
 			time.Sleep(time.Millisecond * 10)
 			continue
@@ -211,6 +202,15 @@ func (a *AFPacket) readLoop() {
 		}
 
 		log.Printf("DEBUG: received packet from AF_PACKET, size=%d", n)
+
+		if a.ifindex > 0 && addr != nil {
+			sa, ok := addr.(*unix.SockaddrLinklayer)
+			if ok && sa.Ifindex != a.ifindex {
+				log.Printf("DEBUG: packet ifindex %d != wanted %d, skipping", sa.Ifindex, a.ifindex)
+				continue
+			}
+			log.Printf("DEBUG: packet ifindex %d matches wanted %d", sa.Ifindex, a.ifindex)
+		}
 
 		packet := &Packet{
 			Data:      make([]byte, n),
