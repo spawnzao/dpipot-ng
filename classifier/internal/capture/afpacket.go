@@ -59,6 +59,7 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
+	log.Printf("DEBUG: socket created fd=%d, AF_PACKET, SOCK_RAW, ETH_P_ALL", fd)
 
 	if err := setBufferSize(fd, BufferSize); err != nil {
 		unix.Close(fd)
@@ -79,6 +80,13 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	}
 
 	log.Printf("DEBUG: creating socket WITHOUT bind (capturing from any interface)")
+
+	var one int = 1
+	err = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_ATTACH_FILTER, one)
+	if err != nil {
+		log.Printf("DEBUG: SO_ATTACH_FILTER not supported (not critical): %v", err)
+	}
+
 	err = unix.SetNonblock(fd, true)
 	if err != nil {
 		unix.Close(fd)
