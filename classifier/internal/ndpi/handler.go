@@ -3,6 +3,7 @@ package ndpi
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -180,11 +181,18 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	// Build complete IP packet for nDPI (same as proxy)
 	ipPacket := buildIPv4PacketForNDPI(payload, srcIP4, dstIP4, srcPort, dstPort, protocol)
 
+	firstBytes := ""
+	if len(payload) > 10 {
+		firstBytes = fmt.Sprintf("%x", payload[:10])
+	}
+
 	if h.logger != nil {
 		h.logger.Debug("nDPI classifying packet",
 			zap.String("flow_id", flowID),
 			zap.Int("ipPacketLen", len(ipPacket)),
 			zap.Int("payloadLen", len(payload)),
+			zap.String("first_payload_bytes", firstBytes),
+			zap.String("ip_first_20", fmt.Sprintf("%x", ipPacket[:20])),
 		)
 	}
 
