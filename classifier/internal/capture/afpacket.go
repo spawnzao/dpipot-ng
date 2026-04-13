@@ -54,11 +54,11 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 		cfg.Timeout = Timeout
 	}
 
-	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_DGRAM, unix.ETH_P_ALL)
+	fd, err := unix.Socket(unix.AF_PACKET, unix.SOCK_RAW, unix.ETH_P_ALL)
 	if err != nil {
 		return nil, fmt.Errorf("socket creation failed: %w", err)
 	}
-	log.Printf("DEBUG: socket created fd=%d, AF_PACKET, SOCK_DGRAM, ETH_P_ALL", fd)
+	log.Printf("DEBUG: socket created fd=%d, AF_PACKET, SOCK_RAW, ETH_P_ALL", fd)
 
 	if err := setBufferSize(fd, BufferSize); err != nil {
 		unix.Close(fd)
