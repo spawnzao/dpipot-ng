@@ -83,6 +83,17 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	}
 	log.Printf("DEBUG: socket bound to interface %s (index=%d)", cfg.Interface, ifIndex)
 
+	mreq := unix.PacketMreq{
+		Ifindex: int32(ifIndex),
+		Type:    unix.PACKET_MR_PROMISC,
+	}
+	err = unix.SetsockoptPacketMreq(fd, unix.SOL_PACKET, unix.PACKET_ADD_MEMBERSHIP, &mreq)
+	if err != nil {
+		log.Printf("DEBUG: PACKET_ADD_MEMBERSHIP failed: %v (continuing anyway)", err)
+	} else {
+		log.Printf("DEBUG: PACKET_MR_PROMISC membership added")
+	}
+
 	log.Printf("DEBUG: setting non-blocking mode")
 	err = unix.SetNonblock(fd, true)
 	if err != nil {
