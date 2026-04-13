@@ -5,6 +5,7 @@ go 1.26
 require (
 	go.uber.org/zap v1.27.1
 	golang.org/x/net v0.29.0
+	golang.org/x/sys v0.25.0
 )
 
 require go.uber.org/multierr v1.10.0 // indirect

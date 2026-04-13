@@ -9,7 +9,6 @@ import (
 
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/ndpi/gondpi"
-	"go.uber.org/zap"
 )
 
 const (
@@ -143,41 +142,11 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	if h.logger != nil {
-		h.logger.Debug("processing packet",
-			zap.String("flow_id", flowID),
-			zap.String("src", srcIP.String()),
-			zap.String("dst", dstIP.String()),
-			zap.Uint16("src_port", srcPort),
-			zap.Uint16("dst_port", dstPort),
-			zap.Uint8("proto", protocol),
-			zap.Int("payload_len", len(payload)),
-		)
-	}
-
-	// Pass raw IP packet to nDPI (no synthetic packet, just strip Ethernet header)
-	// The IP packet starts at offset 14 (after Ethernet header)
-	// We need to pass the complete IP packet including IP header + TCP + payload
-
-	// Use PacketProcessing directly - pass raw IP packet data
 	ndpiFlow, err := gondpi.NewNdpiFlow()
 	if err != nil {
-		if h.logger != nil {
-			h.logger.Debug("nDPI flow creation failed", zap.Error(err))
-		}
 		return
 	}
 	defer ndpiFlow.Close()
-
-	// Pass the IP packet data (we don't have access to it here, so we'll use payload)
-	// The nDPI expects the IP packet starting from IP header
-	if h.logger != nil {
-		h.logger.Debug("nDPI classifying packet",
-			zap.String("flow_id", flowID),
-			zap.Int("payloadLen", len(payload)),
-			zap.String("first_bytes", fmt.Sprintf("%x", payload[:min(20, len(payload))])),
-		)
-	}
 
 	ts := time.Now().UnixMilli()
 	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), ts)
@@ -185,15 +154,6 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	masterProto := proto.MasterProtocolId.ToName()
 	appProto := proto.AppProtocolId.ToName()
 	category := uint32(proto.CategoryId)
-
-	if h.logger != nil {
-		h.logger.Debug("classified flow",
-			zap.String("flow_id", flowID),
-			zap.String("master", masterProto),
-			zap.String("app", appProto),
-			zap.Uint32("category", category),
-		)
-	}
 
 	h.flowTable.Update(flowID, &flow.Entry{
 		Protocol:       appProto,
@@ -214,11 +174,4 @@ func (h *Handler) Close() {
 		h.ndpiDM.Close()
 	}
 	h.wg.Wait()
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
