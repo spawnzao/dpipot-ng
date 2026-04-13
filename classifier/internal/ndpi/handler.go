@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -260,6 +261,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		firstBytes = fmt.Sprintf("%x", payload[:8])
 	}
 
+	// Use log.Printf to ensure these debug messages appear
+	log.Printf("DEBUG processing packet: flow_id=%s src=%s dst=%s src_port=%d dst_port=%d proto=%d payload_len=%d first_bytes=%s",
+		flowID, srcIP.String(), dstIP.String(), srcPort, dstPort, protocol, len(payload), firstBytes)
+
 	if h.logger != nil {
 		h.logger.Debug("processing packet",
 			zap.String("flow_id", flowID),
@@ -275,6 +280,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 	// Build complete IP packet with headers
 	ipPacket := h.buildIPv4Packet(srcIP, dstIP, srcPort, dstPort, protocol, payload)
+
+	// Use log.Printf to ensure this debug message appears
+	log.Printf("DEBUG nDPI input: flow_id=%s ip_packet_len=%d ip_first_20=%x", flowID, len(ipPacket), ipPacket[:min(20, len(ipPacket))])
+
 	if h.logger != nil {
 		h.logger.Debug("nDPI input",
 			zap.String("flow_id", flowID),
