@@ -403,8 +403,14 @@ func (h *Handler) Handle() {
 			tcpConn.CloseWrite()
 		}
 		src := io.TeeReader(h.conn, teeWriterSrc)
-		if _, err = io.Copy(honeypotConn, src); err != nil {
-			log.Debug("pipe src→dst encerrado", zap.Error(err))
+		n, err := io.Copy(honeypotConn, src)
+		if err != nil {
+			log.Debug("pipe src→dst encerrado",
+				zap.Int("bytes_copied", int(n)),
+				zap.String("error_type", fmt.Sprintf("%T", err)),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe src→dst concluído", zap.Int("bytes_copied", int(n)))
 		}
 	}()
 
@@ -415,8 +421,14 @@ func (h *Handler) Handle() {
 			tcpConn.CloseWrite()
 		}
 		src := io.TeeReader(honeypotConn, teeWriterDst)
-		if _, err = io.Copy(h.conn, src); err != nil {
-			log.Debug("pipe dst→src encerrado", zap.Error(err))
+		n, err := io.Copy(h.conn, src)
+		if err != nil {
+			log.Debug("pipe dst→src encerrado",
+				zap.Int("bytes_copied", int(n)),
+				zap.String("error_type", fmt.Sprintf("%T", err)),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe dst→src concluído", zap.Int("bytes_copied", int(n)))
 		}
 	}()
 
