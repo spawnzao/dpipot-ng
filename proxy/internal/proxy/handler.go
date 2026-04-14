@@ -383,11 +383,13 @@ func (h *Handler) Handle() {
 	defer honeypotConn.Close()
 
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
+	log.Debug("escrevendo firstChunk para honeypot", zap.Int("len", len(firstChunk)))
 	if _, err = honeypotConn.Write(firstChunk); err != nil {
 		log.Error("erro reenviando primeiro chunk", zap.Error(err))
 		honeypotError = fmt.Sprintf("write failed: %v", err)
 		goto publish
 	}
+	log.Debug("firstChunk escrito com sucesso")
 
 	// --- STEP 7: pipe bidirecional com captura de payload ---
 	teeWriterSrc = newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
@@ -399,9 +401,7 @@ func (h *Handler) Handle() {
 	// goroutine 1: atacante → honeypot
 	go func() {
 		defer wg.Done()
-		if tcpConn, ok := honeypotConn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
-		}
+		log.Debug("goroutine src→dst iniciada")
 		src := io.TeeReader(h.conn, teeWriterSrc)
 		n, err := io.Copy(honeypotConn, src)
 		if err != nil {
@@ -417,9 +417,7 @@ func (h *Handler) Handle() {
 	// goroutine 2: honeypot → atacante
 	go func() {
 		defer wg.Done()
-		if tcpConn, ok := h.conn.(*net.TCPConn); ok {
-			tcpConn.CloseWrite()
-		}
+		log.Debug("goroutine dst→src iniciada")
 		src := io.TeeReader(honeypotConn, teeWriterDst)
 		n, err := io.Copy(h.conn, src)
 		if err != nil {
