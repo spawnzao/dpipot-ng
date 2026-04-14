@@ -170,15 +170,20 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	ndpiFlowI, loaded := h.ndpiFlows.LoadOrStore(flowID, &gondpi.NdpiFlow{})
+	// Try to get existing flow, or create new one
+	ndpiFlowI, loaded := h.ndpiFlows.Load(flowID)
+	if !loaded {
+		newFlow, err := gondpi.NewNdpiFlow()
+		if err != nil {
+			return
+		}
+		newFlow.SetupFlow(srcIP, dstIP, protocol, srcPort, dstPort)
+		ndpiFlowI, _ = h.ndpiFlows.LoadOrStore(flowID, newFlow)
+	}
+
 	ndpiFlow, ok := ndpiFlowI.(*gondpi.NdpiFlow)
 	if !ok {
 		return
-	}
-
-	// On first packet (loaded==false), set up flow info for nDPI
-	if !loaded {
-		ndpiFlow.SetupFlow(srcIP, dstIP, protocol, srcPort, dstPort)
 	}
 
 	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), time.Now().UnixMilli())
