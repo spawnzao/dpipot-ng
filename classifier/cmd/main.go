@@ -142,6 +142,14 @@ func main() {
 					continue
 				}
 
+				// Skip ARP (ethertype 0x0806)
+				if len(packet.Data) >= 14 {
+					ethertype := uint16(packet.Data[12])<<8 | uint16(packet.Data[13])
+					if ethertype == 0x0806 {
+						continue
+					}
+				}
+
 				atomic.AddInt64(&packetCount, 1)
 				if packetCount%10 == 0 {
 					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))

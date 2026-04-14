@@ -85,9 +85,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 		n, err := conn.Read(buf)
 		if err != nil {
 			if err == io.EOF {
-				if s.logger != nil {
-					s.logger.Debug("client disconnected")
-				}
+				// client disconnected - normal
 			} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				if s.logger != nil {
 					s.logger.Debug("connection timeout")
