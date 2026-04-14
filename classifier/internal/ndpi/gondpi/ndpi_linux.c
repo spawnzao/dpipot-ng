@@ -113,12 +113,19 @@ extern ndpi_proto_result_t ndpi_packet_processing(struct ndpi_detection_module_s
     if (!ndpi_struct || !flow || !packet) {
         return result;
     }
+
+    // Debug: print packet info
+    fprintf(stderr, "[DEBUG nDPI] packetlen=%d first_bytes=%02x%02x%02x%02x\n",
+            packetlen, packet[0], packet[1], packet[2], packet[3]);
     
     struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms, NULL);
     
     result.master_protocol = proto.proto.master_protocol;
     result.app_protocol = proto.proto.app_protocol;
     result.category = (uint32_t)proto.category;
+    
+    fprintf(stderr, "[DEBUG nDPI] result: master=%d app=%d category=%d\n",
+            result.master_protocol, result.app_protocol, result.category);
     
     return result;
 }
