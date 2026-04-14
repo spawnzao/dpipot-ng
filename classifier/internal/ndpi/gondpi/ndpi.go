@@ -121,6 +121,21 @@ func (f *NdpiFlow) Close() {
 	C.ndpi_flow_struct_free(f.NdpiFlowPtr)
 }
 
+func (f *NdpiFlow) SetupFlow(srcIP, dstIP net.IP, protocol uint8, srcPort, dstPort uint16) {
+	srcIP4 := srcIP.To4()
+	dstIP4 := dstIP.To4()
+	if srcIP4 == nil || dstIP4 == nil {
+		return
+	}
+
+	C.ndpi_flow_setup(f.NdpiFlowPtr,
+		(*C.uint8_t)(unsafe.Pointer(&srcIP4[0])),
+		(*C.uint8_t)(unsafe.Pointer(&dstIP4[0])),
+		C.uint8_t(protocol),
+		C.uint16_t(srcPort),
+		C.uint16_t(dstPort))
+}
+
 func (f *NdpiFlow) GetDetectedProtocolStack() [2]types.NdpiProtocol {
 	protoStack := [2]types.NdpiProtocol{}
 	protoStack[0] = types.NdpiProtocol(f.NdpiFlowPtr.detected_protocol_stack[0])

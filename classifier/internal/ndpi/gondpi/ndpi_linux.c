@@ -60,7 +60,7 @@ extern void ndpi_flow_setup(struct ndpi_flow_struct *flow,
     flow->s_port = dst_port;
     
     flow->c_address.v4 = (src_ip[0] << 24) | (src_ip[1] << 16) | (src_ip[2] << 8) | src_ip[3];
-    flow->s_address.v4 = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (src_ip[2] << 8) | dst_ip[3];
+    flow->s_address.v4 = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (dst_ip[2] << 8) | dst_ip[3];
 }
 
 extern void ndpi_protocol_bitmask_add(NDPI_PROTOCOL_BITMASK *bitmask, uint16_t protocol_id) {
