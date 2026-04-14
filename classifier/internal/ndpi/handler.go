@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/ndpi/gondpi"
 )
@@ -18,6 +20,7 @@ const (
 type Handler struct {
 	ndpiDM    *gondpi.NdpiDetectionModule
 	flowTable *flow.Table
+	ndpiFlows *sync.Map
 	logger    *zap.Logger
 	wg        sync.WaitGroup
 	ctx       context.Context
@@ -43,6 +46,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h := &Handler{
 		ndpiDM:    ndpiDM,
 		flowTable: cfg.FlowTable,
+		ndpiFlows: &sync.Map{},
 		logger:    cfg.Logger,
 		ctx:       ctx,
 		cancel:    cancel,
@@ -142,11 +146,22 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	ndpiFlow, err := gondpi.NewNdpiFlow()
-	if err != nil {
-		return
+	ndpiFlowI, ok := h.ndpiFlows.Load(flowID)
+	if !ok {
+		newFlow, err := gondpi.NewNdpiFlow()
+		if err != nil {
+			return
+		}
+		loadedFlow, loaded := h.ndpiFlows.LoadOrStore(flowID, newFlow)
+		if loaded {
+			newFlow.Close()
+			ndpiFlowI = loadedFlow
+		} else {
+			ndpiFlowI = newFlow
+		}
 	}
-	defer ndpiFlow.Close()
+
+	ndpiFlow := ndpiFlowI.(*gondpi.NdpiFlow)
 
 	ts := time.Now().UnixMilli()
 	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), ts)
@@ -173,5 +188,11 @@ func (h *Handler) Close() {
 	if h.ndpiDM != nil {
 		h.ndpiDM.Close()
 	}
+	h.ndpiFlows.Range(func(key, value interface{}) bool {
+		if flow, ok := value.(*gondpi.NdpiFlow); ok {
+			flow.Close()
+		}
+		return true
+	})
 	h.wg.Wait()
 }

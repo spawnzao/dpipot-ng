@@ -8,7 +8,6 @@ package gondpi
 import "C"
 
 import (
-	"encoding/binary"
 	"errors"
 	"net"
 	"reflect"
@@ -26,7 +25,7 @@ const (
 type NdpiDetectionModuleStructPtr *C.struct_ndpi_detection_module_struct
 type NdpiFlowStructPtr *C.struct_ndpi_flow_struct
 
-func NdpiCategoryToId(category C.ndpi_protocol_category_t) types.NdpiCategory {
+func NdpiCategoryToId(category uint32) types.NdpiCategory {
 	return types.NdpiCategory(category)
 }
 
@@ -143,7 +142,7 @@ func (f *NdpiFlow) GetL4Protocol() types.IPProto {
 }
 
 func (f *NdpiFlow) GetProtocolCategory() types.NdpiCategory {
-	return NdpiCategoryToId(f.NdpiFlowPtr.category)
+	return NdpiCategoryToId(uint32(f.NdpiFlowPtr.category))
 }
 
 func (f *NdpiFlow) GetConfidence() types.NdpiConfidence {
@@ -164,9 +163,8 @@ type NdpiDetectionModule struct {
 func NdpiDetectionModuleInitialize(prefs uint32, detectionBitmask []uint32) (*NdpiDetectionModule, error) {
 	ndpiBitmask := &C.NDPI_PROTOCOL_BITMASK{}
 	ndpiBitmask.fds_bits = *(*[NdpiBitmaskSize]C.uint32_t)(unsafe.Pointer(&detectionBitmask[0]))
-	ndpi := C.ndpi_detection_module_initialize(C.ndpi_init_prefs(C.uint(prefs)), ndpiBitmask)
+	ndpi := C.ndpi_detection_module_initialize(ndpiBitmask)
 	if ndpi == nil {
-		C.ndpi_detection_module_exit(ndpi)
 		err := errors.New("null ndpi detection module struct")
 		return nil, err
 	}
@@ -191,7 +189,7 @@ func (dm *NdpiDetectionModule) PacketProcessing(flow *NdpiFlow, ipPacket []byte,
 	ndpiProto := NdpiProto{
 		MasterProtocolId: types.NdpiProtocol(proto.master_protocol),
 		AppProtocolId:    types.NdpiProtocol(proto.app_protocol),
-		CategoryId:       NdpiCategoryToId(proto.category),
+		CategoryId:       NdpiCategoryToId(uint32(proto.category)),
 	}
 
 	return ndpiProto
@@ -226,7 +224,7 @@ func (dm *NdpiDetectionModule) ProcessPacketFlow(srcIP, dstIP net.IP, srcPort, d
 	ndpiProto := NdpiProto{
 		MasterProtocolId: types.NdpiProtocol(proto.master_protocol),
 		AppProtocolId:    types.NdpiProtocol(proto.app_protocol),
-		CategoryId:       NdpiCategoryToId(C.ndpi_protocol_category_t(proto.category)),
+		CategoryId:       NdpiCategoryToId(uint32(proto.category)),
 	}
 
 	return ndpiProto, nil

@@ -60,7 +60,7 @@ extern void ndpi_flow_setup(struct ndpi_flow_struct *flow,
     flow->s_port = dst_port;
     
     flow->c_address.v4 = (src_ip[0] << 24) | (src_ip[1] << 16) | (src_ip[2] << 8) | src_ip[3];
-    flow->s_address.v4 = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (dst_ip[2] << 8) | dst_ip[3];
+    flow->s_address.v4 = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (src_ip[2] << 8) | dst_ip[3];
 }
 
 extern void ndpi_protocol_bitmask_add(NDPI_PROTOCOL_BITMASK *bitmask, uint16_t protocol_id) {
@@ -83,14 +83,14 @@ extern void ndpi_protocol_bitmask_set_all(NDPI_PROTOCOL_BITMASK *bitmask) {
     NDPI_BITMASK_SET_ALL(*bitmask);
 }
 
-extern struct ndpi_detection_module_struct *ndpi_detection_module_initialize(ndpi_init_prefs prefs,
-                                                                             NDPI_PROTOCOL_BITMASK *bitmask) {
-    struct ndpi_detection_module_struct *ndpi_struct = ndpi_init_detection_module(prefs);
+extern struct ndpi_detection_module_struct *ndpi_detection_module_initialize(NDPI_PROTOCOL_BITMASK *bitmask) {
+    struct ndpi_global_context *g_ctx = ndpi_global_init();
+    if (!g_ctx) {
+        return NULL;
+    }
+    
+    struct ndpi_detection_module_struct *ndpi_struct = ndpi_init_detection_module(g_ctx);
     if (ndpi_struct) {
-        if (bitmask) {
-            NDPI_BITMASK_RESET(ndpi_struct->protocols_bitmask);
-            NDPI_BITMASK_OR(ndpi_struct->protocols_bitmask, *bitmask);
-        }
         ndpi_finalize_initialization(ndpi_struct);
     }
     return ndpi_struct;
@@ -114,11 +114,11 @@ extern ndpi_proto_result_t ndpi_packet_processing(struct ndpi_detection_module_s
         return result;
     }
     
-    struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms);
+    struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms, NULL);
     
     result.master_protocol = proto.proto.master_protocol;
-    result.app_protocol = proto.proto.proto_service;
-    result.category = proto.category;
+    result.app_protocol = proto.proto.app_protocol;
+    result.category = (uint32_t)proto.category;
     
     return result;
 }
@@ -133,31 +133,6 @@ extern ndpi_proto_result_t ndpi_detection_process_wrapper(struct ndpi_detection_
 }
 
 extern uint8_t ndpi_extra_dissection_possible(struct ndpi_detection_module_struct *ndpi_struct,
-                                              struct ndpi_flow_struct *flow) {
+                                               struct ndpi_flow_struct *flow) {
     return ndpi_extra_dissection_possible(ndpi_struct, flow) ? 1 : 0;
-}
-
-extern ndpi_proto_result_t ndpi_detection_giveup(struct ndpi_detection_module_struct *ndpi_struct,
-                                                  struct ndpi_flow_struct *flow,
-                                                  uint8_t enable_guess,
-                                                  uint8_t *is_guessed)
-{
-    ndpi_proto_result_t result = {0, 0, 0};
-    
-    if (!ndpi_struct || !flow) {
-        return result;
-    }
-    
-    struct ndpi_proto proto = ndpi_detection_giveup(ndpi_struct, flow, enable_guess ? true : false);
-    
-    result.master_protocol = proto.proto.master_protocol;
-    result.app_protocol = proto.proto_service;
-    result.category = proto.category;
-    
-    if (is_guessed) {
-        *is_guessed = (proto.master_protocol != NDPI_PROTOCOL_UNKNOWN || 
-                       proto.proto_service != NDPI_PROTOCOL_UNKNOWN) ? 1 : 0;
-    }
-    
-    return result;
 }
