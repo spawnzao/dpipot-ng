@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -105,29 +104,6 @@ func main() {
 
 	af.Start()
 
-	// Debug: verifica se está recebendo pacotes nos primeiros 10s
-	go func() {
-		time.Sleep(3 * time.Second)
-
-		log.Printf("[DEBUG] Aguardando pacote por 10s...")
-		select {
-		case pkt, ok := <-af.Packets():
-			if !ok {
-				log.Printf("[DEBUG] Canal Packets() fechado — af.Start() falhou?")
-			} else {
-				log.Printf("[DEBUG] Primeiro pacote recebido! len=%d", len(pkt.Data))
-			}
-		case err, ok := <-af.Errors():
-			if !ok {
-				log.Printf("[DEBUG] Canal Errors() fechado")
-			} else {
-				log.Printf("[DEBUG] Erro no canal: %v", err)
-			}
-		case <-time.After(10 * time.Second):
-			log.Printf("[DEBUG] TIMEOUT — nenhum pacote em 10s. Problema na captura.")
-		}
-	}()
-
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
@@ -153,11 +129,6 @@ func main() {
 				atomic.AddInt64(&packetCount, 1)
 				if packetCount%10 == 0 {
 					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))
-				}
-
-				// Log first 3 packets and every 100th packet
-				if packetCount <= 3 || packetCount%100 == 0 {
-					logPacketDetails(packet.Data, logger)
 				}
 
 				ndpiHandler.ProcessPacket(packet.Data)

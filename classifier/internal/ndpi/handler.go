@@ -104,10 +104,34 @@ func (h *Handler) processIPv4(data []byte) {
 	srcPort := uint16(tcpHeader[0])<<8 | uint16(tcpHeader[1])
 	dstPort := uint16(tcpHeader[2])<<8 | uint16(tcpHeader[3])
 
+	// Get TCP flags
+	var tcpFlags string
+	if len(tcpHeader) >= 14 {
+		flags := tcpHeader[13]
+		if flags&0x02 != 0 {
+			tcpFlags += "SYN "
+		}
+		if flags&0x10 != 0 {
+			tcpFlags += "ACK "
+		}
+		if flags&0x04 != 0 {
+			tcpFlags += "RST "
+		}
+		if flags&0x08 != 0 {
+			tcpFlags += "PSH "
+		}
+		if flags&0x01 != 0 {
+			tcpFlags += "FIN "
+		}
+		if tcpFlags == "" {
+			tcpFlags = "none"
+		}
+	}
+
 	// Pass the complete IP packet (from IP header to end) to nDPI
 	ipPacket := data[ipOffset:]
 
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, protocol, ipPacket)
+	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, protocol, ipPacket, 0x0800, tcpFlags)
 }
 
 func (h *Handler) processIPv6(data []byte) {
@@ -138,10 +162,10 @@ func (h *Handler) processIPv6(data []byte) {
 	// Pass the complete IP packet (from IP header to end) to nDPI
 	ipPacket := data[ipOffset:]
 
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, nextHeader, ipPacket)
+	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, nextHeader, ipPacket, 0x86dd, "N/A")
 }
 
-func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
+func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
 	proto := h.ndpiDM.ProcessPacketFlow(srcIP, dstIP, srcPort, dstPort, protocol, payload)
@@ -149,8 +173,11 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	if h.logger != nil {
 		h.logger.Info("nDPI result",
 			zap.String("flow_id", flowID),
+			zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
 			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
 			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+			zap.Uint8("proto", protocol),
+			zap.String("tcp_flags", tcpFlags),
 			zap.String("master_proto", proto.MasterProtocolId.ToName()),
 			zap.String("app_proto", proto.AppProtocolId.ToName()),
 			zap.Int("payload_len", len(payload)),
