@@ -195,17 +195,17 @@ func (dm *NdpiDetectionModule) PacketProcessing(flow *NdpiFlow, ipPacket []byte,
 	return ndpiProto
 }
 
-func (dm *NdpiDetectionModule) ProcessPacketFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) (NdpiProto, error) {
+func (dm *NdpiDetectionModule) ProcessPacketFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) NdpiProto {
 	flow, err := NewNdpiFlow()
 	if err != nil {
-		return NdpiProto{}, err
+		return NdpiProto{}
 	}
 	defer flow.Close()
 
 	srcIP4 := srcIP.To4()
 	dstIP4 := dstIP.To4()
 	if srcIP4 == nil || dstIP4 == nil {
-		return NdpiProto{}, errors.New("only IPv4 supported")
+		return NdpiProto{}
 	}
 
 	C.ndpi_flow_setup(flow.NdpiFlowPtr,
@@ -227,5 +227,5 @@ func (dm *NdpiDetectionModule) ProcessPacketFlow(srcIP, dstIP net.IP, srcPort, d
 		CategoryId:       NdpiCategoryToId(uint32(proto.category)),
 	}
 
-	return ndpiProto, nil
+	return ndpiProto
 }

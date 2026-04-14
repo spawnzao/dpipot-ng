@@ -20,7 +20,6 @@ const (
 type Handler struct {
 	ndpiDM    *gondpi.NdpiDetectionModule
 	flowTable *flow.Table
-	ndpiFlows *sync.Map
 	logger    *zap.Logger
 	wg        sync.WaitGroup
 	ctx       context.Context
@@ -46,7 +45,6 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	h := &Handler{
 		ndpiDM:    ndpiDM,
 		flowTable: cfg.FlowTable,
-		ndpiFlows: &sync.Map{},
 		logger:    cfg.Logger,
 		ctx:       ctx,
 		cancel:    cancel,
@@ -146,25 +144,18 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	ndpiFlowI, ok := h.ndpiFlows.Load(flowID)
-	if !ok {
-		newFlow, err := gondpi.NewNdpiFlow()
-		if err != nil {
-			return
-		}
-		loadedFlow, loaded := h.ndpiFlows.LoadOrStore(flowID, newFlow)
-		if loaded {
-			newFlow.Close()
-			ndpiFlowI = loadedFlow
-		} else {
-			ndpiFlowI = newFlow
-		}
+	proto := h.ndpiDM.ProcessPacketFlow(srcIP, dstIP, srcPort, dstPort, protocol, payload)
+
+	if h.logger != nil {
+		h.logger.Info("nDPI result",
+			zap.String("flow_id", flowID),
+			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
+			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+			zap.String("master_proto", proto.MasterProtocolId.ToName()),
+			zap.String("app_proto", proto.AppProtocolId.ToName()),
+			zap.Int("payload_len", len(payload)),
+		)
 	}
-
-	ndpiFlow := ndpiFlowI.(*gondpi.NdpiFlow)
-
-	ts := time.Now().UnixMilli()
-	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), ts)
 
 	masterProto := proto.MasterProtocolId.ToName()
 	appProto := proto.AppProtocolId.ToName()
@@ -188,11 +179,5 @@ func (h *Handler) Close() {
 	if h.ndpiDM != nil {
 		h.ndpiDM.Close()
 	}
-	h.ndpiFlows.Range(func(key, value interface{}) bool {
-		if flow, ok := value.(*gondpi.NdpiFlow); ok {
-			flow.Close()
-		}
-		return true
-	})
 	h.wg.Wait()
 }
