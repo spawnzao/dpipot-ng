@@ -141,6 +141,12 @@ func main() {
 				if packetCount%10 == 0 {
 					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))
 				}
+
+				// Log first 3 packets and every 100th packet
+				if packetCount <= 3 || packetCount%100 == 0 {
+					logPacketDetails(packet.Data, logger)
+				}
+
 				ndpiHandler.ProcessPacket(packet.Data)
 			case err, ok := <-af.Errors():
 				if !ok {
@@ -253,4 +259,95 @@ func runDiagnostic(ifaceName string) {
 
 func htons(i uint16) uint16 {
 	return (i<<8)&0xff00 | i>>8
+}
+
+func logPacketDetails(data []byte, logger *zap.Logger) {
+	if len(data) < 14 {
+		logger.Info("packet too short", zap.Int("len", len(data)))
+		return
+	}
+
+	dstMAC := data[0:6]
+	_ = dstMAC
+	srcMAC := data[6:12]
+	ethertype := uint16(data[12])<<8 | uint16(data[13])
+
+	logger.Info("PACKET",
+		zap.Int("len", len(data)),
+		zap.String("src_mac", fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", srcMAC[0], srcMAC[1], srcMAC[2], srcMAC[3], srcMAC[4], srcMAC[5])),
+		zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
+	)
+
+	if ethertype == 0x0800 && len(data) >= 34 {
+		ipHeader := data[14:]
+		ihl := int(ipHeader[0]&0x0F) * 4
+		protocol := ipHeader[9]
+		srcIP := net.IP(ipHeader[12:16])
+		dstIP := net.IP(ipHeader[16:20])
+
+		logger.Info("IP",
+			zap.String("src", srcIP.String()),
+			zap.String("dst", dstIP.String()),
+			zap.Uint8("proto", protocol),
+		)
+
+		if protocol == 6 && len(data) >= 14+ihl+20 {
+			tcpHeader := data[14+ihl:]
+			srcPort := uint16(tcpHeader[0])<<8 | uint16(tcpHeader[1])
+			dstPort := uint16(tcpHeader[2])<<8 | uint16(tcpHeader[3])
+			flags := tcpHeader[13]
+
+			flagsStr := ""
+			if flags&0x02 != 0 {
+				flagsStr += "SYN "
+			}
+			if flags&0x10 != 0 {
+				flagsStr += "ACK "
+			}
+			if flags&0x04 != 0 {
+				flagsStr += "RST "
+			}
+			if flags&0x08 != 0 {
+				flagsStr += "PSH "
+			}
+			if flags&0x01 != 0 {
+				flagsStr += "FIN "
+			}
+
+			logger.Info("TCP",
+				zap.Uint16("src_port", srcPort),
+				zap.Uint16("dst_port", dstPort),
+				zap.String("flags", flagsStr),
+			)
+
+			tcpDataOffset := int((tcpHeader[12]>>4)&0x0F) * 4
+			payloadStart := 14 + ihl + tcpDataOffset
+			if payloadStart < len(data) {
+				logger.Info("TCP_PAYLOAD",
+					zap.Int("len", len(data)-payloadStart),
+					zap.String("data", fmt.Sprintf("%x", data[payloadStart:min(payloadStart+32, len(data))])),
+				)
+			} else {
+				logger.Info("TCP_NO_PAYLOAD")
+			}
+		}
+
+		if protocol == 17 && len(data) >= 14+ihl+8 {
+			udpHeader := data[14+ihl:]
+			srcPort := uint16(udpHeader[0])<<8 | uint16(udpHeader[1])
+			dstPort := uint16(udpHeader[2])<<8 | uint16(udpHeader[3])
+
+			logger.Info("UDP",
+				zap.Uint16("src_port", srcPort),
+				zap.Uint16("dst_port", dstPort),
+			)
+		}
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
