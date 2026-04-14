@@ -90,9 +90,14 @@ extern struct ndpi_detection_module_struct *ndpi_detection_module_initialize(NDP
     }
     
     struct ndpi_detection_module_struct *ndpi_struct = ndpi_init_detection_module(g_ctx);
-    if (ndpi_struct) {
-        ndpi_finalize_initialization(ndpi_struct);
+    if (!ndpi_struct) {
+        return NULL;
     }
+    
+    NDPI_BITMASK_SET_ALL(*bitmask);
+    ndpi_set_protocol_detection_bitmask2(ndpi_struct, bitmask);
+    
+    ndpi_finalize_initialization(ndpi_struct);
     return ndpi_struct;
 }
 

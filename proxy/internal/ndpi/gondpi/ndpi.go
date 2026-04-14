@@ -1,8 +1,8 @@
 package gondpi
 
 /*
-#cgo CFLAGS: -I/usr/include
-#cgo LDFLAGS: -L/usr/lib -lndpi -lm -lpthread
+#cgo CFLAGS: -I/usr/local/include
+#cgo LDFLAGS: -L/usr/local/lib -lndpi -lm -lpthread
 #include "ndpi_linux.h"
 */
 import "C"

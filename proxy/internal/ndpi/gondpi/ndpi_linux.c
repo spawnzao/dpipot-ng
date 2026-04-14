@@ -2,11 +2,12 @@
 #include <ndpi/ndpi_typedefs.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 typedef struct ndpi_proto_result {
     uint16_t master_protocol;
     uint16_t app_protocol;
-    uint8_t category;
+    uint32_t category;
 } ndpi_proto_result_t;
 
 extern void ndpi_protocol_bitmask_add(NDPI_PROTOCOL_BITMASK *bitmask, uint16_t proto) {
@@ -58,7 +59,7 @@ extern uint8_t ndpi_flow_get_init_finished(struct ndpi_flow_struct *flow) {
 }
 
 extern uint8_t ndpi_flow_get_setup_packet_direction(struct ndpi_flow_struct *flow) {
-    return flow->setup_packet_direction;
+    return flow->client_packet_direction;
 }
 
 extern uint8_t ndpi_flow_get_packet_direction(struct ndpi_flow_struct *flow) {
@@ -73,11 +74,17 @@ extern struct ndpi_detection_module_struct *ndpi_detection_module_create(NDPI_PR
     set_ndpi_malloc(malloc);
     set_ndpi_free(free);
 
-    struct ndpi_detection_module_struct *ndpi_struct = ndpi_init_detection_module(0);
-    if (ndpi_struct == NULL) {
+    struct ndpi_global_context *g_ctx = ndpi_global_init();
+    if (!g_ctx) {
+        return NULL;
+    }
+    
+    struct ndpi_detection_module_struct *ndpi_struct = ndpi_init_detection_module(g_ctx);
+    if (!ndpi_struct) {
         return NULL;
     }
 
+    NDPI_BITMASK_SET_ALL(*detection_bitmask);
     ndpi_set_protocol_detection_bitmask2(ndpi_struct, detection_bitmask);
     ndpi_finalize_initialization(ndpi_struct);
 
@@ -97,13 +104,13 @@ extern void ndpi_flow_setup(struct ndpi_flow_struct *flow,
     memset(flow, 0, sizeof(struct ndpi_flow_struct));
     
     flow->l4_proto = l4_protocol;
-    flow->setup_packet_direction = 1;
+    flow->client_packet_direction = 1;
     flow->packet_direction = 1;
     
-    flow->saddr = (src_ip[0] << 24) | (src_ip[1] << 16) | (src_ip[2] << 8) | src_ip[3];
-    flow->daddr = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (dst_ip[2] << 8) | dst_ip[3];
-    flow->sport = src_port;
-    flow->dport = dst_port;
+    flow->c_address.v4 = (src_ip[0] << 24) | (src_ip[1] << 16) | (src_ip[2] << 8) | src_ip[3];
+    flow->s_address.v4 = (dst_ip[0] << 24) | (dst_ip[1] << 16) | (dst_ip[2] << 8) | dst_ip[3];
+    flow->c_port = src_port;
+    flow->s_port = dst_port;
 }
 
 extern ndpi_proto_result_t ndpi_detection_process_wrapper(struct ndpi_detection_module_struct *ndpi_struct,
@@ -113,10 +120,10 @@ extern ndpi_proto_result_t ndpi_detection_process_wrapper(struct ndpi_detection_
                                                             const uint64_t packet_time_ms) {
     ndpi_proto_result_t result = {0, 0, 0};
     
-    struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms);
+    struct ndpi_proto proto = ndpi_detection_process_packet(ndpi_struct, flow, packet, packetlen, packet_time_ms, NULL);
 
-    result.master_protocol = proto.master_protocol;
-    result.app_protocol = proto.app_protocol;
+    result.master_protocol = proto.proto.master_protocol;
+    result.app_protocol = proto.proto.app_protocol;
     result.category = proto.category;
 
     return result;

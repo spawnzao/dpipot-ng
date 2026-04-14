@@ -4,7 +4,7 @@
 typedef struct ndpi_proto_result {
     uint16_t master_protocol;
     uint16_t app_protocol;
-    uint8_t category;
+    uint32_t category;
 } ndpi_proto_result_t;
 
 extern ndpi_proto_result_t ndpi_detection_process_wrapper(struct ndpi_detection_module_struct *,
