@@ -137,6 +137,11 @@ func main() {
 				if !ok {
 					return
 				}
+				// Skip broadcast packets (MAC: ff:ff:ff:ff:ff:ff)
+				if len(packet.Data) >= 6 && packet.Data[0] == 0xff && packet.Data[1] == 0xff && packet.Data[2] == 0xff && packet.Data[3] == 0xff && packet.Data[4] == 0xff && packet.Data[5] == 0xff {
+					continue
+				}
+
 				atomic.AddInt64(&packetCount, 1)
 				if packetCount%10 == 0 {
 					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))
