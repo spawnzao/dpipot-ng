@@ -59,12 +59,12 @@ spec:
               # Criar chain
               iptables -t mangle -N TEST-TPROXY || true
               
-              # Marcar pacotes destinados às portas 50000-55000
-              iptables -t mangle -A TEST-TPROXY -p tcp --dport 50000:55000 -j MARK --set-mark 0x1
+              # Marcar pacotes destinados às portas 50000-55000 APENAS da interface ens192 (darknet)
+              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp --dport 50000:55000 -j MARK --set-mark 0x1
               
               # TPROXY: redirecionar para proxy na porta 8080
               # O TPROXY preserva o IP e porta originais!
-              iptables -t mangle -A TEST-TPROXY -p tcp --dport 50000:55000 -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
+              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp --dport 50000:55000 -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
               
               # Remover regra existente da PREROUTING antes de adicionar
               iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
@@ -72,7 +72,7 @@ spec:
               # Aplicar na PREROUTING (antes do routing decision)
               iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
               
-              echo "iptables TPROXY: portas 50000-55000 -> proxy:8080"
+              echo "iptables TPROXY: portas 50000-55000 -> proxy:8080 (apenas ens192)"
               echo "Regras mangle ativas:"
               iptables -t mangle -L TEST-TPROXY -n || true
               
