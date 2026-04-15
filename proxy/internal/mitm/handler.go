@@ -161,32 +161,53 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		}
 		logger("SSH MITM: channel aceito, iniciando io.Copy...")
 
-		logger("SSH MITM: iniciando goroutines de io.Copy")
-
-		logger("SSH MITM: esperando channels fecharem")
-
-		wg := &sync.WaitGroup{}
-		wg.Add(2)
+		logger("SSH MITM: iniciando goroutines de ioCopy")
 
 		go func() {
 			logger("SSH MITM: goroutine cliente->honeypot iniciada")
-			defer targetChannel.Close()
-			defer clientChannel.Close()
-			written, err := io.Copy(targetChannel, clientChannel)
-			logger("SSH MITM: io.Copy cliente->honeypot encerrou, wrote=%d, err=%v", written, err)
-			wg.Done()
-		}()
-		go func() {
-			logger("SSH MITM: goroutine honeypot->cliente iniciada")
-			defer targetChannel.Close()
-			defer clientChannel.Close()
-			written, err := io.Copy(clientChannel, targetChannel)
-			logger("SSH MITM: io.Copy honeypot->cliente encerrou, wrote=%d, err=%v", written, err)
-			wg.Done()
+			buf := make([]byte, 4096)
+			for {
+				n, err := clientChannel.Read(buf)
+				if n > 0 {
+					logger("SSH MITM: cliente->honeypot leu %d bytes", n)
+					w, err := targetChannel.Write(buf[:n])
+					logger("SSH MITM: cliente->honeypot escreveu %d bytes, err=%v", w, err)
+					if err != nil {
+						break
+					}
+				}
+				if err != nil {
+					logger("SSH MITM: cliente->honeypot erro: %v", err)
+					break
+				}
+			}
+			targetChannel.Close()
+			clientChannel.Close()
+			logger("SSH MITM: goroutine cliente->honeypot encerrou")
 		}()
 
-		wg.Wait()
-		logger("SSH MITM: todas as goroutines de io.Copy encerraram")
+		go func() {
+			logger("SSH MITM: goroutine honeypot->cliente iniciada")
+			buf := make([]byte, 4096)
+			for {
+				n, err := targetChannel.Read(buf)
+				if n > 0 {
+					logger("SSH MITM: honeypot->cliente leu %d bytes", n)
+					w, err := clientChannel.Write(buf[:n])
+					logger("SSH MITM: honeypot->cliente escreveu %d bytes, err=%v", w, err)
+					if err != nil {
+						break
+					}
+				}
+				if err != nil {
+					logger("SSH MITM: honeypot->cliente erro: %v", err)
+					break
+				}
+			}
+			targetChannel.Close()
+			clientChannel.Close()
+			logger("SSH MITM: goroutine honeypot->cliente encerrou")
+		}()
 
 		go ssh.DiscardRequests(targetReqs)
 	}
