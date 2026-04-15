@@ -152,22 +152,26 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			continue
 		}
 
+		logger("SSH MITM: abrindo channel no honeypot OK, aceitando do cliente...")
 		clientChannel, _, err := newChannel.Accept()
 		if err != nil {
 			logger("SSH MITM: falha ao aceitar channel do cliente: %v", err)
 			targetChannel.Close()
 			continue
 		}
+		logger("SSH MITM: channel aceito, iniciando io.Copy...")
 
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			io.Copy(targetChannel, clientChannel)
+			written, err := io.Copy(targetChannel, clientChannel)
+			logger("SSH MITM: io.Copy cliente->honeypot encerrou, wrote=%d, err=%v", written, err)
 		}()
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			io.Copy(clientChannel, targetChannel)
+			written, err := io.Copy(clientChannel, targetChannel)
+			logger("SSH MITM: io.Copy honeypot->cliente encerrou, wrote=%d, err=%v", written, err)
 		}()
 
 		go ssh.DiscardRequests(targetReqs)
