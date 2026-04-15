@@ -100,28 +100,33 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	}
 	serverConfig.AddHostKey(config.HostKey)
 
+	logger("SSH MITM: chamando ssh.NewServerConn...")
 	conn, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
 	if err != nil {
+		logger("SSH MITM: erro em NewServerConn: %v", err)
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
+	logger("SSH MITM: NewServerConnOK")
 	defer conn.Close()
-	logger("SSH MITM: handshake feito com cliente")
+	logger("SSH MITM: NewServerConn OK")
 
 	targetConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
 	if err != nil {
+		logger("SSH MITM: falha ao conectar no honeypot: %v", err)
 		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
 	}
+	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 	})
 	if err != nil {
+		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
 		return fmt.Errorf("ssh handshake honeypot falhou: %w", err)
 	}
+	logger("SSH MITM: SSH conectado ao honeypot")
 	defer targetSSHConn.Close()
-
-	logger("SSH MITM: conectado ao honeypot")
 
 	go ssh.DiscardRequests(reqs)
 	go ssh.DiscardRequests(reqs2)
