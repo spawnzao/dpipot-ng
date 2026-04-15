@@ -94,7 +94,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: iniciando handshake")
 
 	serverConfig := &ssh.ServerConfig{
-		NoClientAuth: true,
+		NoClientAuth:  true,
+		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
 	}
 	serverConfig.AddHostKey(config.HostKey)
 
@@ -103,6 +104,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	if err != nil {
 		logger("SSH MITM: erro em NewServerConn: %v", err)
 		logger("SSH MITM: cliente fechou a conexão antes do handshake")
+		clientConn.Close()
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
 	defer conn.Close()
@@ -120,8 +122,14 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot...")
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Auth:            []ssh.AuthMethod{ssh.Password("")},
-		BannerCallback:  func(message string) error { return nil },
+		Auth: []ssh.AuthMethod{
+			ssh.Password(""),
+			ssh.Password("root"),
+			ssh.Password("123456"),
+			ssh.Password("admin"),
+			ssh.Password("password"),
+		},
+		User: "root",
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
