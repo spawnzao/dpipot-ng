@@ -163,12 +163,18 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 		logger("SSH MITM: iniciando goroutines de io.Copy")
 
+		logger("SSH MITM: esperando channels fecharem")
+
+		wg := &sync.WaitGroup{}
+		wg.Add(2)
+
 		go func() {
 			logger("SSH MITM: goroutine cliente->honeypot iniciada")
 			defer targetChannel.Close()
 			defer clientChannel.Close()
 			written, err := io.Copy(targetChannel, clientChannel)
 			logger("SSH MITM: io.Copy cliente->honeypot encerrou, wrote=%d, err=%v", written, err)
+			wg.Done()
 		}()
 		go func() {
 			logger("SSH MITM: goroutine honeypot->cliente iniciada")
@@ -176,7 +182,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			defer clientChannel.Close()
 			written, err := io.Copy(clientChannel, targetChannel)
 			logger("SSH MITM: io.Copy honeypot->cliente encerrou, wrote=%d, err=%v", written, err)
+			wg.Done()
 		}()
+
+		wg.Wait()
+		logger("SSH MITM: todas as goroutines de io.Copy encerraram")
 
 		go ssh.DiscardRequests(targetReqs)
 	}
