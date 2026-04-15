@@ -13,6 +13,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -44,6 +45,7 @@ type SSHMITMConfig struct {
 	HostKey        ssh.Signer
 	TargetAddr     string
 	MaxPayloadSize int64
+	ServerConfig   *ssh.ServerConfig
 }
 
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
@@ -51,18 +53,31 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: iniciando handshake")
 
-	serverConfig := &ssh.ServerConfig{
+	reader := bufio.NewReader(clientConn)
+
+	clientBanner, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("falha ao ler banner do cliente: %w", err)
+	}
+	clientBanner = strings.TrimSuffix(clientBanner, "\r\n")
+	logger("SSH MITM: banner do cliente: %s", clientBanner)
+
+	serverBanner := "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
+	_, err = clientConn.Write([]byte(serverBanner))
+	if err != nil {
+		return fmt.Errorf("falha ao enviar banner do servidor: %w", err)
+	}
+
+	config.ServerConfig = &ssh.ServerConfig{
 		NoClientAuth: true,
 	}
-	serverConfig.AddHostKey(config.HostKey)
+	config.ServerConfig.AddHostKey(config.HostKey)
 
-	// Definir timeouts na conexão
-	clientConn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	clientConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
+	conn, chans, reqs, err := ssh.NewServerConn(clientConn, config.ServerConfig)
 	if err != nil {
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
+	defer conn.Close()
 	logger("SSH MITM: handshake feito com cliente")
 
 	targetConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
@@ -87,37 +102,30 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	for newChannel := range chans {
 		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(newChannel.ChannelType(), newChannel.ExtraData())
 		if err != nil {
+			logger("SSH MITM: falha ao abrir channel: %v", err)
+			newChannel.Reject(ssh.Prohibited, "falha ao abrir channel")
 			continue
 		}
-		acceptChan, acceptReqs, err := newChannel.Accept()
+
+		clientChannel, _, err := newChannel.Accept()
 		if err != nil {
+			logger("SSH MITM: falha ao aceitar channel do cliente: %v", err)
 			targetChannel.Close()
 			continue
 		}
 
 		go func() {
-			for req := range acceptReqs {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
-			}
+			defer targetChannel.Close()
+			defer clientChannel.Close()
+			io.Copy(targetChannel, clientChannel)
 		}()
 		go func() {
-			for req := range targetReqs {
-				if req.WantReply {
-					req.Reply(false, nil)
-				}
-			}
+			defer targetChannel.Close()
+			defer clientChannel.Close()
+			io.Copy(clientChannel, targetChannel)
 		}()
 
-		go func() {
-			io.Copy(acceptChan, targetChannel)
-			targetChannel.Close()
-		}()
-		go func() {
-			io.Copy(targetChannel, acceptChan)
-			acceptChan.Close()
-		}()
+		go ssh.DiscardRequests(targetReqs)
 	}
 
 	return nil
