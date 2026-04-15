@@ -49,11 +49,16 @@ type SSHMITMConfig struct {
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
 	defer clientConn.Close()
 
+	logger("SSH MITM: iniciando handshake")
+
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth: true,
 	}
 	serverConfig.AddHostKey(config.HostKey)
 
+	// Definir timeouts na conexão
+	clientConn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	clientConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
 	if err != nil {
 		return fmt.Errorf("ssh handshake falhou: %w", err)

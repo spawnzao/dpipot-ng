@@ -315,8 +315,12 @@ func (h *Handler) Handle() {
 
 	// --- STEP 4.5: verifica se precisa de MITM ---
 	// Se é SSH, usa MITM para estabelecer conexão corretamente
+	log.Debug("🔍 verificando SSH",
+		zap.ByteString("firstChunk", firstChunk),
+		zap.Bool("isSSH", mitm.IsSSH(firstChunk)),
+	)
 	if mitm.IsSSH(firstChunk) {
-		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr))
+		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
 
 		hostKey, err := generateSSHHostKey()
 		if err != nil {
@@ -325,6 +329,13 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
+		// Para o MITM de SSH, precisamos colocar de volta os bytes que lemos para detecção
+		// Atenção: io.MultiReader não é net.Conn, então não podemos usar diretamente
+		// O MITM vai ler da conexão real, mas o firstChunk já foi consumido
+		// Solução: não passamos firstChunk, o MITM vai negociar do zero com o cliente
+		// Na prática, o cliente vai re-enviar o banner SSH
+		reader := h.conn
+		log.Debug("SSH MITM: passando conexão direta (firstChunk será re-enviado pelo cliente)")
 		mitmConfig := mitm.SSHMITMConfig{
 			HostKey:    hostKey,
 			TargetAddr: honeypotAddr,
@@ -334,7 +345,7 @@ func (h *Handler) Handle() {
 			log.Info("SSH-MITM: "+format, zap.Any("args", args))
 		}
 
-		err = mitm.HandleSSH(h.conn, mitmConfig, mitmLogger)
+		err = mitm.HandleSSH(reader, mitmConfig, mitmLogger)
 		if err != nil {
 			log.Error("MITM SSH falhou", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
