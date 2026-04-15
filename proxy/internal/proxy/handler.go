@@ -329,13 +329,13 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
-		// Para o MITM de SSH, precisamos colocar de volta os bytes que lemos para detecção
-		// Atenção: io.MultiReader não é net.Conn, então não podemos usar diretamente
-		// O MITM vai ler da conexão real, mas o firstChunk já foi consumido
-		// Solução: não passamos firstChunk, o MITM vai negociar do zero com o cliente
-		// Na prática, o cliente vai re-enviar o banner SSH
-		clientConn := h.conn
-		log.Debug("SSH MITM: passando conexão direta (firstChunk será re-enviado pelo cliente)")
+		// Para o MITM de SSH, precisamos repassar o primeiro chunk que já foi lido
+		// O MITM não viu esse dados, então criamos uma conexão com preload
+		clientConn := &mitm.PreloadConn{
+			Conn:    h.conn,
+			Preload: firstChunk,
+		}
+		log.Debug("SSH MITM: passando conexão com preload", zap.Int("bytes", len(firstChunk)))
 		mitmConfig := mitm.SSHMITMConfig{
 			HostKey:    hostKey,
 			TargetAddr: honeypotAddr,
