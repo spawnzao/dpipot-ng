@@ -138,6 +138,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
+	logger("SSH MITM: escrevendo banner custom no honeypot: %s", capturedCreds.Banner)
+	if _, err := targetConn.Write([]byte(capturedCreds.Banner)); err != nil {
+		logger("SSH MITM: erro ao escrever banner: %v", err)
+		return fmt.Errorf("falha ao escrever banner: %w", err)
+	}
+
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
 		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
@@ -150,9 +156,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		ssh.Password(""),
 	)
 
-	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s, banner=%s",
-		capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, capturedCreds.Banner, &ssh.ClientConfig{
+	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
+		capturedCreds.User, capturedCreds.Pass)
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
