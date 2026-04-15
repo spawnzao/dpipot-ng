@@ -126,6 +126,15 @@ func main() {
 					}
 				}
 
+				// Skip loopback (127.0.0.1)
+				if len(packet.Data) >= 20 {
+					srcIP := packet.Data[26:30]
+					dstIP := packet.Data[30:34]
+					if srcIP[0] == 127 && dstIP[0] == 127 {
+						continue
+					}
+				}
+
 				atomic.AddInt64(&packetCount, 1)
 				if packetCount%10 == 0 {
 					logger.Debug("packets received", zap.Int64("count", packetCount), zap.Int("size", len(packet.Data)))
