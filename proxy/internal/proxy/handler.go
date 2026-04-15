@@ -338,6 +338,7 @@ func (h *Handler) Handle() {
 		log.Debug("SSH MITM: passando conexão com preload", zap.Int("bytes", len(firstChunk)))
 		mitmConfig := mitm.SSHMITMConfig{
 			HostKey:    hostKey,
+			Banner:     string(firstChunk),
 			TargetAddr: honeypotAddr,
 		}
 

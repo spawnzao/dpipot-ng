@@ -47,6 +47,12 @@ type SSHMITMConfig struct {
 	ServerConfig   *ssh.ServerConfig
 }
 
+type CapturedCredentials struct {
+	Banner string
+	User   string
+	Pass   string
+}
+
 type PreloadConn struct {
 	Conn    net.Conn
 	Preload []byte
@@ -93,10 +99,23 @@ func (p *PreloadConn) Write(b []byte) (int, error) {
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
 	logger("SSH MITM: iniciando handshake")
 
+	capturedCreds := &CapturedCredentials{
+		Banner: string(config.Banner),
+	}
+
 	serverConfig := &ssh.ServerConfig{
-		NoClientAuth:  true,
+		NoClientAuth:  false,
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
 	}
+
+	serverConfig.PasswordCallback = func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
+		capturedCreds.User = conn.User()
+		capturedCreds.Pass = string(password)
+		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s, Banner: %s",
+			capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)
+		return &ssh.Permissions{}, nil
+	}
+
 	serverConfig.AddHostKey(config.HostKey)
 
 	logger("SSH MITM: chamando ssh.NewServerConn...")
@@ -119,17 +138,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	logger("SSH MITM: conectando SSH ao honeypot...")
+	var authMethods []ssh.AuthMethod
+	if capturedCreds.Pass != "" {
+		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
+	}
+	authMethods = append(authMethods,
+		ssh.Password("root"),
+		ssh.Password("admin"),
+		ssh.Password("password"),
+		ssh.Password("123456"),
+		ssh.Password(""),
+	)
+
+	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
+		capturedCreds.User, capturedCreds.Pass)
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Auth: []ssh.AuthMethod{
-			ssh.Password(""),
-			ssh.Password("root"),
-			ssh.Password("123456"),
-			ssh.Password("admin"),
-			ssh.Password("password"),
-		},
-		User: "root",
+		Auth:            authMethods,
+		User:            capturedCreds.User,
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
