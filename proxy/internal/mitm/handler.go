@@ -13,7 +13,6 @@ import (
 	"io"
 	"math/big"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,27 +52,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: iniciando handshake")
 
-	reader := bufio.NewReader(clientConn)
-
-	clientBanner, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("falha ao ler banner do cliente: %w", err)
-	}
-	clientBanner = strings.TrimSuffix(clientBanner, "\r\n")
-	logger("SSH MITM: banner do cliente: %s", clientBanner)
-
-	serverBanner := "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1\r\n"
-	_, err = clientConn.Write([]byte(serverBanner))
-	if err != nil {
-		return fmt.Errorf("falha ao enviar banner do servidor: %w", err)
-	}
-
-	config.ServerConfig = &ssh.ServerConfig{
+	serverConfig := &ssh.ServerConfig{
 		NoClientAuth: true,
 	}
-	config.ServerConfig.AddHostKey(config.HostKey)
+	serverConfig.AddHostKey(config.HostKey)
 
-	conn, chans, reqs, err := ssh.NewServerConn(clientConn, config.ServerConfig)
+	conn, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
 	if err != nil {
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
