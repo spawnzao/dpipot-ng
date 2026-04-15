@@ -150,9 +150,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		ssh.Password(""),
 	)
 
-	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
-		capturedCreds.User, capturedCreds.Pass)
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
+	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s, banner=%s",
+		capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, capturedCreds.Banner, &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
