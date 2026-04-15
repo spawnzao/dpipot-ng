@@ -99,7 +99,10 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	go ssh.DiscardRequests(reqs)
 	go ssh.DiscardRequests(reqs2)
 
+	logger("SSH MITM: esperando por channels...")
+
 	for newChannel := range chans {
+		logger("SSH MITM: novo channel recebido: %s", newChannel.ChannelType())
 		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(newChannel.ChannelType(), newChannel.ExtraData())
 		if err != nil {
 			logger("SSH MITM: falha ao abrir channel: %v", err)

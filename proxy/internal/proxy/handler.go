@@ -334,7 +334,7 @@ func (h *Handler) Handle() {
 		// O MITM vai ler da conexão real, mas o firstChunk já foi consumido
 		// Solução: não passamos firstChunk, o MITM vai negociar do zero com o cliente
 		// Na prática, o cliente vai re-enviar o banner SSH
-		reader := h.conn
+		clientConn := h.conn
 		log.Debug("SSH MITM: passando conexão direta (firstChunk será re-enviado pelo cliente)")
 		mitmConfig := mitm.SSHMITMConfig{
 			HostKey:    hostKey,
@@ -345,7 +345,7 @@ func (h *Handler) Handle() {
 			log.Info("SSH-MITM: "+format, zap.Any("args", args))
 		}
 
-		err = mitm.HandleSSH(reader, mitmConfig, mitmLogger)
+		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
 		if err != nil {
 			log.Error("MITM SSH falhou", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)

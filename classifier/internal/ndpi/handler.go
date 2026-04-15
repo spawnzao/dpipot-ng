@@ -188,7 +188,8 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), time.Now().UnixMilli())
 
-	if h.logger != nil {
+	skipLog := (srcIP == "127.0.0.1" || dstIP == "127.0.0.1")
+	if h.logger != nil && !skipLog {
 		h.logger.Info("nDPI result",
 			zap.String("flow_id", flowID),
 			zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
