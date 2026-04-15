@@ -59,6 +59,18 @@ type PreloadConn struct {
 	pos     int
 }
 
+type BannerConn struct {
+	net.Conn
+	Banner string
+}
+
+func (b *BannerConn) Write(p []byte) (int, error) {
+	if len(p) > 0 && p[0] == 'S' {
+		return b.Conn.Write([]byte(b.Banner))
+	}
+	return b.Conn.Write(p)
+}
+
 func (p *PreloadConn) Read(b []byte) (int, error) {
 	if p.pos < len(p.Preload) {
 		n := copy(b, p.Preload[p.pos:])
@@ -138,10 +150,10 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	logger("SSH MITM: escrevendo banner custom no honeypot: %s", capturedCreds.Banner)
-	if _, err := targetConn.Write([]byte(capturedCreds.Banner)); err != nil {
-		logger("SSH MITM: erro ao escrever banner: %v", err)
-		return fmt.Errorf("falha ao escrever banner: %w", err)
+	logger("SSH MITM:準備 conexao com banner custom: %s", capturedCreds.Banner)
+	bannerConn := &BannerConn{
+		Conn:   targetConn,
+		Banner: capturedCreds.Banner,
 	}
 
 	var authMethods []ssh.AuthMethod
@@ -158,7 +170,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(bannerConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
