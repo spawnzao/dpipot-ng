@@ -61,11 +61,19 @@ type PreloadConn struct {
 
 type BannerConn struct {
 	net.Conn
-	Banner string
+	Banner       string
+	wroteBanner  bool
+	wroteBannerM sync.Mutex
 }
 
 func (b *BannerConn) Write(p []byte) (int, error) {
-	if len(p) > 0 && p[0] == 'S' {
+	b.wroteBannerM.Lock()
+	defer b.wroteBannerM.Unlock()
+
+	if !b.wroteBanner && len(p) > 0 && bytes.HasPrefix(p, []byte("SSH-")) {
+		b.wroteBanner = true
+		logger := func(s string, args ...interface{}) {}
+		logger("BannerConn: intercepting banner, replacing with: %s", b.Banner)
 		return b.Conn.Write([]byte(b.Banner))
 	}
 	return b.Conn.Write(p)
@@ -170,10 +178,15 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
+
+	bannerConn.Conn.SetDeadline(time.Now().Add(10 * time.Second))
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(bannerConn, "", &ssh.ClientConfig{
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Auth:            authMethods,
-		User:            capturedCreds.User,
+		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+			logger("SSH MITM: accept any host key: %v", key.Type())
+			return nil
+		},
+		Auth: authMethods,
+		User: capturedCreds.User,
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
