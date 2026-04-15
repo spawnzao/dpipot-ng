@@ -120,6 +120,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot...")
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Auth:            []ssh.AuthMethod{ssh.Password("")},
+		BannerCallback:  func(message string) error { return nil },
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
