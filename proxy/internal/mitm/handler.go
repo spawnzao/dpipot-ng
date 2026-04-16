@@ -171,6 +171,14 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		Banner: string(config.Banner),
 	}
 
+	type pendingCmd struct {
+		timestamp time.Time
+		data      []byte
+	}
+
+	var cmdBuffer []pendingCmd
+	cmdBufferMu := &sync.Mutex{}
+
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:  false,
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
@@ -296,22 +304,13 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				n, err := clientChannel.Read(buf)
 				if n > 0 {
 					logger("SSH MITM: cliente→honeypot lendo %d bytes", n)
-					if config.OnEvent != nil {
-						event := &kafka.Event{
-							FlowID:      config.FlowID,
-							Timestamp:   time.Now(),
-							SrcIP:       config.SrcIP,
-							SrcPort:     config.SrcPort,
-							DstIP:       config.DstIP,
-							DstPort:     config.DstPort,
-							NDPIProto:   "SSH",
-							Honeypot:    config.TargetAddr,
-							PayloadSrc:  buf[:n],
-							PayloadSize: int64(n),
-						}
-						config.OnEvent(event)
-						logger("SSH MITM: evento cliente→honeypot publicado")
-					}
+					cmdBufferMu.Lock()
+					cmdBuffer = append(cmdBuffer, pendingCmd{
+						timestamp: time.Now(),
+						data:      bytes.Clone(buf[:n]),
+					})
+					cmdBufferMu.Unlock()
+					logger("SSH MITM: comando armazenado no buffer")
 					targetChannel.Write(buf[:n])
 				}
 				if err != nil {
@@ -330,6 +329,14 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				if n > 0 {
 					logger("SSH MITM: honeypot→cliente lendo %d bytes", n)
 					if config.OnEvent != nil {
+						cmdBufferMu.Lock()
+						var combinedSrc []byte
+						for _, cmd := range cmdBuffer {
+							combinedSrc = append(combinedSrc, cmd.data...)
+						}
+						cmdBuffer = nil
+						cmdBufferMu.Unlock()
+
 						event := &kafka.Event{
 							FlowID:      config.FlowID,
 							Timestamp:   time.Now(),
@@ -339,11 +346,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 							DstPort:     config.DstPort,
 							NDPIProto:   "SSH",
 							Honeypot:    config.TargetAddr,
+							PayloadSrc:  combinedSrc,
 							PayloadDst:  buf[:n],
-							PayloadSize: int64(n),
+							PayloadSize: int64(len(combinedSrc) + n),
 						}
 						config.OnEvent(event)
-						logger("SSH MITM: evento honeypot→cliente publicado")
+						logger("SSH MITM: evento combinado publicado, src=%d dst=%d", len(combinedSrc), n)
 					}
 					clientChannel.Write(buf[:n])
 				}
