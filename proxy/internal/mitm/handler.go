@@ -134,6 +134,29 @@ func (p *PreloadConn) Write(b []byte) (int, error) {
 	return p.Conn.Write(b)
 }
 
+// forwardRequests encaminha SSH requests de um canal para outro,
+// respondendo ao remetente com o resultado. É necessário para
+// repassar pty-req, shell, exec, window-change etc.
+func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(string, ...interface{})) {
+	for req := range reqs {
+		logger("SSH MITM: encaminhando request tipo=%s wantReply=%v payload=%d bytes",
+			req.Type, req.WantReply, len(req.Payload))
+
+		ok, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
+		if err != nil {
+			logger("SSH MITM: erro ao encaminhar request %s: %v", req.Type, err)
+			if req.WantReply {
+				req.Reply(false, nil)
+			}
+			continue
+		}
+
+		if req.WantReply {
+			req.Reply(ok, nil)
+		}
+	}
+}
+
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
 	logger("SSH MITM: iniciando handshake")
 
@@ -176,10 +199,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	logger("SSH MITM: criando conexão direta sem modificar banner")
-
-	targetConn.SetDeadline(time.Now().Add(10 * time.Second))
-
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
 		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
@@ -195,7 +214,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
 
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
+	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
@@ -207,48 +226,67 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: SSH conectado ao honeypot")
 	defer targetSSHConn.Close()
 
+	// Descarta global requests de ambos os lados
 	go ssh.DiscardRequests(reqs)
-	go ssh.DiscardRequests(reqs2)
+	go ssh.DiscardRequests(targetGlobalReqs)
 
 	logger("SSH MITM: esperando por channels...")
 
 	for newChannel := range chans {
 		logger("SSH MITM: novo channel recebido: %s", newChannel.ChannelType())
-		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(newChannel.ChannelType(), newChannel.ExtraData())
+
+		// Abre o canal no honeypot ANTES de aceitar do cliente,
+		// para poder recusar corretamente se o honeypot rejeitar.
+		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(
+			newChannel.ChannelType(), newChannel.ExtraData(),
+		)
 		if err != nil {
-			logger("SSH MITM: falha ao abrir channel: %v", err)
+			logger("SSH MITM: falha ao abrir channel no honeypot: %v", err)
 			newChannel.Reject(ssh.Prohibited, "falha ao abrir channel")
 			continue
 		}
+		logger("SSH MITM: channel aberto no honeypot OK")
 
-		logger("SSH MITM: abrindo channel no honeypot OK, aceitando do cliente...")
-		clientChannel, _, err := newChannel.Accept()
+		clientChannel, clientReqs, err := newChannel.Accept()
 		if err != nil {
 			logger("SSH MITM: falha ao aceitar channel do cliente: %v", err)
 			targetChannel.Close()
 			continue
 		}
-		logger("SSH MITM: channel aceito, iniciando io.Copy...")
+		logger("SSH MITM: channel aceito do cliente")
 
-		logger("SSH MITM: iniciando goroutines de ioCopy")
+		// Encaminha requests do cliente → honeypot (pty-req, shell, exec, window-change…)
+		// e do honeypot → cliente (exit-status, exit-signal…).
+		// SEM isso o shell nunca abre.
+		go forwardRequests(targetChannel, clientReqs, logger)
+		go forwardRequests(clientChannel, targetReqs, logger)
 
+		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
+		// stderr é tratado separadamente pois é um sub-canal distinto.
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			logger("SSH MITM: goroutine cliente->honeypot iniciada")
 			n, err := io.Copy(targetChannel, clientChannel)
-			logger("SSH MITM: cliente->honeypot encerrou, bytes=%d, err=%v", n, err)
+			logger("SSH MITM: cliente→honeypot encerrou, bytes=%d, err=%v", n, err)
 		}()
 
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			logger("SSH MITM: goroutine honeypot->cliente iniciada")
 			n, err := io.Copy(clientChannel, targetChannel)
-			logger("SSH MITM: honeypot->cliente encerrou, bytes=%d, err=%v", n, err)
+			logger("SSH MITM: honeypot→cliente encerrou, bytes=%d, err=%v", n, err)
 		}()
 
-		go ssh.DiscardRequests(targetReqs)
+		// Stderr: honeypot → cliente (ex: mensagens de erro do shell remoto)
+		go func() {
+			defer func() { recover() }() // stderr pode não estar disponível
+			io.Copy(clientChannel.Stderr(), targetChannel.Stderr())
+		}()
+
+		go func() {
+			defer func() { recover() }()
+			io.Copy(targetChannel.Stderr(), clientChannel.Stderr())
+		}()
 	}
 
 	logger("SSH MITM: HandleSSH retornando nil")
