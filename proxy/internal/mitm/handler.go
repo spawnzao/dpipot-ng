@@ -158,11 +158,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	logger("SSH MITM:準備 conexao com banner custom: %s", capturedCreds.Banner)
-	bannerConn := &BannerConn{
-		Conn:   targetConn,
-		Banner: capturedCreds.Banner,
-	}
+	targetConn.Write([]byte(capturedCreds.Banner))
+	logger("SSH MITM: banner escrito manualmente no honeypot")
 
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
@@ -179,8 +176,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
 
-	bannerConn.Conn.SetDeadline(time.Now().Add(10 * time.Second))
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(bannerConn, "", &ssh.ClientConfig{
+	targetConn.SetDeadline(time.Now().Add(10 * time.Second))
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			logger("SSH MITM: accept any host key: %v", key.Type())
 			return nil
