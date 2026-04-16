@@ -288,58 +288,70 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
 		// stderr é tratado separadamente pois é um sub-canal distinto.
-		srcBuf := &bytes.Buffer{}
-		dstBuf := &bytes.Buffer{}
-		mu := &sync.Mutex{}
-
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			tee := io.TeeReader(clientChannel, srcBuf)
-			n, err := io.Copy(targetChannel, tee)
-			mu.Lock()
-			logger("SSH MITM: cliente→honeypot encerrou, bytes=%d, err=%v", n, err)
-			if config.OnEvent != nil && srcBuf.Len() > 0 {
-				event := &kafka.Event{
-					FlowID:      config.FlowID,
-					Timestamp:   time.Now(),
-					SrcIP:       config.SrcIP,
-					SrcPort:     config.SrcPort,
-					DstIP:       config.DstIP,
-					DstPort:     config.DstPort,
-					NDPIProto:   "SSH",
-					Honeypot:    config.TargetAddr,
-					PayloadSrc:  srcBuf.Bytes(),
-					PayloadSize: int64(srcBuf.Len()),
+			buf := make([]byte, 4096)
+			for {
+				n, err := clientChannel.Read(buf)
+				if n > 0 {
+					logger("SSH MITM: cliente→honeypot lendo %d bytes", n)
+					if config.OnEvent != nil {
+						event := &kafka.Event{
+							FlowID:      config.FlowID,
+							Timestamp:   time.Now(),
+							SrcIP:       config.SrcIP,
+							SrcPort:     config.SrcPort,
+							DstIP:       config.DstIP,
+							DstPort:     config.DstPort,
+							NDPIProto:   "SSH",
+							Honeypot:    config.TargetAddr,
+							PayloadSrc:  buf[:n],
+							PayloadSize: int64(n),
+						}
+						config.OnEvent(event)
+						logger("SSH MITM: evento cliente→honeypot publicado")
+					}
+					targetChannel.Write(buf[:n])
 				}
-				config.OnEvent(event)
+				if err != nil {
+					logger("SSH MITM: cliente→honeypot erro: %v", err)
+					break
+				}
 			}
-			mu.Unlock()
 		}()
 
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			tee := io.TeeReader(targetChannel, dstBuf)
-			n, err := io.Copy(clientChannel, tee)
-			mu.Lock()
-			logger("SSH MITM: honeypot→cliente encerrou, bytes=%d, err=%v", n, err)
-			if config.OnEvent != nil && dstBuf.Len() > 0 {
-				event := &kafka.Event{
-					FlowID:      config.FlowID,
-					Timestamp:   time.Now(),
-					SrcIP:       config.SrcIP,
-					SrcPort:     config.SrcPort,
-					DstIP:       config.DstIP,
-					DstPort:     config.DstPort,
-					NDPIProto:   "SSH",
-					Honeypot:    config.TargetAddr,
-					PayloadDst:  dstBuf.Bytes(),
-					PayloadSize: int64(dstBuf.Len()),
+			buf := make([]byte, 4096)
+			for {
+				n, err := targetChannel.Read(buf)
+				if n > 0 {
+					logger("SSH MITM: honeypot→cliente lendo %d bytes", n)
+					if config.OnEvent != nil {
+						event := &kafka.Event{
+							FlowID:      config.FlowID,
+							Timestamp:   time.Now(),
+							SrcIP:       config.SrcIP,
+							SrcPort:     config.SrcPort,
+							DstIP:       config.DstIP,
+							DstPort:     config.DstPort,
+							NDPIProto:   "SSH",
+							Honeypot:    config.TargetAddr,
+							PayloadDst:  buf[:n],
+							PayloadSize: int64(n),
+						}
+						config.OnEvent(event)
+						logger("SSH MITM: evento honeypot→cliente publicado")
+					}
+					clientChannel.Write(buf[:n])
 				}
-				config.OnEvent(event)
+				if err != nil {
+					logger("SSH MITM: honeypot→cliente erro: %v", err)
+					break
+				}
 			}
-			mu.Unlock()
 		}()
 
 		// Stderr: honeypot → cliente (ex: mensagens de erro do shell remoto)
