@@ -66,6 +66,20 @@ type BannerConn struct {
 	wroteBannerM sync.Mutex
 }
 
+type directTCPConn struct {
+	net.Conn
+	Banner string
+	Log    func(string, ...interface{})
+}
+
+func (d *directTCPConn) Write(p []byte) (int, error) {
+	if len(p) > 0 && p[0] == 'S' {
+		d.Log("directTCPConn: replacing banner with: %s", d.Banner)
+		return d.Conn.Write([]byte(d.Banner))
+	}
+	return d.Conn.Write(p)
+}
+
 func (b *BannerConn) Write(p []byte) (int, error) {
 	b.wroteBannerM.Lock()
 	defer b.wroteBannerM.Unlock()
@@ -163,9 +177,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	defer targetConn.Close()
 
 	logger("SSH MITM: criando BannerConn com: %s", capturedCreds.Banner)
-	bannerConn := &BannerConn{
+
+	directConn := &directTCPConn{
 		Conn:   targetConn,
 		Banner: capturedCreds.Banner,
+		Log:    logger,
 	}
 
 	var authMethods []ssh.AuthMethod
@@ -183,8 +199,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
 
-	bannerConn.SetDeadline(time.Now().Add(10 * time.Second))
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(bannerConn, "", &ssh.ClientConfig{
+	directConn.SetDeadline(time.Now().Add(10 * time.Second))
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(directConn, "", &ssh.ClientConfig{
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			logger("SSH MITM: accept any host key: %v", key.Type())
 			return nil
