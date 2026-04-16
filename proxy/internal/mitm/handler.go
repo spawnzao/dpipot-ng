@@ -176,13 +176,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	logger("SSH MITM: criando BannerConn com: %s", capturedCreds.Banner)
+	logger("SSH MITM: criando conexão direta sem modificar banner")
 
-	directConn := &directTCPConn{
-		Conn:   targetConn,
-		Banner: capturedCreds.Banner,
-		Log:    logger,
-	}
+	targetConn.SetDeadline(time.Now().Add(10 * time.Second))
 
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
@@ -199,8 +195,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s",
 		capturedCreds.User, capturedCreds.Pass)
 
-	directConn.SetDeadline(time.Now().Add(10 * time.Second))
-	targetSSHConn, _, reqs2, err := ssh.NewClientConn(directConn, "", &ssh.ClientConfig{
+	targetSSHConn, _, reqs2, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
