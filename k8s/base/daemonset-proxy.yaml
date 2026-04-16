@@ -20,7 +20,7 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       initContainers:
         - name: iptables-setup
-          image: docker.io/library/ubuntu:24.04
+          image: alpine:3.19
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -28,10 +28,8 @@ spec:
             - |
               set -e
 
-              apt-get update --fix-missing || apt-get update || true
-
-              apt-get install -y --no-install-recommends iptables iproute2 || true
-              
+              apk add --no-cache iptables iproute2
+               
               # Habilitar IP forwarding
               sysctl -w net.ipv4.ip_forward=1
               sysctl -w net.ipv4.conf.all.rp_filter=0
@@ -43,8 +41,6 @@ spec:
               
               # Criar tabela de roteamento local para TPROXY
               echo "=== Configurando ip rule e route ==="
-              # Criar diretório se não existir
-              mkdir -p /etc/iproute2
               # Adicionar tabela 100 se não existir
               grep -q "100" /etc/iproute2/rt_tables || echo "100 tproxy" >> /etc/iproute2/rt_tables
               
