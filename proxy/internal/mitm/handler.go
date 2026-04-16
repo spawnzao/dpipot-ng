@@ -201,12 +201,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	directConn.SetDeadline(time.Now().Add(10 * time.Second))
 	targetSSHConn, _, reqs2, err := ssh.NewClientConn(directConn, "", &ssh.ClientConfig{
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			logger("SSH MITM: accept any host key: %v", key.Type())
-			return nil
-		},
-		Auth: authMethods,
-		User: capturedCreds.User,
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Auth:            authMethods,
+		User:            capturedCreds.User,
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
