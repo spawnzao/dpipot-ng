@@ -62,12 +62,6 @@ spec:
           env:
             - name: COWRIE_TELNET_ENABLED
               value: "yes"
-            - name: EXTRA_ARGS
-              value: "--config <filepath>/etc/cowrie.cfg"
-          volumeMounts:
-            - name: cowrie-config
-              mountPath: /src/cowrie-docker/etc
-              readOnly: true
           resources:
             requests:
               cpu: 50m
@@ -75,21 +69,6 @@ spec:
             limits:
               cpu: 300m
               memory: 256Mi
-      volumes:
-        - name: cowrie-config
-          configMap:
-            name: cowrie-config
-
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cowrie-config
-  namespace: dpipot
-data:
-  cowrie.cfg: |
-    [output]
-    proxy_behind_proxy = true
 
 ---
 # ── Dionaea (multi-protocolo genérico) ──────────────────────────────
