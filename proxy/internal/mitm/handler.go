@@ -200,28 +200,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	clientAddr := clientConn.RemoteAddr().(*net.TCPAddr)
-	proxyAddr := targetConn.LocalAddr().(*net.TCPAddr)
-
-	network := "TCP4"
-	if clientAddr.IP.To4() == nil {
-		network = "TCP6"
-	}
-
-	proxyHeader := fmt.Sprintf("PROXY %s %s %s %d %d\r\n",
-		network,
-		clientAddr.IP.String(),
-		proxyAddr.IP.String(),
-		clientAddr.Port,
-		proxyAddr.Port,
-	)
-
-	if _, err := fmt.Fprint(targetConn, proxyHeader); err != nil {
-		logger("SSH MITM: erro ao enviar PROXY header: %v", err)
-		return fmt.Errorf("falha ao enviar proxy header: %w", err)
-	}
-	logger("SSH MITM: PROXY header enviado: %s", strings.TrimSpace(proxyHeader))
-
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
 		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
