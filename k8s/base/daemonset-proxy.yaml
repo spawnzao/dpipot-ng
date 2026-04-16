@@ -41,6 +41,7 @@ spec:
               
               # Criar tabela de roteamento local para TPROXY
               echo "=== Configurando ip rule e route ==="
+              mkdir -p /etc/iproute2
               # Adicionar tabela 100 se não existir
               grep -q "100" /etc/iproute2/rt_tables || echo "100 tproxy" >> /etc/iproute2/rt_tables
               
