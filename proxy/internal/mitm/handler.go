@@ -73,8 +73,12 @@ func (b *BannerConn) Write(p []byte) (int, error) {
 	if !b.wroteBanner && len(p) > 0 && bytes.HasPrefix(p, []byte("SSH-")) {
 		b.wroteBanner = true
 		logger := func(s string, args ...interface{}) {}
-		logger("BannerConn: intercepting banner, replacing with: %s", b.Banner)
+		logger("BannerConn: intercepting Go banner, replacing with: %s", b.Banner)
 		return b.Conn.Write([]byte(b.Banner))
+	}
+	if len(p) > 0 {
+		logger := func(s string, args ...interface{}) {}
+		logger("BannerConn: passthrough %d bytes", len(p))
 	}
 	return b.Conn.Write(p)
 }
@@ -158,11 +162,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
+	logger("SSH MITM: criando BannerConn com: %s", capturedCreds.Banner)
 	bannerConn := &BannerConn{
 		Conn:   targetConn,
 		Banner: capturedCreds.Banner,
 	}
-	logger("SSH MITM: preparando banner conn com: %s", capturedCreds.Banner)
 
 	var authMethods []ssh.AuthMethod
 	if capturedCreds.Pass != "" {
