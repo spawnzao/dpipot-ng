@@ -340,6 +340,14 @@ func (h *Handler) Handle() {
 			HostKey:    hostKey,
 			Banner:     string(firstChunk),
 			TargetAddr: honeypotAddr,
+			FlowID:     h.flowID,
+			SrcIP:      srcAddr.IP.String(),
+			SrcPort:    srcAddr.Port,
+			DstIP:      origDstIP.String(),
+			DstPort:    int(origDstPort),
+			OnEvent: func(event *kafka.Event) {
+				h.producer.Publish(event)
+			},
 		}
 
 		mitmLogger := func(format string, args ...interface{}) {

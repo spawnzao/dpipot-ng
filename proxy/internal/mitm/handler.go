@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -45,6 +46,12 @@ type SSHMITMConfig struct {
 	TargetAddr     string
 	MaxPayloadSize int64
 	ServerConfig   *ssh.ServerConfig
+	OnEvent        func(event *kafka.Event)
+	FlowID         string
+	SrcIP          string
+	SrcPort        int
+	DstIP          string
+	DstPort        int
 }
 
 type CapturedCredentials struct {
@@ -174,6 +181,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		capturedCreds.Pass = string(password)
 		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s, Banner: %s",
 			capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)
+
+		if config.OnEvent != nil {
+			event := &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				Honeypot:    config.TargetAddr,
+				PayloadSrc:  []byte(fmt.Sprintf("USER: %s\nPASS: %s\nBANNER: %s", capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)),
+				PayloadSize: int64(len(capturedCreds.User) + len(capturedCreds.Pass) + len(capturedCreds.Banner)),
+			}
+			config.OnEvent(event)
+			logger("SSH MITM: evento de login publicado no Kafka")
+		}
+
 		return &ssh.Permissions{}, nil
 	}
 
@@ -263,18 +288,58 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
 		// stderr é tratado separadamente pois é um sub-canal distinto.
+		srcBuf := &bytes.Buffer{}
+		dstBuf := &bytes.Buffer{}
+		mu := &sync.Mutex{}
+
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			n, err := io.Copy(targetChannel, clientChannel)
+			tee := io.TeeReader(clientChannel, srcBuf)
+			n, err := io.Copy(targetChannel, tee)
+			mu.Lock()
 			logger("SSH MITM: cliente→honeypot encerrou, bytes=%d, err=%v", n, err)
+			if config.OnEvent != nil && srcBuf.Len() > 0 {
+				event := &kafka.Event{
+					FlowID:      config.FlowID,
+					Timestamp:   time.Now(),
+					SrcIP:       config.SrcIP,
+					SrcPort:     config.SrcPort,
+					DstIP:       config.DstIP,
+					DstPort:     config.DstPort,
+					NDPIProto:   "SSH",
+					Honeypot:    config.TargetAddr,
+					PayloadSrc:  srcBuf.Bytes(),
+					PayloadSize: int64(srcBuf.Len()),
+				}
+				config.OnEvent(event)
+			}
+			mu.Unlock()
 		}()
 
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
-			n, err := io.Copy(clientChannel, targetChannel)
+			tee := io.TeeReader(targetChannel, dstBuf)
+			n, err := io.Copy(clientChannel, tee)
+			mu.Lock()
 			logger("SSH MITM: honeypot→cliente encerrou, bytes=%d, err=%v", n, err)
+			if config.OnEvent != nil && dstBuf.Len() > 0 {
+				event := &kafka.Event{
+					FlowID:      config.FlowID,
+					Timestamp:   time.Now(),
+					SrcIP:       config.SrcIP,
+					SrcPort:     config.SrcPort,
+					DstIP:       config.DstIP,
+					DstPort:     config.DstPort,
+					NDPIProto:   "SSH",
+					Honeypot:    config.TargetAddr,
+					PayloadDst:  dstBuf.Bytes(),
+					PayloadSize: int64(dstBuf.Len()),
+				}
+				config.OnEvent(event)
+			}
+			mu.Unlock()
 		}()
 
 		// Stderr: honeypot → cliente (ex: mensagens de erro do shell remoto)
