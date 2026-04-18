@@ -60,22 +60,6 @@ spec:
       labels:
         app: logstash
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
-      hostAliases:
-        - ip: "10.88.88.1"
-          hostnames:
-            - "elasticsearch"
-      initContainers:
-        - name: test-connection
-          image: curlimages/curl:latest
-          command:
-            - sh
-            - -c
-            - |
-              echo "=== Testing Elasticsearch ==="
-              curl -k -v --connect-timeout 10 https://10.88.88.1:9200 || echo "Failed"
-              echo "=== Done ==="
       containers:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:8.12.0
