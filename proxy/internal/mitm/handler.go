@@ -202,6 +202,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				Honeypot:    config.TargetAddr,
 				PayloadSrc:  []byte(fmt.Sprintf("USER: %s\nPASS: %s\nBANNER: %s", capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)),
 				PayloadSize: int64(len(capturedCreds.User) + len(capturedCreds.Pass) + len(capturedCreds.Banner)),
+				LogType:     "debug",
 			}
 			config.OnEvent(event)
 			logger("SSH MITM: evento de login publicado no Kafka")
@@ -349,6 +350,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 							PayloadSrc:  combinedSrc,
 							PayloadDst:  buf[:n],
 							PayloadSize: int64(len(combinedSrc) + n),
+							LogType:     "debug",
 						}
 						config.OnEvent(event)
 						logger("SSH MITM: evento combinado publicado, src=%d dst=%d", len(combinedSrc), n)

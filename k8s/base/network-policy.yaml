@@ -14,6 +14,7 @@ spec:
         values:
           - dpipot-proxy
           - kafka
+          - logstash
   policyTypes:
     - Ingress
     - Egress
@@ -49,3 +50,25 @@ spec:
       ports:
         - protocol: UDP
           port: 53
+---
+# NetworkPolicy para Logstash - permite acesso ao Kafka e Elasticsearch externo
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: logstash-egress
+  namespace: dpipot
+spec:
+  podSelector:
+    matchLabels:
+      app: logstash
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+    - to: []

@@ -16,20 +16,31 @@ data:
     input {
       kafka {
         bootstrap_servers => "${KAFKA_BOOTSTRAP_SERVERS}"
-        topics => ["${KAFKA_TOPICS:logs}"]
+        topics_pattern => "dpipot.events.*"
         group_id => "logstash-consumer"
         auto_offset_reset => "earliest"
         codec => "json"
       }
     }
     output {
-      elasticsearch {
-        hosts => ["${ELASTICSEARCH_HOST}"]
-        index => "logs-%{+YYYY.MM.dd}"
-        user => "${ELASTICSEARCH_USER}"
-        password => "${ELASTIC_PASSWORD}"
-        ssl => true
-        cacert => "/usr/share/logstash/config/certs/ca.crt"
+      if [topic] =~ "debug" {
+        elasticsearch {
+          hosts => ["${ELASTICSEARCH_HOST}"]
+          index => "logs-debug-%{+YYYY.MM.dd}"
+          user => "${ELASTICSEARCH_USER}"
+          password => "${ELASTIC_PASSWORD}"
+          ssl => true
+          cacert => "/usr/share/logstash/config/certs/ca.crt"
+        }
+      } else {
+        elasticsearch {
+          hosts => ["${ELASTICSEARCH_HOST}"]
+          index => "logs-application-%{+YYYY.MM.dd}"
+          user => "${ELASTICSEARCH_USER}"
+          password => "${ELASTIC_PASSWORD}"
+          ssl => true
+          cacert => "/usr/share/logstash/config/certs/ca.crt"
+        }
       }
     }
 ---
@@ -61,8 +72,6 @@ spec:
           env:
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka-svc.dpipot.svc.cluster.local:9092"
-            - name: KAFKA_TOPICS
-              value: "logs,application-logs"
             - name: ELASTICSEARCH_HOST
               valueFrom:
                 secretKeyRef:

@@ -469,6 +469,7 @@ publish:
 		PayloadSrc:    bufSrc.Bytes(),
 		PayloadDst:    bufDst.Bytes(),
 		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
+		LogType:       "application",
 	}
 	h.producer.Publish(event)
 

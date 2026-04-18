@@ -31,7 +31,7 @@ func Load() (*Config, error) {
 		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
-		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.payloads"),
+		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
 		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 0),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",

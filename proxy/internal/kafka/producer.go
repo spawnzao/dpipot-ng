@@ -27,15 +27,17 @@ type Event struct {
 	AttackType    string    `json:"attack_type,omitempty"`
 	CVE           string    `json:"cve,omitempty"`
 	Severity      string    `json:"severity,omitempty"`
+	LogType       string    `json:"log_type,omitempty"`
 }
 
 type Producer struct {
-	producer *kafka.Producer
-	topic    string
-	log      *zap.Logger
-	events   chan *Event
-	done     chan struct{}
-	healthy  atomic.Bool
+	producer   *kafka.Producer
+	topicDebug string
+	topicApp   string
+	log        *zap.Logger
+	events     chan *Event
+	done       chan struct{}
+	healthy    atomic.Bool
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
@@ -53,12 +55,16 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 		return nil, fmt.Errorf("kafka producer: %w", err)
 	}
 
+	topicDebug := topic + "-debug"
+	topicApp := topic + "-application"
+
 	prod := &Producer{
-		producer: p,
-		topic:    topic,
-		log:      log,
-		events:   make(chan *Event, 10000),
-		done:     make(chan struct{}),
+		producer:   p,
+		topicDebug: topicDebug,
+		topicApp:   topicApp,
+		log:        log,
+		events:     make(chan *Event, 10000),
+		done:       make(chan struct{}),
 	}
 	prod.healthy.Store(true)
 
@@ -99,9 +105,14 @@ func (p *Producer) drain() {
 			continue
 		}
 
+		topic := p.topicApp
+		if event.LogType == "debug" {
+			topic = p.topicDebug
+		}
+
 		err = p.producer.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
-				Topic:     &p.topic,
+				Topic:     &topic,
 				Partition: kafka.PartitionAny,
 			},
 			Key:   []byte(event.FlowID),
