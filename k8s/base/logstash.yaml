@@ -60,6 +60,8 @@ spec:
       labels:
         app: logstash
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirst
       hostAliases:
         - ip: "10.88.88.1"
           hostnames:
@@ -71,15 +73,9 @@ spec:
             - sh
             - -c
             - |
-              # Get the default gateway
-              GW=$(ip route | grep default | awk '{print $3}')
-              echo "Default gateway: $GW"
-              # Check if we can reach 10.88.88.1
-              echo "Testing 10.88.88.1..."
-              timeout 5 ping -c 1 10.88.88.1 || echo "Direct ping failed"
-              # Try adding explicit route if needed
-              echo "Current routes:"
-              ip route
+              # Test if Elasticsearch is reachable
+              echo "Testing Elasticsearch TCP..."
+              wget -q -O /dev/null --timeout=5 --no-check-certificate https://10.88.88.1:9200 || echo "TCP to 9200 failed"
               echo "Done"
       containers:
         - name: logstash
