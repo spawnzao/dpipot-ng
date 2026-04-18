@@ -26,7 +26,8 @@ data:
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "logs-debug-%{+YYYY.MM.dd}"
-          data_stream => "false"
+          action => "create"
+          manage_template => false
           user => "${ELASTICSEARCH_USER}"
           password => "${ELASTIC_PASSWORD}"
           ssl => true
@@ -36,7 +37,8 @@ data:
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "logs-application-%{+YYYY.MM.dd}"
-          data_stream => "false"
+          action => "create"
+          manage_template => false
           user => "${ELASTICSEARCH_USER}"
           password => "${ELASTIC_PASSWORD}"
           ssl => true
