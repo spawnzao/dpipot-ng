@@ -60,21 +60,21 @@ spec:
       labels:
         app: logstash
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       hostAliases:
         - ip: "10.88.88.1"
           hostnames:
             - "elasticsearch"
       initContainers:
-        - name: setup-routes
+        - name: test-connection
           image: curlimages/curl:latest
           command:
             - sh
             - -c
             - |
-              echo "=== Testing via hostname ==="
-              curl -k -v --connect-timeout 10 https://elasticsearch:9200 || echo "Via hostname failed"
-              echo "=== Testing direct IP ==="
-              curl -k -v --connect-timeout 10 https://10.88.88.1:9200 || echo "Direct IP failed"
+              echo "=== Testing Elasticsearch ==="
+              curl -k -v --connect-timeout 10 https://10.88.88.1:9200 || echo "Failed"
               echo "=== Done ==="
       containers:
         - name: logstash
