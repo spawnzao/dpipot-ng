@@ -11,6 +11,7 @@ resources:
   - daemonset-proxy.yaml
   - honeypots.yaml
   - kafka.yaml
+  - logstash.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-classifier

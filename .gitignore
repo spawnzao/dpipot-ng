@@ -18,6 +18,11 @@ classifier/*.a
 # env local
 .env
 
+# Secrets (não commitar)
+k8s/overlays/*/secrets/
+k8s/**/*secrets.yaml
+k8s/overlays/*/secrets.yaml
+
 # WSL FIles
 *Zone.Identifier
 
