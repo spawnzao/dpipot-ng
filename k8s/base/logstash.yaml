@@ -61,6 +61,10 @@ spec:
       labels:
         app: logstash
     spec:
+      hostAliases:
+        - ip: "10.88.88.1"
+          hostnames:
+            - "elasticsearch"
       containers:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:8.12.0
