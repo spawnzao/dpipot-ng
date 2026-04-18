@@ -1,6 +1,6 @@
 ---
 # NetworkPolicy para isolar honeypots
-# Apenas o proxy pode comunicar com os honeypots
+# Honeypots não podem fazer egress, apenas proxy e kafka podem
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -16,7 +16,6 @@ spec:
           - kafka
   policyTypes:
     - Ingress
-    - Egress
   ingress:
     - from:
         - namespaceSelector:
@@ -42,24 +41,15 @@ spec:
           port: 4444
         - protocol: TCP
           port: 9200
-  egress:
-    # Honeypots podem precisar de DNS e resolver outros serviços
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
 ---
-# NetworkPolicy para Logstash - permite todo egress
+# NetworkPolicy padrão - permite todo egress no namespace
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: logstash-egress
+  name: allow-all-egress
   namespace: dpipot
 spec:
-  podSelector:
-    matchLabels:
-      app: logstash
+  podSelector: {}
   policyTypes:
     - Egress
   egress:
