@@ -60,8 +60,10 @@ spec:
       labels:
         app: logstash
     spec:
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      hostAliases:
+        - ip: "10.88.88.1"
+          hostnames:
+            - "elasticsearch"
       initContainers:
         - name: setup-routes
           image: curlimages/curl:latest
@@ -69,15 +71,11 @@ spec:
             - sh
             - -c
             - |
-              echo "=== Testing with host network ==="
-              curl -k -v --connect-timeout 5 https://elastic:${ELASTIC_PASSWORD}@10.88.88.1:9200 || echo "Failed"
+              echo "=== Testing via hostname ==="
+              curl -k -v --connect-timeout 10 https://elasticsearch:9200 || echo "Via hostname failed"
+              echo "=== Testing direct IP ==="
+              curl -k -v --connect-timeout 10 https://10.88.88.1:9200 || echo "Direct IP failed"
               echo "=== Done ==="
-          env:
-            - name: ELASTIC_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: logstash-elasticsearch-secrets
-                  key: ELASTIC_PASSWORD
       containers:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:8.12.0
