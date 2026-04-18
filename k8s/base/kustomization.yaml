@@ -14,9 +14,9 @@ resources:
   - logstash.yaml
 
 images:
-  - name: ghcr.io/spawnzao/dpipot-classifier
-    newTag: local
   - name: ghcr.io/spawnzao/dpipot-proxy
-    newTag: local
+    newTag: latest
+  - name: ghcr.io/spawnzao/dpipot-classifier
+    newTag: latest
   - name: ubuntu
     newName: docker.io/library/ubuntu
