@@ -14,6 +14,7 @@ RUN apk add --no-cache \
     libtool \
     pkgconfig \
     cargo \
+    librdkafka-dev \
     && rm -rf /var/cache/apk/*
 
 RUN rm -rf /usr/include/ndpi /usr/local/include/ndpi && \
@@ -34,11 +35,11 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi" GOOS=linux go build -mod=mod -o classifier ./cmd
+RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi -lrdkafka" GOOS=linux go build -mod=mod -o classifier ./cmd
 
 FROM alpine:3.19
 
-RUN apk add --no-cache libpcap
+RUN apk add --no-cache libpcap librdkafka
 
 COPY --from=builder /usr/local/lib/libndpi.so.4.12.0 /usr/local/lib/libndpi.so.4.12.0
 COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
