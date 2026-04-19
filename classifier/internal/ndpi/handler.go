@@ -23,6 +23,7 @@ type Handler struct {
 	flowTable *flow.Table
 	ndpiFlows *sync.Map
 	logger    *zap.Logger
+	producer  *kafka.Producer
 	wg        sync.WaitGroup
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -32,14 +33,6 @@ type HandlerConfig struct {
 	FlowTable *flow.Table
 	Logger    *zap.Logger
 	Producer  *kafka.Producer
-}
-
-type Handler struct {
-	ndpiDM    *NDPI
-	flowTable *flow.Table
-	logger    *zap.Logger
-	producer  *kafka.Producer
-	cancel    context.CancelFunc
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
