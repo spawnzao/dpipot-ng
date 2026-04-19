@@ -10,6 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
+	"github.com/spawnzao/dpipot-ng/classifier/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/ndpi/gondpi"
 )
 
@@ -30,6 +31,15 @@ type Handler struct {
 type HandlerConfig struct {
 	FlowTable *flow.Table
 	Logger    *zap.Logger
+	Producer  *kafka.Producer
+}
+
+type Handler struct {
+	ndpiDM    *NDPI
+	flowTable *flow.Table
+	logger    *zap.Logger
+	producer  *kafka.Producer
+	cancel    context.CancelFunc
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -48,6 +58,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		flowTable: cfg.FlowTable,
 		ndpiFlows: &sync.Map{},
 		logger:    cfg.Logger,
+		producer:  cfg.Producer,
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -217,6 +228,25 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		ProtocolNum:    protocol,
 		LastSeen:       time.Now(),
 	})
+
+	if h.producer != nil {
+		h.producer.Publish(&kafka.Event{
+			FlowID:      flowID,
+			Timestamp:   time.Now(),
+			SrcIP:       srcIP.String(),
+			SrcPort:     int(srcPort),
+			DstIP:       dstIP.String(),
+			DstPort:     int(dstPort),
+			NDPIProto:   appProto,
+			MasterProto: masterProto,
+			Category:    category,
+			TCPFlags:    tcpFlags,
+			PayloadLen:  len(payload),
+			EtherType:   fmt.Sprintf("0x%04x", ethertype),
+			ProtocolNum: protocol,
+			LogType:     "nDPI",
+		})
+	}
 }
 
 func (h *Handler) Close() {

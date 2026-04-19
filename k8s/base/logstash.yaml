@@ -33,6 +33,17 @@ data:
           ssl => true
           cacert => "/usr/share/logstash/config/certs/ca.crt"
         }
+      } else if [topic] =~ "ndpi" {
+        elasticsearch {
+          hosts => ["${ELASTICSEARCH_HOST}"]
+          index => "logs-ndpi-%{+YYYY.MM.dd}"
+          action => "create"
+          manage_template => false
+          user => "${ELASTICSEARCH_USER}"
+          password => "${ELASTIC_PASSWORD}"
+          ssl => true
+          cacert => "/usr/share/logstash/config/certs/ca.crt"
+        }
       } else {
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]

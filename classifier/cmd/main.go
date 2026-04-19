@@ -13,6 +13,7 @@ import (
 	"github.com/spawnzao/dpipot-ng/classifier/internal/capture"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flowtracker"
+	kafkapkg "github.com/spawnzao/dpipot-ng/classifier/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/ndpi"
 	"go.uber.org/zap"
 )
@@ -23,6 +24,8 @@ var (
 	ttlMinutes    = flag.Int("ttl", 5, "Flow entry TTL in minutes")
 	logLevel      = flag.String("log", "info", "Log level (debug, info, warn, error)")
 	runDiag       = flag.Bool("diag", false, "Run AF_PACKET diagnostic and exit")
+	kafkaBrokers  = flag.String("kafka-brokers", "kafka-svc.dpipot.svc.cluster.local:9092", "Kafka brokers")
+	kafkaTopic    = flag.String("kafka-topic", "dpipot.events", "Kafka topic base")
 )
 
 func main() {
@@ -45,6 +48,7 @@ func main() {
 		zap.String("interface", *interfaceName),
 		zap.String("listen", *listenAddr),
 		zap.Int("ttl_minutes", *ttlMinutes),
+		zap.String("kafka_brokers", *kafkaBrokers),
 	)
 
 	flowTable := flow.NewTable(flow.TableConfig{
@@ -72,9 +76,20 @@ func main() {
 
 	logger.Info("AF_PACKET capturer initialized", zap.String("interface", *interfaceName))
 
+	kafkaProducer, err := kafkapkg.NewProducer(*kafkaBrokers, *kafkaTopic, logger)
+	if err != nil {
+		logger.Warn("failed to create kafka producer for nDPI, continuing without it",
+			zap.Error(err),
+		)
+	} else {
+		defer kafkaProducer.Close()
+		logger.Info("Kafka producer initialized for nDPI", zap.String("topic", *kafkaTopic+"-ndpi"))
+	}
+
 	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{
 		FlowTable: flowTable,
 		Logger:    logger,
+		Producer:  kafkaProducer,
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler",
