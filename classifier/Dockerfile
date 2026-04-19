@@ -1,21 +1,19 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-bookworm AS builder
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    librdkafka-dev \
     libpcap-dev \
     git \
     make \
-    gcc \
-    musl-dev \
-    linux-headers \
     autoconf \
     automake \
     libtool \
-    pkgconfig \
     cargo \
-    librdkafka-dev \
-    && rm -rf /var/cache/apk/*
+    && rm -rf /var/lib/apt/lists/*
 
 RUN rm -rf /usr/include/ndpi /usr/local/include/ndpi && \
     cd /tmp && \
@@ -35,18 +33,22 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi -lrdkafka" GOOS=linux go build -mod=mod -o classifier ./cmd
+RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi -lpcap -lpthread -lm -lrdkafka" GOOS=linux go build -mod=mod -o classifier ./cmd
 
-FROM alpine:3.19
+FROM debian:bookworm
 
-RUN apk add --no-cache libpcap librdkafka
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    librdkafka1 \
+    libpcap0.8 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
 COPY --from=builder /usr/local/lib/libndpi.so.4.12.0 /usr/local/lib/libndpi.so.4.12.0
 COPY --from=builder /usr/local/lib/libndpi.so.4 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 COPY --from=builder /usr/local/include /usr/local/include
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
 COPY --from=builder /build/classifier /classifier
 
