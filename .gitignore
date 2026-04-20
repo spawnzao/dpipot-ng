@@ -3,6 +3,9 @@ proxy/vendor/
 *.test
 *.out
 
+# Python venv
+venv/
+
 # binários compilados
 proxy/classifier
 proxy/dpipot-proxy
