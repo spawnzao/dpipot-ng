@@ -12,6 +12,9 @@ proxy/dpipot-proxy
 proxy/proxy-bin
 classifier/classifier
 
+# Go vendor
+classifier/vendor/
+
 # dependências C
 classifier/lib/
 classifier/*.o
