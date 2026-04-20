@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -295,37 +296,43 @@ func (h *Handler) Handle() {
 	// --- STEP 3: classifica com nDPI (via FlowTracker ou local) ---
 	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
-	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
+if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		appProtoFlow, masterProtoFlow, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
-		if err == nil && found && appProtoFlow != "" {
-			if appProtoFlow != "" && appProtoFlow != "Unknown" {
-				ndpiLabel = appProtoFlow
-			} else {
-				ndpiLabel = masterProtoFlow
-			}
+		if err == nil && found && appProtoFlow != "" && strings.ToUpper(appProtoFlow) != "UNKNOWN" {
+			ndpiLabel = appProtoFlow
 			log.Info("fluxo classificado via FlowTracker",
 				zap.String("ndpi_proto", masterProtoFlow),
 				zap.String("ndpi_app", appProtoFlow),
 				zap.String("flow_id", flowIDForTracker))
 		} else {
-			log.Debug("FlowTracker não tem classificação, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
-			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
-			if err != nil {
-				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
-				ndpiLabel = "Unknown"
-			}
-		}
-	} else {
+		log.Debug("FlowTracker não tem classificação, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
 		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
 		defer cancel()
 		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
 		if err != nil {
 			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
 			ndpiLabel = "Unknown"
+			masterProtoFlow = "Unknown"
+			appProtoFlow = "Unknown"
+		} else {
+			masterProtoFlow = ndpiLabel
+			appProtoFlow = ""
 		}
 	}
+} else {
+	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+	if err != nil {
+		log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+		ndpiLabel = "Unknown"
+		masterProtoFlow = "Unknown"
+		appProtoFlow = "Unknown"
+	} else {
+		masterProtoFlow = ndpiLabel
+		appProtoFlow = ""
+	}
+}
 
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
