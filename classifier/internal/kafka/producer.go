@@ -11,19 +11,18 @@ import (
 )
 
 type Event struct {
-	FlowID      string    `json:"flow_id"`
-	Timestamp   time.Time `json:"timestamp"`
-	SrcIP       string    `json:"src_ip"`
-	SrcPort     int       `json:"src_port"`
-	DstIP       string    `json:"dst_ip"`
-	DstPort     int       `json:"dst_port"`
-	NDPIProto   string    `json:"ndpi_proto"`
-	NDPIApp     string    `json:"ndpi_app"`
-	MasterProto string    `json:"master_proto,omitempty"`
-	Category    uint32    `json:"category,omitempty"`
-	TCPFlags    string    `json:"tcp_flags,omitempty"`
-	PayloadLen  int       `json:"payload_len,omitempty"`
-	EtherType   string    `json:"ethertype,omitempty"`
+	FlowID       string    `json:"flow_id"`
+	Timestamp    time.Time `json:"timestamp"`
+	SrcIP        string    `json:"src_ip"`
+	SrcPort      int       `json:"src_port"`
+	DstIP        string    `json:"dst_ip"`
+	DstPort      int       `json:"dst_port"`
+	NDPIProto    string    `json:"ndpi_proto"`
+	NDPIApp      string    `json:"ndpi_app"`
+	Category     uint32    `json:"category,omitempty"`
+	TCPFlags     string    `json:"tcp_flags,omitempty"`
+	PayloadLen   int       `json:"payload_len,omitempty"`
+	EtherType    string    `json:"ethertype,omitempty"`
 	ProtocolNum uint8     `json:"protocol_num,omitempty"`
 	LogType     string    `json:"log_type"`
 }

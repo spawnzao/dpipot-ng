@@ -7,12 +7,12 @@ resources:
   - ../../base
   - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
 
-# em prod: imagens com tag de versão explícita (nunca "latest" em prod)
+# imagens com tag latest
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
-    newTag: "1.0.0"
+    newTag: "latest"
   - name: ghcr.io/spawnzao/dpipot-classifier
-    newTag: "1.0.0"
+    newTag: "latest"
 
 # substitui o emptyDir do Kafka pela PVC
 patches:

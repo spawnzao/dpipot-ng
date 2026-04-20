@@ -231,7 +231,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			DstIP:       dstIP.String(),
 			DstPort:     int(dstPort),
 			NDPIProto:   appProto,
-			MasterProto: masterProto,
+			NDPIApp:     masterProto,
 			Category:    category,
 			TCPFlags:    tcpFlags,
 			PayloadLen:  len(payload),

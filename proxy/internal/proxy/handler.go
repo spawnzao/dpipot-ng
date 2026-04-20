@@ -204,6 +204,8 @@ func (h *Handler) Handle() {
 		bufSrc           bytes.Buffer
 		bufDst           bytes.Buffer
 		ndpiLabel        = "Unknown"
+		masterProtoFlow  = "Unknown"
+		appProtoFlow     = "Unknown"
 		honeypotAddr     string
 		honeypotError    string
 		startTime        time.Time
@@ -294,13 +296,17 @@ func (h *Handler) Handle() {
 	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		proto, masterProto, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
-		if err == nil && found && proto != "" {
-			ndpiLabel = proto
-			if ndpiLabel == "" {
-				ndpiLabel = masterProto
+		appProtoFlow, masterProtoFlow, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
+		if err == nil && found && appProtoFlow != "" {
+			if appProtoFlow != "" && appProtoFlow != "Unknown" {
+				ndpiLabel = appProtoFlow
+			} else {
+				ndpiLabel = masterProtoFlow
 			}
-			log.Info("fluxo classificado via FlowTracker", zap.String("proto", ndpiLabel), zap.String("flow_id", flowIDForTracker))
+			log.Info("fluxo classificado via FlowTracker",
+				zap.String("ndpi_proto", masterProtoFlow),
+				zap.String("ndpi_app", appProtoFlow),
+				zap.String("flow_id", flowIDForTracker))
 		} else {
 			log.Debug("FlowTracker não tem classificação, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
 			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -475,8 +481,8 @@ publish:
 		SrcPort:       srcAddr.Port,
 		DstIP:         origDstIP.String(),
 		DstPort:       int(origDstPort),
-		NDPIProto:     ndpiLabel,
-		NDPIApp:       "",
+		NDPIProto:     masterProtoFlow,
+		NDPIApp:       appProtoFlow,
 		Honeypot:      honeypotAddr,
 		HoneypotError: honeypotError,
 		PayloadSrc:    bufSrc.Bytes(),

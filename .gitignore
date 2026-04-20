@@ -5,6 +5,9 @@ proxy/vendor/
 
 # binários compilados
 proxy/classifier
+proxy/dpipot-proxy
+proxy/proxy-bin
+classifier/classifier
 
 # dependências C
 classifier/lib/
