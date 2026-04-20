@@ -240,14 +240,26 @@ func (h *Handler) Handle() {
 	// --- STEP 2: obtém IP/porta original ---
 	// Primeiro tenta TPROXY (IP_PKTINFO), depois REDIRECT (IP_ORIGINAL_DST)
 	origDstIP, origDstPort, err = getTproxyDst(h.conn)
-	if err != nil {
-		log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
-		origDstIP, origDstPort, err = getOriginalDst(h.conn)
+	isZeroIP := origDstIP != nil && origDstIP.IsUnspecified()
+	if err != nil || isZeroIP {
 		if err != nil {
-			log.Debug("REDIRECT falhou, usando fallback",
-				zap.Error(err),
-				zap.Stringer("local", dstAddr),
-			)
+			log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
+		} else {
+			log.Debug("TPROXY retornou IP inválido (0.0.0.0), tentando REDIRECT")
+		}
+		origDstIP, origDstPort, err = getOriginalDst(h.conn)
+		isZeroIP = origDstIP != nil && origDstIP.IsUnspecified()
+		if err != nil || isZeroIP {
+			if err != nil {
+				log.Debug("REDIRECT falhou, usando fallback",
+					zap.Error(err),
+					zap.Stringer("local", dstAddr),
+				)
+			} else {
+				log.Debug("REDIRECT retornou IP inválido (0.0.0.0), usando fallback",
+					zap.Stringer("local", dstAddr),
+				)
+			}
 			// Fallback: usa dstAddr como origDst (o IP que o cliente Tentou alcançar)
 			origDstIP = dstAddr.IP
 			origDstPort = uint16(dstAddr.Port)
