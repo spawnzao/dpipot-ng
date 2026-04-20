@@ -251,6 +251,15 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: targetConn.LocalAddr: %v, targetConn.RemoteAddr: %v",
 		targetConn.LocalAddr(), targetConn.RemoteAddr())
 
+	logger("SSH MITM: verificando conexao targetConn antes de menulis: %v, erro: %v",
+		targetConn.LocalAddr(), targetConn.RemoteAddr())
+	_, err = targetConn.Write([]byte(""))
+	if err != nil {
+		logger("SSH MITM targetConn write error: %v", err)
+	} else {
+		logger("SSH MITM targetConn write OK")
+	}
+
 	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
