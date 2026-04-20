@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -213,6 +214,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	ndpiProto := masterProto
 	ndpiApp := appProto
 	if ndpiApp == "Unknown" || ndpiApp == "" {
+		ndpiApp = ""
+	}
+	if strings.ToUpper(ndpiProto) == "UNKNOWN" {
+		ndpiProto = appProto
 		ndpiApp = ""
 	}
 
