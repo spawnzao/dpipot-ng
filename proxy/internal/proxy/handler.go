@@ -220,6 +220,7 @@ func (h *Handler) Handle() {
 		origDstPort      uint16
 		flowInfo         *ndpi.FlowInfo
 		flowIDForTracker string
+		isZeroIP         bool
 	)
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
@@ -240,7 +241,7 @@ func (h *Handler) Handle() {
 	// --- STEP 2: obtém IP/porta original ---
 	// Primeiro tenta TPROXY (IP_PKTINFO), depois REDIRECT (IP_ORIGINAL_DST)
 	origDstIP, origDstPort, err = getTproxyDst(h.conn)
-	isZeroIP := origDstIP != nil && origDstIP.IsUnspecified()
+	isZeroIP = origDstIP != nil && origDstIP.IsUnspecified()
 	if err != nil || isZeroIP {
 		if err != nil {
 			log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
