@@ -297,29 +297,34 @@ func (h *Handler) Handle() {
 	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
 if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		appProtoFlow, masterProtoFlow, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
-		if err == nil && found && appProtoFlow != "" && strings.ToUpper(appProtoFlow) != "UNKNOWN" {
-			ndpiLabel = appProtoFlow
+		appProtoFromTracker, masterProtoFromTracker, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
+		masterProtoFlow = masterProtoFromTracker
+		appProtoFlow = appProtoFromTracker
+		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+			ndpiLabel = masterProtoFlow
+			if ndpiLabel == "" {
+				ndpiLabel = appProtoFlow
+			}
 			log.Info("fluxo classificado via FlowTracker",
 				zap.String("ndpi_proto", masterProtoFlow),
 				zap.String("ndpi_app", appProtoFlow),
 				zap.String("flow_id", flowIDForTracker))
 		} else {
-		log.Debug("FlowTracker não tem classificação, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
-		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
-		if err != nil {
-			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
-			ndpiLabel = "Unknown"
-			masterProtoFlow = "Unknown"
-			appProtoFlow = "Unknown"
-		} else {
-			masterProtoFlow = ndpiLabel
-			appProtoFlow = ""
+			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
+			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+			if err != nil {
+				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+				ndpiLabel = "Unknown"
+				masterProtoFlow = "Unknown"
+				appProtoFlow = "Unknown"
+			} else {
+				masterProtoFlow = ndpiLabel
+				appProtoFlow = ""
+			}
 		}
-	}
-} else {
+	} else {
 	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
