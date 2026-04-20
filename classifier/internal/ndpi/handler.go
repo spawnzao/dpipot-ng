@@ -210,6 +210,12 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	appProto := proto.AppProtocolId.ToName()
 	category := uint32(proto.CategoryId)
 
+	ndpiProto := masterProto
+	ndpiApp := appProto
+	if ndpiApp == "Unknown" || ndpiApp == "" {
+		ndpiApp = ""
+	}
+
 	h.flowTable.Update(flowID, &flow.Entry{
 		Protocol:       appProto,
 		MasterProtocol: masterProto,
@@ -230,8 +236,8 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			SrcPort:     int(srcPort),
 			DstIP:       dstIP.String(),
 			DstPort:     int(dstPort),
-			NDPIProto:   appProto,
-			NDPIApp:     masterProto,
+			NDPIProto:   ndpiProto,
+			NDPIApp:     ndpiApp,
 			Category:    category,
 			TCPFlags:    tcpFlags,
 			PayloadLen:  len(payload),
