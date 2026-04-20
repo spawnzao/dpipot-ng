@@ -298,8 +298,8 @@ func (h *Handler) Handle() {
 
 if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		appProtoFromTracker, masterProtoFromTracker, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
-		masterProtoFlow = masterProtoFromTracker
-		appProtoFlow = appProtoFromTracker
+		masterProtoFlow = appProtoFromTracker
+		appProtoFlow = masterProtoFromTracker
 		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
 			ndpiLabel = masterProtoFlow
 			if ndpiLabel == "" {
@@ -325,19 +325,19 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			}
 		}
 	} else {
-	ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-	ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
-	if err != nil {
-		log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
-		ndpiLabel = "Unknown"
-		masterProtoFlow = "Unknown"
-		appProtoFlow = "Unknown"
-	} else {
-		masterProtoFlow = ndpiLabel
-		appProtoFlow = ""
+		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
+		defer cancel()
+		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+		if err != nil {
+			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+			ndpiLabel = "Unknown"
+			masterProtoFlow = "Unknown"
+			appProtoFlow = "Unknown"
+		} else {
+			masterProtoFlow = ndpiLabel
+			appProtoFlow = ""
+		}
 	}
-}
 
 	log.Info("fluxo classificado", zap.String("proto", ndpiLabel))
 
