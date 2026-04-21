@@ -82,16 +82,18 @@ type SSHSession struct {
 	srcPort       int
 	dstIP         string
 	dstPort       int
+	honeypot     string
 	onEvent      func(event *kafka.Event)
 	logger       func(string, ...interface{})
 	closed       bool
 }
 
-func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, onEvent func(event *kafka.Event), logger func(string, ...interface{})) *SSHSession {
+func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, honeypot string, onEvent func(event *kafka.Event), logger func(string, ...interface{})) *SSHSession {
 	return &SSHSession{
 		flowID:       flowID,
 		srcIP:        srcIP,
 		srcPort:      srcPort,
+		honeypot:     honeypot,
 		dstIP:        dstIP,
 		dstPort:      dstPort,
 		onEvent:      onEvent,
@@ -203,6 +205,7 @@ func (s *SSHSession) emitCommand() {
 		NDPIProto: "SSH",
 		NDPIApp:   "command",
 		AttackType: s.pendingCmd,
+		Honeypot: s.honeypot,
 		LogType:   "application",
 	}
 	s.onEvent(event)
@@ -225,6 +228,7 @@ func (s *SSHSession) emitResponse() {
 		NDPIProto: "SSH",
 		NDPIApp:   "response",
 		CVE:       strings.TrimSpace(s.pendingResp),
+		Honeypot: s.honeypot,
 		LogType:   "application",
 	}
 	s.onEvent(event)
@@ -517,6 +521,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			config.FlowID,
 			config.SrcIP, config.SrcPort,
 			config.DstIP, config.DstPort,
+			config.TargetAddr,
 			config.OnEvent,
 			logger,
 		)
