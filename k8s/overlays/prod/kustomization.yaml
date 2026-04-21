@@ -14,7 +14,7 @@ images:
   - name: ghcr.io/spawnzao/dpipot-classifier
     newTag: "latest"
 
-# substitui o emptyDir do Kafka pela PVC
+# substitui o emptyDir do Kafka pela PVC e aumenta memória
 patches:
   - patch: |-
       apiVersion: apps/v1
@@ -30,3 +30,12 @@ patches:
                 emptyDir: null
                 persistentVolumeClaim:
                   claimName: kafka-pvc
+            containers:
+              - name: kafka
+                resources:
+                  requests:
+                    cpu: 500m
+                    memory: 1Gi
+                  limits:
+                    cpu: 1000m
+                    memory: 2Gi
