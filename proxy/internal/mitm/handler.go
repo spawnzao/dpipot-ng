@@ -164,21 +164,25 @@ func (s *SSHSession) Flush() {
 
 	if s.inputBuffer.Len() > 0 {
 		cmd := s.inputBuffer.String()
-		if cmd != "" {
+		if len(cmd) > 1 {
 			s.logger("SSH-MITM: flush comando pendente: %q", cmd)
 			s.pendingCmd = cmd
 			s.inputBuffer.Reset()
 			s.emitCommand()
+		} else {
+			s.inputBuffer.Reset()
 		}
 	}
 
 	if s.outputBuffer.Len() > 0 {
 		resp := s.outputBuffer.String()
-		if resp != "" {
+		if len(resp) > 1 {
 			s.logger("SSH-MITM: flush resposta pendente: %d bytes", len(resp))
 			s.pendingResp = resp
 			s.outputBuffer.Reset()
 			s.emitResponse()
+		} else {
+			s.outputBuffer.Reset()
 		}
 	}
 }
@@ -326,10 +330,28 @@ func (p *PreloadConn) Write(b []byte) (int, error) {
 // forwardRequests encaminha SSH requests de um canal para outro,
 // respondendo ao remetente com o resultado. É necessário para
 // repassar pty-req, shell, exec, window-change etc.
-func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(string, ...interface{})) {
+func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(string, ...interface{}), onEvent func(event *kafka.Event), config SSHMITMConfig) {
 	for req := range reqs {
 		logger("SSH MITM: encaminhando request tipo=%s wantReply=%v payload=%d bytes",
 			req.Type, req.WantReply, len(req.Payload))
+
+		if onEvent != nil && (req.Type == "exit-status" || req.Type == "exit-signal") {
+			logger("SSH MITM: conexão SSH encerrada, tipo=%s", req.Type)
+			event := &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				NDPIApp:    "exit",
+				Honeypot:   config.TargetAddr,
+				AttackType: string(req.Payload),
+				LogType:    "application",
+			}
+			onEvent(event)
+		}
 
 		ok, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
 		if err != nil {
@@ -513,9 +535,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 // Encaminha requests do cliente → honeypot (pty-req, shell, exec, window-change…)
 		// e do honeypot → cliente (exit-status, exit-signal…)
 		// SEM isso o shell nunca abre.
-		go forwardRequests(targetChannel, clientReqs, logger)
-		go forwardRequests(clientChannel, targetReqs, logger)
+go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 
+		go forwardRequests(clientChannel, targetReqs, logger, config.OnEvent, config)
 		// Nova estrutura SSHSession para TTY Stream Reconstruction
 		sshSession := NewSSHSession(
 			config.FlowID,
