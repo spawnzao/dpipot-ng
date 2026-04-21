@@ -3,6 +3,12 @@ proxy/vendor/
 *.test
 *.out
 
+# Certificados e chaves sensíveis
+*.pem
+*.crt
+*.key
+*.csr
+
 # Python venv
 venv/
 
