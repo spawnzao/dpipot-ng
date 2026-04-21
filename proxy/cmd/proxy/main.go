@@ -64,8 +64,8 @@ func main() {
 	flowTracker := flowtracker.NewClient(*cfg, log)
 	log.Info("FlowTracker inicializado", zap.Bool("enabled", flowTracker.IsEnabled()))
 
-	// inicializa CertManager para TLS MITM (carrega certs do disco ou gera novos)
-	certMgr, err := mitm.NewCertManager(cfg.CertsPath, func(format string, args ...interface{}) {
+	// inicializa CertManager para TLS MITM (gera certificados em memória)
+	certMgr, err := mitm.NewCertManager(func(format string, args ...interface{}) {
 		log.Info("CertManager: "+format, zap.Any("args", args))
 	})
 	if err != nil {
