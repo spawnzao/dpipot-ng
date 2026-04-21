@@ -203,7 +203,7 @@ func (s *SSHSession) emitCommand() {
 		NDPIProto: "SSH",
 		NDPIApp:   "command",
 		AttackType: s.pendingCmd,
-		LogType:   "ssh_command",
+		LogType:   "application",
 	}
 	s.onEvent(event)
 	s.logger("SSH-MITM: comando publicado no Kafka: %q", s.pendingCmd)
@@ -225,7 +225,7 @@ func (s *SSHSession) emitResponse() {
 		NDPIProto: "SSH",
 		NDPIApp:   "response",
 		CVE:       strings.TrimSpace(s.pendingResp),
-		LogType:   "ssh_response",
+		LogType:   "application",
 	}
 	s.onEvent(event)
 	s.logger("SSH-MITM: resposta publicada no Kafka: %d bytes", len(s.pendingResp))
