@@ -668,15 +668,13 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 	}
 	logger("TLS MITM: handshake feito com cliente")
 
-	targetConn, err := tls.Dial("tcp", config.TargetAddr, &tls.Config{
-		InsecureSkipVerify: true,
-	})
+	targetConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
 	if err != nil {
-		return fmt.Errorf("falha ao conectar no honeypot TLS: %w", err)
+		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
 	}
 	defer targetConn.Close()
 
-	logger("TLS MITM: conectado ao honeypot")
+	logger("TLS MITM: conectado ao honeypot (plain)")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
