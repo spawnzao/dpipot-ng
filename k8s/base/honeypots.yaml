@@ -91,12 +91,38 @@ spec:
     spec:
       containers:
         - name: dionaea
-          image: dtagdevsec/dionaea:24.04
+          image: dtagdevsec/dionaea:24.04.1
           ports:
-            - containerPort: 4444
+            - containerPort: 80
+              name: http
               protocol: TCP
             - containerPort: 21
+              name: ftp
               protocol: TCP
+            - containerPort: 445
+              name: smb
+              protocol: TCP
+            - containerPort: 1433
+              name: mssql
+              protocol: TCP
+            - containerPort: 3306
+              name: mysql
+              protocol: TCP
+            - containerPort: 135
+              name: epmapper
+              protocol: TCP
+            - containerPort: 69
+              name: tftp
+              protocol: UDP
+            - containerPort: 5000
+              name: upnp
+              protocol: TCP
+          volumeMounts:
+            - name: dionaea-config
+              mountPath: /opt/dionaea/etc/dionaea/dionaea.cfg
+              subPath: dionaea.cfg
+            - name: dionaea-services
+              mountPath: /opt/dionaea/etc/dionaea/services-enabled
           resources:
             requests:
               cpu: 50m
@@ -104,6 +130,13 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+      volumes:
+        - name: dionaea-config
+          configMap:
+            name: dionaea-config
+        - name: dionaea-services
+          configMap:
+            name: dionaea-services
 
 ---
 # ── Mailoney (SMTP honeypot) ───────────────────────────────────────

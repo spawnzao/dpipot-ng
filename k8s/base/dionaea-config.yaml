@@ -1,0 +1,119 @@
+---
+# ConfigMap para configuração principal do Dionaea
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dionaea-config
+  namespace: dpipot
+data:
+  dionaea.cfg: |
+    [dionaea]
+    download.dir=/opt/dionaea/var/lib/dionaea/binaries/
+    listen.addresses=0.0.0.0
+    listen.mode=manual
+    modules=python,emu
+    processors=filter_streamdumper,filter_emu
+
+    [logging]
+    default.filename=/opt/dionaea/var/log/dionaea/dionaea.log
+    default.levels=all
+    default.domains=*
+    errors.filename=/opt/dionaea/var/log/dionaea/dionaea-errors.log
+    errors.levels=warning,error
+    errors.domains=*
+
+    [processor.filter_emu]
+    name=filter
+    config.allow.0.protocols=smbd,epmapper,mssqld,http,ftp,tftp,upnp,mysql
+    next=emu
+
+    [processor.filter_streamdumper]
+    name=filter
+    config.allow.0.types=accept
+    config.allow.1.types=connect
+    config.allow.1.protocols=ftpctrl
+    config.deny.0.protocols=ftpdata,ftpdatacon,xmppclient
+    next=streamdumper
+
+    [processor.streamdumper]
+    name=streamdumper
+    config.path=/opt/dionaea/var/lib/dionaea/bistreams/%Y-%m-%d/
+
+    [processor.emu]
+    name=emu
+    config.limits.files=3
+    config.limits.filesize=524288
+    config.limits.sockets=3
+    config.limits.sustain=120
+    config.limits.idle=30
+    config.limits.listen=30
+    config.limits.cpu=120
+    config.limits.steps=1073741824
+
+    [module.python]
+    imports=dionaea.log,dionaea.services,dionaea.ihandlers
+    sys_paths=default
+    service_configs=/opt/dionaea/etc/dionaea/services-enabled/*.yaml
+    ihandler_configs=/opt/dionaea/etc/dionaea/ihandlers-enabled/*.yaml
+
+---
+# ConfigMap para serviços do Dionaea
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dionaea-services
+  namespace: dpipot
+data:
+  http.yaml: |
+    - name: http
+      config:
+        root: "/opt/dionaea/var/lib/dionaea/wwwroot"
+        ports:
+          - 80
+        max_request_size: 32768
+
+  ftp.yaml: |
+    - name: ftp
+      config:
+        root: "/opt/dionaea/var/lib/dionaea/ftp/root"
+        ports:
+          - 21
+
+  smbd.yaml: |
+    - name: smbd
+      config:
+        ports:
+          - 445
+        share: "share"
+        root: "/opt/dionaea/var/lib/dionaea/smbd/share"
+
+  mssqld.yaml: |
+    - name: mssqld
+      config:
+        ports:
+          - 1433
+
+  mysql.yaml: |
+    - name: mysql
+      config:
+        ports:
+          - 3306
+
+  epmapper.yaml: |
+    - name: epmapper
+      config:
+        ports:
+          - 135
+
+  tftp.yaml: |
+    - name: tftp
+      config:
+        ports:
+          - 69
+        root: "/opt/dionaea/var/lib/dionaea/tftp/root"
+
+  upnp.yaml: |
+    - name: upnp
+      config:
+        ports:
+          - 5000
