@@ -7,12 +7,14 @@ resources:
   - ../../base
   - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
 
-# imagens com tag latest
+# imagens com tag latest (sempre puxar nova imagem)
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
     newTag: "latest"
+    newImagePullPolicy: "Always"
   - name: ghcr.io/spawnzao/dpipot-classifier
     newTag: "latest"
+    newImagePullPolicy: "Always"
 
 # substitui o emptyDir do Kafka pela PVC e aumenta memória
 patches:
