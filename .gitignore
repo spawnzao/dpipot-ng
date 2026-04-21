@@ -3,6 +3,9 @@ proxy/vendor/
 *.test
 *.out
 
+# Certificados TLS
+proxy/certs/
+
 # Certificados e chaves sensíveis
 *.pem
 *.crt
