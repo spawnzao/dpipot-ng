@@ -5,7 +5,7 @@ metadata:
   namespace: dpipot
 data:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
-  CERTS_PATH: "/certs"
+  CERTS_PATH: "/tmp/dpipot-certs"
   NDPI_SOCKET_PATH: "/var/run/dpipot/ndpi.sock"
   NDPI_TIMEOUT: "5000ms"
   HONEYPOT_ROUTES: >-
