@@ -559,7 +559,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 					logger("SSH MITM: honeypot→cliente lendo %d bytes", n)
 					sshSession.HandleOutput(data)
 					clientChannel.Write(data)
-					clientChannel.Write(data)
 				}
 				if err != nil {
 					logger("SSH MITM: honeypot→cliente erro: %v", err)
