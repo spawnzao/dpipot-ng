@@ -13,6 +13,8 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,6 +54,182 @@ type SSHMITMConfig struct {
 	SrcPort        int
 	DstIP          string
 	DstPort        int
+}
+
+var (
+	promptPatterns []*regexp.Regexp = []*regexp.Regexp{
+		regexp.MustCompile(`\$\s*$`),
+		regexp.MustCompile(`#\s*$`),
+		regexp.MustCompile(`>\s*$`),
+		regexp.MustCompile(`\$\s+`),
+		regexp.MustCompile(`#\s+`),
+		regexp.MustCompile(`>\s+`),
+	}
+	commandDelimiters = []byte{'\r', '\n'}
+	backspace        = byte(0x7f)
+	escape          = byte(0x1b)
+)
+
+type SSHSession struct {
+	mu            sync.Mutex
+	inputBuffer   bytes.Buffer
+	outputBuffer bytes.Buffer
+	lastActivity time.Time
+	pendingCmd   string
+	pendingResp  string
+	flowID       string
+	srcIP        string
+	srcPort       int
+	dstIP         string
+	dstPort       int
+	onEvent      func(event *kafka.Event)
+	logger       func(string, ...interface{})
+	closed       bool
+}
+
+func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, onEvent func(event *kafka.Event), logger func(string, ...interface{})) *SSHSession {
+	return &SSHSession{
+		flowID:       flowID,
+		srcIP:        srcIP,
+		srcPort:      srcPort,
+		dstIP:        dstIP,
+		dstPort:      dstPort,
+		onEvent:      onEvent,
+		logger:       logger,
+		lastActivity: time.Now(),
+	}
+}
+
+func (s *SSHSession) HandleInput(data []byte) {
+	if len(data) == 0 || s.closed {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, b := range data {
+		switch b {
+		case '\r', '\n':
+			cmd := s.inputBuffer.String()
+			if cmd != "" {
+				s.logger("SSH-MITM: comando completo capturado: %q", cmd)
+				s.pendingCmd = cmd
+				s.inputBuffer.Reset()
+				s.emitCommand()
+			}
+		case 0x7f:
+			if s.inputBuffer.Len() > 0 {
+				s.inputBuffer.Truncate(s.inputBuffer.Len() - 1)
+			}
+		case 0x1b:
+			s.inputBuffer.Reset()
+		default:
+			if b >= 0x20 && b < 0x7f {
+				s.inputBuffer.WriteByte(b)
+			}
+		}
+	}
+	s.lastActivity = time.Now()
+}
+
+func (s *SSHSession) HandleOutput(data []byte) {
+	if len(data) == 0 || s.closed {
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.outputBuffer.Write(data)
+	s.lastActivity = time.Now()
+
+	output := s.outputBuffer.String()
+	for _, pattern := range promptPatterns {
+		if pattern.MatchString(output) {
+			s.logger("SSH-MITM: prompt detectado, emitindo resposta: %d bytes", len(output))
+			s.pendingResp = output
+			s.outputBuffer.Reset()
+			s.emitResponse()
+			return
+		}
+	}
+}
+
+func (s *SSHSession) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.inputBuffer.Len() > 0 {
+		cmd := s.inputBuffer.String()
+		if cmd != "" {
+			s.logger("SSH-MITM: flush comando pendente: %q", cmd)
+			s.pendingCmd = cmd
+			s.inputBuffer.Reset()
+			s.emitCommand()
+		}
+	}
+
+	if s.outputBuffer.Len() > 0 {
+		resp := s.outputBuffer.String()
+		if resp != "" {
+			s.logger("SSH-MITM: flush resposta pendente: %d bytes", len(resp))
+			s.pendingResp = resp
+			s.outputBuffer.Reset()
+			s.emitResponse()
+		}
+	}
+}
+
+func (s *SSHSession) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closed = true
+	s.Flush()
+}
+
+func (s *SSHSession) emitCommand() {
+	if s.pendingCmd == "" || s.onEvent == nil {
+		return
+	}
+
+	event := &kafka.Event{
+		FlowID:    s.flowID,
+		Timestamp: time.Now(),
+		SrcIP:     s.srcIP,
+		SrcPort:    s.srcPort,
+		DstIP:     s.dstIP,
+		DstPort:   s.dstPort,
+		NDPIProto: "SSH",
+		NDPIApp:   "command",
+		AttackType: s.pendingCmd,
+		LogType:   "ssh_command",
+	}
+	s.onEvent(event)
+	s.logger("SSH-MITM: comando publicado no Kafka: %q", s.pendingCmd)
+	s.pendingCmd = ""
+}
+
+func (s *SSHSession) emitResponse() {
+	if s.pendingResp == "" || s.onEvent == nil {
+		return
+	}
+
+	event := &kafka.Event{
+		FlowID:    s.flowID,
+		Timestamp: time.Now(),
+		SrcIP:     s.dstIP,
+		SrcPort:    s.dstPort,
+		DstIP:     s.srcIP,
+		DstPort:   s.srcPort,
+		NDPIProto: "SSH",
+		NDPIApp:   "response",
+		CVE:       strings.TrimSpace(s.pendingResp),
+		LogType:   "ssh_response",
+	}
+	s.onEvent(event)
+	s.logger("SSH-MITM: resposta publicada no Kafka: %d bytes", len(s.pendingResp))
+	s.pendingResp = ""
 }
 
 type CapturedCredentials struct {
@@ -170,14 +348,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	capturedCreds := &CapturedCredentials{
 		Banner: string(config.Banner),
 	}
-
-	type pendingCmd struct {
-		timestamp time.Time
-		data      []byte
-	}
-
-	var cmdBuffer []pendingCmd
-	cmdBufferMu := &sync.Mutex{}
 
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:  false,
@@ -305,30 +475,35 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		}
 		logger("SSH MITM: channel aceito do cliente")
 
-		// Encaminha requests do cliente → honeypot (pty-req, shell, exec, window-change…)
-		// e do honeypot → cliente (exit-status, exit-signal…).
+// Encaminha requests do cliente → honeypot (pty-req, shell, exec, window-change…)
+		// e do honeypot → cliente (exit-status, exit-signal…)
 		// SEM isso o shell nunca abre.
 		go forwardRequests(targetChannel, clientReqs, logger)
 		go forwardRequests(clientChannel, targetReqs, logger)
 
+		// Nova estrutura SSHSession para TTY Stream Reconstruction
+		sshSession := NewSSHSession(
+			config.FlowID,
+			config.SrcIP, config.SrcPort,
+			config.DstIP, config.DstPort,
+			config.OnEvent,
+			logger,
+		)
+
 		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
-		// stderr é tratado separadamente pois é um sub-canal distinto.
+		//.stderr é tratado separadamente pois é um sub-canal distinto.
 		go func() {
 			defer targetChannel.Close()
 			defer clientChannel.Close()
+			defer sshSession.Close()
 			buf := make([]byte, 4096)
 			for {
 				n, err := clientChannel.Read(buf)
 				if n > 0 {
+					data := bytes.Clone(buf[:n])
 					logger("SSH MITM: cliente→honeypot lendo %d bytes", n)
-					cmdBufferMu.Lock()
-					cmdBuffer = append(cmdBuffer, pendingCmd{
-						timestamp: time.Now(),
-						data:      bytes.Clone(buf[:n]),
-					})
-					cmdBufferMu.Unlock()
-					logger("SSH MITM: comando armazenado no buffer")
-					targetChannel.Write(buf[:n])
+					sshSession.HandleInput(data)
+					targetChannel.Write(data)
 				}
 				if err != nil {
 					logger("SSH MITM: cliente→honeypot erro: %v", err)
@@ -344,34 +519,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			for {
 				n, err := targetChannel.Read(buf)
 				if n > 0 {
+					data := bytes.Clone(buf[:n])
 					logger("SSH MITM: honeypot→cliente lendo %d bytes", n)
-					if config.OnEvent != nil {
-						cmdBufferMu.Lock()
-						var combinedSrc []byte
-						for _, cmd := range cmdBuffer {
-							combinedSrc = append(combinedSrc, cmd.data...)
-						}
-						cmdBuffer = nil
-						cmdBufferMu.Unlock()
-
-						event := &kafka.Event{
-							FlowID:      config.FlowID,
-							Timestamp:   time.Now(),
-							SrcIP:       config.SrcIP,
-							SrcPort:     config.SrcPort,
-							DstIP:       config.DstIP,
-							DstPort:     config.DstPort,
-							NDPIProto:   "SSH",
-							Honeypot:    config.TargetAddr,
-							PayloadSrc:  combinedSrc,
-							PayloadDst:  buf[:n],
-							PayloadSize: int64(len(combinedSrc) + n),
-							LogType:     "debug",
-						}
-						config.OnEvent(event)
-						logger("SSH MITM: evento combinado publicado, src=%d dst=%d", len(combinedSrc), n)
-					}
-					clientChannel.Write(buf[:n])
+					sshSession.HandleOutput(data)
+					clientChannel.Write(data)
+					clientChannel.Write(data)
 				}
 				if err != nil {
 					logger("SSH MITM: honeypot→cliente erro: %v", err)
