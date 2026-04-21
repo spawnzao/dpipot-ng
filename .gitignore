@@ -3,6 +3,10 @@ proxy/vendor/
 *.test
 *.out
 
+# Certificados TLS
+proxy/certs/
+!proxy/certs/*.pem
+
 # Python venv
 venv/
 

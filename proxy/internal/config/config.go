@@ -11,6 +11,7 @@ import (
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
 type Config struct {
 	ListenAddr        string
+	CertsPath         string
 	NDPISocketPath    string
 	NDPITimeout       time.Duration
 	Routes            map[string]string
@@ -27,6 +28,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:        getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
+		CertsPath:         getEnv("CERTS_PATH", "./certs"),
 		NDPISocketPath:    getEnv("NDPI_SOCKET_PATH", "/var/run/dpipot/ndpi.sock"),
 		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
