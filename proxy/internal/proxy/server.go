@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
@@ -25,6 +26,7 @@ type Server struct {
 	maxPayloadBytes int64
 	log             *zap.Logger
 	flowTracker     *flowtracker.Client
+	certMgr         *mitm.CertManager
 }
 
 func NewServer(
@@ -35,6 +37,7 @@ func NewServer(
 	maxPayloadBytes int64,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
+	certMgr *mitm.CertManager,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -44,6 +47,7 @@ func NewServer(
 		maxPayloadBytes: maxPayloadBytes,
 		log:             log,
 		flowTracker:     flowTracker,
+		certMgr:         certMgr,
 	}
 }
 
@@ -138,6 +142,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.maxPayloadBytes,
 		log,
 		s.flowTracker,
+		s.certMgr,
 	)
 	h.Handle()
 

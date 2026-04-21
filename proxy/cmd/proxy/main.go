@@ -11,6 +11,7 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/config"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	kafkapkg "github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	proxypkg "github.com/spawnzao/dpipot-ng/proxy/internal/proxy"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
@@ -63,6 +64,15 @@ func main() {
 	flowTracker := flowtracker.NewClient(*cfg, log)
 	log.Info("FlowTracker inicializado", zap.Bool("enabled", flowTracker.IsEnabled()))
 
+	// inicializa CertManager para TLS MITM (carrega certs do disco ou gera novos)
+	certMgr, err := mitm.NewCertManager(cfg.CertsPath, func(format string, args ...interface{}) {
+		log.Info("CertManager: "+format, zap.Any("args", args))
+	})
+	if err != nil {
+		log.Fatal("CertManager init failed", zap.Error(err))
+	}
+	log.Info("CertManager inicializado", zap.String("certs_path", cfg.CertsPath))
+
 	// inicializa health server (HTTP na porta 8081)
 	healthServer := proxypkg.NewHealthServer(
 		"0.0.0.0:8081",
@@ -80,6 +90,7 @@ func main() {
 		cfg.MaxPayloadBytes,
 		log,
 		flowTracker,
+		certMgr,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

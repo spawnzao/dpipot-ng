@@ -40,6 +40,9 @@ type Handler struct {
 	producer *kafka.Producer
 	log      *zap.Logger
 
+	// CertManager para TLS MITM
+	certMgr *mitm.CertManager
+
 	// captura dos payloads para o Kafka
 	maxPayloadBytes int64
 	flowTracker     *flowtracker.Client
@@ -54,6 +57,7 @@ func NewHandler(
 	maxPayloadBytes int64,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
+	certMgr *mitm.CertManager,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -64,6 +68,7 @@ func NewHandler(
 		maxPayloadBytes: maxPayloadBytes,
 		log:             log,
 		flowTracker:     flowTracker,
+		certMgr:         certMgr,
 	}
 }
 
@@ -223,7 +228,9 @@ func (h *Handler) Handle() {
 		origDstPort      uint16
 		flowInfo         *ndpi.FlowInfo
 		flowIDForTracker string
-		isZeroIP         bool
+		isZeroIP        bool
+		isSSH          bool
+		isTLS          bool
 	)
 
 	// --- STEP 1: lê primeiro chunk para classificação ---
@@ -345,15 +352,16 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
 	// --- STEP 4.5: verifica se precisa de MITM ---
-	// Usa MITM apenas para SSH e TLS na porta 443
-	isSSH := mitm.IsSSH(firstChunk)
-	isTLS := mitm.IsTLS(firstChunk)
+	isSSH = mitm.IsSSH(firstChunk)
+	isTLS = mitm.IsTLS(firstChunk)
 	log.Debug("🔍 verificando MITM",
 		zap.ByteString("firstChunk", firstChunk),
 		zap.Bool("isSSH", isSSH),
 		zap.Bool("isTLS", isTLS),
 	)
-	if mitm.IsSSH(firstChunk) {
+
+	// SSH: usa MITM
+	if isSSH {
 		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
 
 		hostKey, err := generateSSHHostKey()
@@ -396,37 +404,26 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		goto publish
 	}
 
-	// TLS: só faz MITM se a rota for porta HTTPS (443), senão faz forward simples
-	if mitm.IsTLS(firstChunk) {
-		_, port, _ := net.SplitHostPort(honeypotAddr)
-		if port == "443" {
-			log.Info("🔐 TLS detectado (porta 443), usando MITM", zap.String("target", honeypotAddr))
+	// TLS: usa MITM com certificados do CertManager (do disco ou gerados)
+	if isTLS {
+		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
 
-			cert, err := mitm.GenerateSelfSignedTLS()
-			if err != nil {
-				log.Error("falha gerando certificado TLS", zap.Error(err))
-				honeypotError = fmt.Sprintf("TLS MITM setup failed: %v", err)
-				goto publish
-			}
-
-			mitmConfig := mitm.TLSMITMConfig{
-				Cert:       cert,
-				TargetAddr: honeypotAddr,
-			}
-
-			mitmLogger := func(format string, args ...interface{}) {
-				log.Info("TLS-MITM: "+format, zap.Any("args", args))
-			}
-
-			err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
-			if err != nil {
-				log.Error("MITM TLS falhou", zap.Error(err))
-				honeypotError = fmt.Sprintf("MITM failed: %v", err)
-			}
-			goto publish
+		cert := h.certMgr.Cert()
+		mitmConfig := mitm.TLSMITMConfig{
+			Cert:       cert,
+			TargetAddr: honeypotAddr,
 		}
 
-		log.Info("🔐 TLS detectado (forward simples)", zap.String("target", honeypotAddr))
+		mitmLogger := func(format string, args ...interface{}) {
+			log.Info("TLS-MITM: "+format, zap.Any("args", args))
+		}
+
+		err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
+		if err != nil {
+			log.Error("MITM TLS falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("MITM failed: %v", err)
+		}
+		goto publish
 	}
 
 	// --- STEP 5: tenta conectar ao honeypot ---
