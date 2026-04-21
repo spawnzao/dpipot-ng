@@ -369,13 +369,44 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				Honeypot:    config.TargetAddr,
-				PayloadSrc:  []byte(fmt.Sprintf("USER: %s\nPASS: %s\nBANNER: %s", capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)),
-				PayloadSize: int64(len(capturedCreds.User) + len(capturedCreds.Pass) + len(capturedCreds.Banner)),
-				LogType:     "debug",
+				NDPIApp:    "username",
+				AttackType: capturedCreds.User,
+				Honeypot:   config.TargetAddr,
+				LogType:    "application",
 			}
 			config.OnEvent(event)
-			logger("SSH MITM: evento de login publicado no Kafka")
+
+			event = &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				NDPIApp:    "password",
+				AttackType: capturedCreds.Pass,
+				Honeypot:   config.TargetAddr,
+				LogType:    "application",
+			}
+			config.OnEvent(event)
+
+			event = &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				NDPIApp:    "banner",
+				AttackType: capturedCreds.Banner,
+				Honeypot:   config.TargetAddr,
+				LogType:    "application",
+			}
+			config.OnEvent(event)
+
+			logger("SSH MITM: eventos de login publicados no Kafka (username, password, banner)")
 		}
 
 		return &ssh.Permissions{}, nil
