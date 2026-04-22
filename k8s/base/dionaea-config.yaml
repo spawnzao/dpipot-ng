@@ -9,8 +9,10 @@ data:
   dionaea.cfg: |
     [dionaea]
     download.dir=/opt/dionaea/var/lib/dionaea/binaries/
+    
     listen.addresses=0.0.0.0
-    listen.mode=auto
+    listen.mode=manual
+    
     modules=python,emu
     processors=filter_streamdumper,filter_emu
 

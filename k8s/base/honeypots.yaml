@@ -89,21 +89,6 @@ spec:
       labels:
         app: dionaea
     spec:
-      initContainers:
-        - name: init-dionaea
-          image: dtagdevsec/dionaea:24.04.1
-          command:
-            - sh
-            - -c
-            - |
-              mkdir -p /opt/dionaea/var/dionaea/roots/ftp /opt/dionaea/var/dionaea/roots/www /opt/dionaea/var/dionaea/roots/tftp /opt/dionaea/var/dionaea/binaries /opt/dionaea/var/dionaea/bistreams /opt/dionaea/var/log/dionaea /opt/dionaea/var/lib/dionaea/binaries /opt/dionaea/var/lib/dionaea/wwwroot /opt/dionaea/var/lib/dionaea/smbd/share
-              touch /opt/dionaea/var/dionaea/roots/ftp/.keep /opt/dionaea/var/dionaea/roots/www/.keep /opt/dionaea/var/dionaea/roots/tftp/.keep
-              echo "Directories created"
-          volumeMounts:
-            - name: dionaea-data
-              mountPath: /opt/dionaea/var
-          securityContext:
-            runAsUser: 0
       containers:
         - name: dionaea
           image: dtagdevsec/dionaea:24.04.1
@@ -133,8 +118,11 @@ spec:
               name: upnp
               protocol: TCP
           volumeMounts:
-            - name: dionaea-data
-              mountPath: /opt/dionaea/var
+            - name: dionaea-config
+              mountPath: /opt/dionaea/etc/dionaea/dionaea.cfg
+              subPath: dionaea.cfg
+            - name: dionaea-services
+              mountPath: /opt/dionaea/etc/dionaea/services-enabled
           resources:
             requests:
               cpu: 50m
@@ -142,6 +130,13 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+      volumes:
+        - name: dionaea-config
+          configMap:
+            name: dionaea-config
+        - name: dionaea-services
+          configMap:
+            name: dionaea-services
           securityContext:
             runAsUser: 0
       volumes:
