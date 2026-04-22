@@ -91,7 +91,7 @@ spec:
     spec:
       initContainers:
         - name: init-dionaea
-          image: dtagdevsec/dionaea:24.04
+          image: dtagdevsec/dionaea:24.04.1
           command:
             - sh
             - -c
@@ -106,7 +106,7 @@ spec:
             runAsUser: 0
       containers:
         - name: dionaea
-          image: dtagdevsec/dionaea:24.04
+          image: dtagdevsec/dionaea:24.04.1
           ports:
             - containerPort: 80
               name: http
