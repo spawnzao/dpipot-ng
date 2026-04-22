@@ -233,20 +233,121 @@ func (h *Handler) Handle() {
 		isTLS          bool
 	)
 
-	// --- STEP 1: lê primeiro chunk para classificação ---
+	// --- STEP 1: tenta ler primeiro chunk do cliente ---
+	// Para protocolos que o cliente fala primero (HTTP, FTP, etc), isso funciona
+	// Mas para protocolos que o servidor fala primeiro (MySQL greeting, FTP passivo, etc),
+	// esse timeout vai ocorrer e precisamos conectar ao honeypot para receber o greeting
 	firstChunk = make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err = h.conn.Read(firstChunk)
 	h.conn.SetReadDeadline(time.Time{})
+
+	// Se der timeout (i/o timeout), pode ser:
+	// 1. Cliente ainda não enviou dados (esperando greeting do servidor - ex: MySQL)
+	// 2. Rede lenta
+	// 3. Cliente malicioso
+	isClientTimeout := false
 	if err != nil {
-		if err != io.EOF {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			log.Debug("timeout lendo do cliente, tentando conectar ao honeypot para receber greeting", zap.Error(err))
+			isClientTimeout = true
+		} else if err != io.EOF {
 			log.Debug("erro lendo primeiro chunk", zap.Error(err))
+			honeypotError = fmt.Sprintf("read error: %v", err)
+			goto publish
 		}
-		honeypotError = fmt.Sprintf("read error: %v", err)
-		goto publish
 	}
-	firstChunk = firstChunk[:n]
-	bufSrc.Write(firstChunk)
+
+	if isClientTimeout {
+		// Preciso resolver o honeypot aqui para conectar sem ter classificado ainda
+		// Uso porta do dstAddr como hint para identificar o protocolo
+		honeypotAddrFromPort := h.router.ResolveByPort(uint16(dstAddr.Port))
+
+		if honeypotAddrFromPort != "" {
+			log.Debug("conectando ao honeypot para receber greeting do servidor",
+				zap.Stringer("dstAddr", dstAddr),
+				zap.String("honeypot", honeypotAddrFromPort),
+			)
+
+			var honeypotGreetingConn net.Conn
+			honeypotGreetingConn, err = net.DialTimeout("tcp", honeypotAddrFromPort, honeypotDialTimeout)
+			if err != nil {
+				log.Warn("falha conectando ao honeypot por porta", zap.Error(err))
+				goto publish
+			}
+			defer honeypotGreetingConn.Close()
+
+			// Agora espera o greeting do servidor (com timeout)
+			greetingBuf := make([]byte, classifyBufferSize)
+			honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+			n, err = honeypotGreetingConn.Read(greetingBuf)
+			honeypotGreetingConn.SetReadDeadline(time.Time{})
+
+			if err != nil {
+				log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
+			} else {
+				greetingBuf = greetingBuf[:n]
+				log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
+
+				// Classifica o greeting do servidor (não do cliente!)
+				flowInfo = &ndpi.FlowInfo{
+					SrcIP:   srcAddr.IP,
+					SrcPort: uint16(srcAddr.Port),
+					DstIP:   dstAddr.IP,
+					DstPort: uint16(dstAddr.Port),
+				}
+
+				ndpiLabel, err = h.ndpi.Classify(context.Background(), h.flowID, greetingBuf, flowInfo)
+				if err != nil {
+					log.Warn("nDPI classify falhou no greeting", zap.Error(err))
+					ndpiLabel = "Unknown"
+				} else {
+					log.Info("fluxo classificado via greeting do servidor", zap.String("proto", ndpiLabel))
+				}
+
+				// Envia greeting para o cliente
+				_, err = h.conn.Write(greetingBuf)
+				if err != nil {
+					log.Warn("falha enviando greeting para o cliente", zap.Error(err))
+				}
+
+				// Agora conecta ao honeypot definitivo usando o protocolo classificado
+				honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+				log.Debug("protocolo identificado via greeting, honeypot resolved",
+					zap.String("proto", ndpiLabel),
+					zap.String("honeypot", honeypotAddr),
+				)
+
+				// Usa o greeting como primeiro chunk
+				firstChunk = greetingBuf
+				bufSrc.Write(firstChunk)
+
+				// Conecta ao honeypot definitivo
+				honeypotGreetingConn.Close()
+				honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+				if err != nil {
+					log.Error("falha conectando ao honeypot (greeting path)",
+						zap.String("honeypot", honeypotAddr),
+						zap.Error(err),
+					)
+					honeypotError = fmt.Sprintf("connection failed: %v", err)
+					goto publish
+				}
+				defer honeypotConn.Close()
+
+				// Vai direto para o relay (Step 6)
+				goto doRelay
+			}
+		}
+
+		// Se não conseguiu, usa a porta como hint
+		log.Debug("não conseguiu via greeting, usando porta como hint", zap.Stringer("dstAddr", dstAddr))
+	}
+
+	if n > 0 {
+		firstChunk = firstChunk[:n]
+		bufSrc.Write(firstChunk)
+	}
 
 	// --- STEP 2: obtém IP/porta original ---
 	// Primeiro tenta TPROXY (IP_PKTINFO), depois REDIRECT (IP_ORIGINAL_DST)
@@ -438,6 +539,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 	}
 	defer honeypotConn.Close()
 
+	doRelay:
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
 	log.Debug("escrevendo firstChunk para honeypot", zap.Int("len", len(firstChunk)))
 	if _, err = honeypotConn.Write(firstChunk); err != nil {
