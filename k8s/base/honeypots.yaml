@@ -92,7 +92,7 @@ spec:
       initContainers:
         - name: init-dionaea
           image: dtagdevsec/dionaea:24.04.1
-          command: ["sh", "-c", "mkdir -p /opt/dionaea/var/dionaea/roots"]
+          command: ["sh", "-c", "mkdir -p /opt/dionaea/var/dionaea/roots /opt/dionaea/etc/dionaea/ihandlers-enabled"]
           securityContext:
             runAsUser: 0
           resources:
@@ -127,6 +127,8 @@ spec:
               subPath: dionaea.cfg
             - name: dionaea-services
               mountPath: /opt/dionaea/etc/dionaea/services-enabled
+            - name: dionaea-ihandlers
+              mountPath: /opt/dionaea/etc/dionaea/ihandlers-enabled
             - name: dionaea-www
               mountPath: /opt/dionaea/var/dionaea/roots/www
           resources:
@@ -143,6 +145,9 @@ spec:
         - name: dionaea-services
           configMap:
             name: dionaea-services
+        - name: dionaea-ihandlers
+          configMap:
+            name: dionaea-ihandlers
         - name: dionaea-www
           configMap:
             name: dionaea-www
