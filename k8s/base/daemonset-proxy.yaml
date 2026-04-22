@@ -56,27 +56,27 @@ spec:
               # Limpar regras existentes
               iptables -t mangle -F TEST-TPROXY 2>/dev/null || true
               iptables -t mangle -X TEST-TPROXY 2>/dev/null || true
-              
+
               # Criar chain
               iptables -t mangle -N TEST-TPROXY || true
-              
-# Marcar TODOS os pacotes TCP vindos da interface ens192 (darknet)
+
+              # Marcar TODOS os pacotes TCP vindos da interface ens192 (darknet)
               iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j MARK --set-mark 0x1
 
-               # TPROXY: redirecionar para proxy na porta 8080
-               # O TPROXY preserva o IP e porta originais!
-               iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
+              # TPROXY: redirecionar para proxy na porta 8080
+              # O TPROXY preserva o IP e porta originais!
+              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
 
-               # Remover regra existente da PREROUTING antes de adicionar
-               iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
+              # Remover regra existente da PREROUTING antes de adicionar
+              iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
 
-               # Aplicar na PREROUTING (antes do routing decision)
-               iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
+              # Aplicar na PREROUTING (antes do routing decision)
+              iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
 
-               echo "iptables TPROXY: todas as portas TCP -> proxy:8080 (apenas ens192)"
+              echo "iptables TPROXY: todas as portas TCP -> proxy:8080 (apenas ens192)"
               echo "Regras mangle ativas:"
               iptables -t mangle -L TEST-TPROXY -n || true
-              
+
               # Sair para permitir que o resto do pod inicie
               echo "Init concluído!"
           securityContext:
