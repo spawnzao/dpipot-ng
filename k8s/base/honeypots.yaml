@@ -137,11 +137,6 @@ spec:
         - name: dionaea-services
           configMap:
             name: dionaea-services
-          securityContext:
-            runAsUser: 0
-      volumes:
-        - name: dionaea-data
-          emptyDir: {}
 
 ---
 # ── Mailoney (SMTP honeypot) ───────────────────────────────────────
