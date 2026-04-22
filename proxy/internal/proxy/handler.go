@@ -317,10 +317,14 @@ func (h *Handler) Handle() {
 		}
 
 		log.Debug("reutilizando conexão do greeting para relay",
-			zap.String("honeypot", honeypotAddr))
+			zap.String("honeypot", honeypotAddr),
+			zap.Bool("skipWrite", true))
 
 		// Server-first: NÃO reescreve o greeting para o honeypot (já foi usado)
 		skipFirstChunkWrite = true
+
+		// Limpa o firstChunk - não precisamos mais dele pois o greeting já foi enviado
+		firstChunk = nil
 
 		goto doRelay
 	}
