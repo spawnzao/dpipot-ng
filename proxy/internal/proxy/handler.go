@@ -236,7 +236,8 @@ func (h *Handler) Handle() {
 		isZeroIP        bool
 		isSSH          bool
 		isTLS          bool
-		isClientTimeout bool
+		isClientTimeout   bool
+		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 	)
 
 	// --- STEP 1: verifica se é porta server-first ---
@@ -317,6 +318,9 @@ func (h *Handler) Handle() {
 
 		log.Debug("reutilizando conexão do greeting para relay",
 			zap.String("honeypot", honeypotAddr))
+
+		// Server-first: NÃO reescreve o greeting para o honeypot (já foi usado)
+		skipFirstChunkWrite = true
 
 		goto doRelay
 	}
@@ -627,13 +631,18 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 	doRelay:
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
-	log.Debug("escrevendo firstChunk para honeypot", zap.Int("len", len(firstChunk)))
-	if _, err = honeypotConn.Write(firstChunk); err != nil {
-		log.Error("erro reenviando primeiro chunk", zap.Error(err))
-		honeypotError = fmt.Sprintf("write failed: %v", err)
-		goto publish
+	// Para server-first, já enviamos o greeting sebelumnya, então pulamos esta etapa
+	if !skipFirstChunkWrite && len(firstChunk) > 0 {
+		log.Debug("escrevendo firstChunk para honeypot", zap.Int("len", len(firstChunk)))
+		if _, err = honeypotConn.Write(firstChunk); err != nil {
+			log.Error("erro reenviando primeiro chunk", zap.Error(err))
+			honeypotError = fmt.Sprintf("write failed: %v", err)
+			goto publish
+		}
+		log.Debug("firstChunk escrito com sucesso")
+	} else {
+		log.Debug("pulando escrita do firstChunk (server-first já enviou greeting)")
 	}
-	log.Debug("firstChunk escrito com sucesso")
 
 	// --- STEP 7: pipe bidirecional com captura de payload ---
 	teeWriterSrc = newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
