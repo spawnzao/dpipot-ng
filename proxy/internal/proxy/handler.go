@@ -263,7 +263,8 @@ func (h *Handler) Handle() {
 			honeypotError = fmt.Sprintf("connection failed: %v", err)
 			goto publish
 		}
-		defer honeypotGreetingConn.Close()
+		// NÃO usa defer - a conexão será reutilizada para relay
+		// será fechada pelo honeypotConn.Close() no final do Handle()
 
 		// Recebe greeting do servidor
 		greetingBuf := make([]byte, classifyBufferSize)
@@ -290,6 +291,11 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
+		// Usa a MESMA conexão (honeypotGreetingConn) para relay!
+		// O greeting já foi enviado, agora repassa dados entre cliente e honeypot
+		honeypotConn = honeypotGreetingConn
+		honeypotGreetingConn = nil // Avoid double close
+
 		// Usa greeting como primeiro chunk para classificação
 		firstChunk = greetingBuf
 		bufSrc.Write(firstChunk)
@@ -309,16 +315,8 @@ func (h *Handler) Handle() {
 			log.Info("protocolo classificado (server-first)", zap.String("proto", ndpiLabel))
 		}
 
-		// Conecta ao honeypot definitivo
-		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
-		if err != nil {
-			log.Error("falha conectando ao honeypot definitivo (server-first)",
-				zap.String("honeypot", honeypotAddr),
-				zap.Error(err))
-			honeypotError = fmt.Sprintf("connection failed: %v", err)
-			goto publish
-		}
-		defer honeypotConn.Close()
+		log.Debug("reutilizando conexão do greeting para relay",
+			zap.String("honeypot", honeypotAddr))
 
 		goto doRelay
 	}
