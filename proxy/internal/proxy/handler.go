@@ -46,6 +46,9 @@ type Handler struct {
 	// captura dos payloads para o Kafka
 	maxPayloadBytes int64
 	flowTracker     *flowtracker.Client
+
+	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
+	serverFirstPorts []uint16
 }
 
 func NewHandler(
@@ -58,6 +61,7 @@ func NewHandler(
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
+	serverFirstPorts []uint16,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -69,6 +73,7 @@ func NewHandler(
 		log:             log,
 		flowTracker:     flowTracker,
 		certMgr:         certMgr,
+		serverFirstPorts: serverFirstPorts,
 	}
 }
 
@@ -231,12 +236,95 @@ func (h *Handler) Handle() {
 		isZeroIP        bool
 		isSSH          bool
 		isTLS          bool
+		isClientTimeout bool
 	)
 
-	// --- STEP 1: tenta ler primeiro chunk do cliente ---
+	// --- STEP 1: verifica se é porta server-first ---
+	dstPort := uint16(dstAddr.Port)
+	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
+
+	if isServerFirst {
+		// Server-first: conecta ao honeypot, recebe greeting, repassa para cliente
+		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
+			zap.Uint16("port", dstPort))
+
+		honeypotAddr := h.router.ResolveByPort(dstPort)
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para porta server-first", zap.Uint16("port", dstPort))
+			honeypotError = fmt.Sprintf("no honeypot for port %d", dstPort)
+			goto publish
+		}
+
+		honeypotGreetingConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		if err != nil {
+			log.Error("falha conectando ao honeypot (server-first)",
+				zap.String("honeypot", honeypotAddr),
+				zap.Error(err))
+			honeypotError = fmt.Sprintf("connection failed: %v", err)
+			goto publish
+		}
+		defer honeypotGreetingConn.Close()
+
+		// Recebe greeting do servidor
+		greetingBuf := make([]byte, classifyBufferSize)
+		honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+		n, err = honeypotGreetingConn.Read(greetingBuf)
+		honeypotGreetingConn.SetReadDeadline(time.Time{})
+
+		if err != nil {
+			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
+			honeypotError = fmt.Sprintf("greeting failed: %v", err)
+			goto publish
+		}
+
+		greetingBuf = greetingBuf[:n]
+		log.Debug("recebi greeting do honeypot (server-first)",
+			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
+			zap.Uint16("port", dstPort))
+
+		// Envia greeting para o cliente
+		_, err = h.conn.Write(greetingBuf)
+		if err != nil {
+			log.Warn("falha enviando greeting para o cliente (server-first)", zap.Error(err))
+			honeypotError = fmt.Sprintf("write greeting failed: %v", err)
+			goto publish
+		}
+
+		// Usa greeting como primeiro chunk para classificação
+		firstChunk = greetingBuf
+		bufSrc.Write(firstChunk)
+
+		// Classifica o protocolo usando o greeting
+		flowInfo = &ndpi.FlowInfo{
+			SrcIP:   srcAddr.IP,
+			SrcPort: uint16(srcAddr.Port),
+			DstIP:   dstAddr.IP,
+			DstPort: dstPort,
+		}
+		ndpiLabel, err := h.ndpi.Classify(context.Background(), h.flowID, firstChunk, flowInfo)
+		if err != nil {
+			log.Warn("nDPI classify falhou (server-first)", zap.Error(err))
+			ndpiLabel = "Unknown"
+		} else {
+			log.Info("protocolo classificado (server-first)", zap.String("proto", ndpiLabel))
+		}
+
+		// Conecta ao honeypot definitivo
+		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		if err != nil {
+			log.Error("falha conectando ao honeypot definitivo (server-first)",
+				zap.String("honeypot", honeypotAddr),
+				zap.Error(err))
+			honeypotError = fmt.Sprintf("connection failed: %v", err)
+			goto publish
+		}
+		defer honeypotConn.Close()
+
+		goto doRelay
+	}
+
+	// --- STEP 2: tenta ler primeiro chunk do cliente ---
 	// Para protocolos que o cliente fala primero (HTTP, FTP, etc), isso funciona
-	// Mas para protocolos que o servidor fala primeiro (MySQL greeting, FTP passivo, etc),
-	// esse timeout vai ocorrer e precisamos conectar ao honeypot para receber o greeting
 	firstChunk = make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err = h.conn.Read(firstChunk)
@@ -246,7 +334,7 @@ func (h *Handler) Handle() {
 	// 1. Cliente ainda não enviou dados (esperando greeting do servidor - ex: MySQL)
 	// 2. Rede lenta
 	// 3. Cliente malicioso
-	isClientTimeout := false
+	isClientTimeout = false
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			log.Debug("timeout lendo do cliente, tentando conectar ao honeypot para receber greeting", zap.Error(err))
@@ -644,10 +732,9 @@ func newLimitedTeeWriter(buf *bytes.Buffer, limit int64) *limitedTeeWriter {
 
 func (w *limitedTeeWriter) Write(p []byte) (int, error) {
 	if w.limit > 0 && w.written >= w.limit {
-		// limite atingido: descarta mas reporta sucesso
-		// (se retornarmos erro aqui o pipe para)
 		return len(p), nil
 	}
+
 	if w.limit > 0 {
 		remaining := w.limit - w.written
 		if int64(len(p)) > remaining {
@@ -659,7 +746,20 @@ func (w *limitedTeeWriter) Write(p []byte) (int, error) {
 	if err != nil {
 		return n, fmt.Errorf("limitedTeeWriter: %w", err)
 	}
-	return len(p), nil // retorna len original, não o truncado
+	return len(p), nil
+}
+
+func (w *limitedTeeWriter) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func isServerFirstPort(serverFirstPorts []uint16, port uint16) bool {
+	for _, p := range serverFirstPorts {
+		if p == port {
+			return true
+		}
+	}
+	return false
 }
 
 func generateSSHHostKey() (ssh.Signer, error) {

@@ -27,6 +27,7 @@ type Server struct {
 	log             *zap.Logger
 	flowTracker     *flowtracker.Client
 	certMgr         *mitm.CertManager
+	serverFirstPorts []uint16
 }
 
 func NewServer(
@@ -38,6 +39,7 @@ func NewServer(
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
+	serverFirstPorts []uint16,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -48,6 +50,7 @@ func NewServer(
 		log:             log,
 		flowTracker:     flowTracker,
 		certMgr:         certMgr,
+		serverFirstPorts: serverFirstPorts,
 	}
 }
 
@@ -143,6 +146,7 @@ func (s *Server) handle(conn net.Conn) {
 		log,
 		s.flowTracker,
 		s.certMgr,
+		s.serverFirstPorts,
 	)
 	h.Handle()
 

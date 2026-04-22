@@ -10,19 +10,20 @@ import (
 
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
 type Config struct {
-	ListenAddr        string
+	ListenAddr         string
 	CertsPath         string
 	NDPISocketPath    string
-	NDPITimeout       time.Duration
-	Routes            map[string]string
-	DefaultRoute      string
-	KafkaBrokers      string
-	KafkaTopic        string
-	MaxPayloadBytes   int64
-	LogLevel          string
+	NDPITimeout      time.Duration
+	Routes           map[string]string
+	DefaultRoute    string
+	KafkaBrokers     string
+	KafkaTopic       string
+	MaxPayloadBytes int64
+	LogLevel        string
 	ClassifierEnabled bool
-	ClassifierHost    string
-	ClassifierPort    int
+	ClassifierHost  string
+	ClassifierPort int
+	ServerFirstPorts []uint16
 }
 
 func Load() (*Config, error) {
@@ -48,6 +49,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("HONEYPOT_ROUTES inválido: %w", err)
 	}
 	cfg.Routes = routes
+
+	serverFirstPortsRaw := getEnv("SERVER_FIRST_PORTS", "")
+	cfg.ServerFirstPorts = parseServerFirstPorts(serverFirstPortsRaw)
 
 	return cfg, nil
 }
@@ -109,4 +113,23 @@ func getInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func parseServerFirstPorts(raw string) []uint16 {
+	if raw == "" {
+		return nil
+	}
+	var ports []uint16
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		port, err := strconv.ParseUint(p, 10, 16)
+		if err != nil {
+			continue
+		}
+		ports = append(ports, uint16(port))
+	}
+	return ports
 }
