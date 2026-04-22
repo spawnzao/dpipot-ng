@@ -12,7 +12,6 @@ resources:
   - honeypots.yaml
   - kafka.yaml
   - logstash.yaml
-  - dionaea-config.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy

@@ -62,30 +62,6 @@ spec:
       port: 21
       targetPort: 21
       protocol: TCP
-    - name: smb
-      port: 445
-      targetPort: 445
-      protocol: TCP
-    - name: mssql
-      port: 1433
-      targetPort: 1433
-      protocol: TCP
-    - name: mysql
-      port: 3306
-      targetPort: 3306
-      protocol: TCP
-    - name: epmapper
-      port: 135
-      targetPort: 135
-      protocol: TCP
-    - name: tftp
-      port: 69
-      targetPort: 69
-      protocol: UDP
-    - name: upnp
-      port: 5000
-      targetPort: 5000
-      protocol: TCP
 
 ---
 # Mailoney — honeypot SMTP
