@@ -89,6 +89,16 @@ spec:
       labels:
         app: dionaea
     spec:
+      initContainers:
+        - name: init-dionaea
+          image: dtagdevsec/dionaea:24.04.1
+          command: ["sh", "-c", "mkdir -p /opt/dionaea/var/dionaea/roots"]
+          securityContext:
+            runAsUser: 0
+          resources:
+            limits:
+              cpu: 100m
+              memory: 32Mi
       containers:
         - name: dionaea
           image: dtagdevsec/dionaea:24.04.1
@@ -111,18 +121,14 @@ spec:
             - containerPort: 135
               name: epmapper
               protocol: TCP
-            - containerPort: 69
-              name: tftp
-              protocol: UDP
-            - containerPort: 5000
-              name: upnp
-              protocol: TCP
           volumeMounts:
             - name: dionaea-config
               mountPath: /opt/dionaea/etc/dionaea/dionaea.cfg
               subPath: dionaea.cfg
             - name: dionaea-services
               mountPath: /opt/dionaea/etc/dionaea/services-enabled
+            - name: dionaea-www
+              mountPath: /opt/dionaea/var/dionaea/roots/www
           resources:
             requests:
               cpu: 50m
@@ -137,6 +143,9 @@ spec:
         - name: dionaea-services
           configMap:
             name: dionaea-services
+        - name: dionaea-www
+          configMap:
+            name: dionaea-www
 
 ---
 # ── Mailoney (SMTP honeypot) ───────────────────────────────────────

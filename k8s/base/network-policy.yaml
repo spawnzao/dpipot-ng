@@ -39,7 +39,15 @@ spec:
         - protocol: TCP
           port: 25
         - protocol: TCP
-          port: 4444
+          port: 1433
+        - protocol: TCP
+          port: 135
+        - protocol: TCP
+          port: 445
+        - protocol: TCP
+          port: 3306
+        - protocol: TCP
+          port: 27017
         - protocol: TCP
           port: 9200
   egress:

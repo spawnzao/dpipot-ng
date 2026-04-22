@@ -78,6 +78,10 @@ spec:
       port: 135
       targetPort: 135
       protocol: TCP
+    - name: mongo
+      port: 27017
+      targetPort: 27017
+      protocol: TCP
 
 ---
 # Mailoney — honeypot SMTP

@@ -13,6 +13,7 @@ resources:
   - kafka.yaml
   - logstash.yaml
   - dionaea-config.yaml
+  - dionaea-www.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy

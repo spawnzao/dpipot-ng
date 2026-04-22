@@ -10,17 +10,18 @@ data:
     [dionaea]
     download.dir=/opt/dionaea/var/lib/dionaea/binaries/
     
-    listen.addresses=0.0.0.0
-    listen.mode=manual
+    #listen.addresses=0.0.0.0
+    #listen.mode=auto
+    listen.mode=getifaddrs
     
     modules=python,emu
     processors=filter_streamdumper,filter_emu
 
     [logging]
-    default.filename=/opt/dionaea/var/log/dionaea/dionaea.log
+    default.filename=/dev/stdout
     default.levels=all
     default.domains=*
-    errors.filename=/opt/dionaea/var/log/dionaea/dionaea-errors.log
+    errors.filename=/dev/stdout
     errors.levels=warning,error
     errors.domains=*
 
@@ -69,10 +70,19 @@ data:
   http.yaml: |
     - name: http
       config:
-        root: "/opt/dionaea/var/lib/dionaea/wwwroot"
+        root: "/opt/dionaea/var/dionaea/roots/www"
         ports:
           - 80
-        max_request_size: 32768
+        max_request_size: 32768 # maximum size in kbytes of the request (32MB)
+        global_headers:
+          - ["Server", "Apache/2.4.7 (Ubuntu)"]
+        headers:
+          - filename_pattern: ".*\\.php"
+            headers:
+              - ["Content-Type", "text/html; charset=utf-8"]
+              - ["Content-Length", "{content_length}"]
+              - ["Connection", "{connection}"]
+              - ["X-Powered-By", "PHP/5.5.9-1ubuntu4.29"]
 
   ftp.yaml: |
     - name: ftp
@@ -80,14 +90,47 @@ data:
         root: "/opt/dionaea/var/lib/dionaea/ftp/root"
         ports:
           - 21
+        response_messages:
+          welcome_msg: 220 FTP server ready.
 
   smbd.yaml: |
-    - name: smbd
+    - name: smb
       config:
-        ports:
-          - 445
-        share: "share"
-        root: "/opt/dionaea/var/lib/dionaea/smbd/share"
+
+        ## Generic setting ##
+
+        # 1:"Windows XP Service Pack 0/1",
+        # 2:"Windows XP Service Pack 2",
+        # 3:"Windows XP Service Pack 3",
+        # 4:"Windows 7 Service Pack 1",
+        # 5:"Linux Samba 4.3.11"
+        os_type: 4
+
+        # Additional config
+        primary_domain: DACH
+        oem_domain_name: DACH
+        server_name: ADFS
+
+        ## Windows 7 ##
+        native_os: Windows 7 Professional 7600
+        native_lan_manager: Windows 7 Professional 6.1
+        shares:
+          ADMIN$:
+            comment: Remote Admin
+            path: C:\\Windows
+            type: disktree
+          C$:
+            comment: Default Share
+            path: C:\\
+            type:
+              - disktree
+              - special
+          IPC$:
+            comment: Remote IPC
+            type: ipc
+          Printer:
+            comment: Microsoft XPS Document Writer
+            type: printq
 
   mssqld.yaml: |
     - name: mssqld
@@ -100,6 +143,9 @@ data:
       config:
         ports:
           - 3306
+        databases:
+          information_schema:
+            path: ":memory:"
 
   epmapper.yaml: |
     - name: epmapper
@@ -107,15 +153,9 @@ data:
         ports:
           - 135
 
-  tftp.yaml: |
-    - name: tftp
+  mongo.yaml: |
+    - name: mongo
       config:
         ports:
-          - 69
-        root: "/opt/dionaea/var/lib/dionaea/tftp/root"
-
-  upnp.yaml: |
-    - name: upnp
-      config:
-        ports:
-          - 5000
+          - 27017
+  
