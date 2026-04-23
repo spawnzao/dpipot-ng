@@ -654,6 +654,12 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		honeypotConn.Close()
 		return fmt.Errorf("falha ao enviar greeting para o cliente: %w", err)
 	}
+
+	// Flush para garantir que o greeting chegou ao cliente
+	if f, ok := config.ClientConn.(interface{ Flush() error }); ok {
+		f.Flush()
+	}
+
 	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay")
 
 	var wg sync.WaitGroup
