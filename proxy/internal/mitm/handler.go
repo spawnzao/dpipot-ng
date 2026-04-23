@@ -660,35 +660,56 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		f.Flush()
 	}
 
-	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay")
+	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay manual")
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	// Relay manual usando go routines com channel para coordenação
+	errChan := make(chan error, 2)
 
-	// Relay bidirecional com copy ativo - continua até uma conexão fechar
+	// Goroutine 1: cliente -> honeypot
 	go func() {
-		defer wg.Done()
-		config.Logger("ServerFirst: relay cliente->honeypot iniciado")
-		_, err := io.Copy(honeypotConn, config.ClientConn)
-		if err != nil {
-			config.Logger("ServerFirst: relay cliente->honeypot erro: %v", err)
+		buf := make([]byte, 4096)
+		for {
+			n, err := config.ClientConn.Read(buf)
+			if n > 0 {
+				_, wErr := honeypotConn.Write(buf[:n])
+				if wErr != nil {
+					errChan <- wErr
+					return
+				}
+			}
+			if err != nil {
+				errChan <- err
+				return
+			}
 		}
-		config.Logger("ServerFirst: relay cliente->honeypot encerrado (cliente fechou)")
-		honeypotConn.Close()
 	}()
 
+	// Goroutine 2: honeypot -> cliente
 	go func() {
-		defer wg.Done()
-		config.Logger("ServerFirst: relay honeypot->cliente iniciado")
-		_, err := io.Copy(config.ClientConn, honeypotConn)
-		if err != nil {
-			config.Logger("ServerFirst: relay honeypot->cliente erro: %v", err)
+		buf := make([]byte, 4096)
+		for {
+			n, err := honeypotConn.Read(buf)
+			if n > 0 {
+				_, wErr := config.ClientConn.Write(buf[:n])
+				if wErr != nil {
+					errChan <- wErr
+					return
+				}
+			}
+			if err != nil {
+				errChan <- err
+				return
+			}
 		}
-		config.Logger("ServerFirst: relay honeypot->cliente encerrado (honeypot fechou)")
-		config.ClientConn.Close()
 	}()
 
-	wg.Wait()
+	// Espera erro ou fecha
+	err = <-errChan
+	config.Logger("ServerFirst: relay encerrou com erro: %v", err)
+
+	honeypotConn.Close()
+	config.ClientConn.Close()
+
 	return nil
 }
 
