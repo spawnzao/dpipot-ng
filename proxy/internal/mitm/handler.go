@@ -602,39 +602,18 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 	}
 
 	logger("SSH MITM: HandleSSH retornando nil")
-	return nil
-}
-
-func HandlePlaintext(clientConn net.Conn, targetAddr string, maxPayloadBytes int64, logger func(string, ...interface{})) error {
-	defer clientConn.Close()
-
-	targetConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
-	}
-	defer targetConn.Close()
-
-	logger("Plaintext forwarding para %s", targetAddr)
-
-	var srcBuf, dstBuf bytes.Buffer
-	teeSrc := &limitedWriter{buf: &srcBuf, limit: maxPayloadBytes}
-	teeDst := &limitedWriter{buf: &dstBuf, limit: maxPayloadBytes}
-
-	go func() {
-		io.Copy(io.MultiWriter(targetConn, teeSrc), clientConn)
-		targetConn.Close()
-	}()
-	go func() {
-		io.Copy(io.MultiWriter(clientConn, teeDst), targetConn)
-		clientConn.Close()
-	}()
-
-	select {}
+return nil
 }
 
 type ServerFirstConfig struct {
 	ClientConn    net.Conn
 	HoneypotConn net.Conn
+	FlowID       string
+	SrcIP        string
+	SrcPort      int
+	DstIP        string
+	DstPort      int
+	HoneypotAddr string
 	MaxPayloadSize int64
 	OnEvent      func(event *kafka.Event)
 	Logger      func(string, ...interface{})
@@ -643,15 +622,58 @@ type ServerFirstConfig struct {
 func HandleServerFirst(config ServerFirstConfig) error {
 	config.Logger("ServerFirst: relay iniciado com conexão existente")
 
+	hasSentGreeting := false
+
 	errChan := make(chan error, 2)
 
-	// Goroutine 1: cliente -> honeypot
 	go func() {
 		buf := make([]byte, 4096)
 		for {
 			n, err := config.ClientConn.Read(buf)
 			if n > 0 {
-				_, wErr := config.HoneypotConn.Write(buf[:n])
+				data := make([]byte, n)
+				copy(data, buf[:n])
+
+				if !hasSentGreeting {
+					hasSentGreeting = true
+					config.Logger("ServerFirst: greeting capturada: %s", string(data[:min(20, len(data))]))
+				}
+
+				if config.OnEvent != nil {
+					if user := extractMySQLUsername(data); user != "" {
+						config.OnEvent(&kafka.Event{
+							FlowID:      config.FlowID,
+							Timestamp:   time.Now(),
+							SrcIP:       config.SrcIP,
+							SrcPort:     config.SrcPort,
+							DstIP:       config.DstIP,
+							DstPort:     config.DstPort,
+							NDPIProto:   "MySQL",
+							NDPIApp:    "username",
+							AttackType: user,
+							Honeypot:   config.HoneypotAddr,
+							LogType:     "application",
+						})
+						config.Logger("ServerFirst: username: %s", user)
+					} else if pass := extractMySQLPassword(data); pass != "" {
+						config.OnEvent(&kafka.Event{
+							FlowID:      config.FlowID,
+							Timestamp:   time.Now(),
+							SrcIP:       config.SrcIP,
+							SrcPort:     config.SrcPort,
+							DstIP:       config.DstIP,
+							DstPort:     config.DstPort,
+							NDPIProto:   "MySQL",
+							NDPIApp:    "password",
+							AttackType: pass,
+							Honeypot:   config.HoneypotAddr,
+							LogType:     "application",
+						})
+						config.Logger("ServerFirst: password: %s", pass)
+					}
+				}
+
+				_, wErr := config.HoneypotConn.Write(data)
 				if wErr != nil {
 					errChan <- wErr
 					return
@@ -664,7 +686,6 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		}
 	}()
 
-	// Goroutine 2: honeypot -> cliente
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -683,9 +704,8 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		}
 	}()
 
-	// Espera erro ou fecha
 	relayErr := <-errChan
-	config.Logger("ServerFirst: relay encerrou com erro: %v", relayErr)
+	config.Logger("ServerFirst: relay encerrou: %v", relayErr)
 
 	config.HoneypotConn.Close()
 	config.ClientConn.Close()
@@ -693,25 +713,37 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	return nil
 }
 
-type limitedWriter struct {
-	buf     *bytes.Buffer
-	limit   int64
-	written int64
-}
-
-func (w *limitedWriter) Write(p []byte) (int, error) {
-	if w.limit > 0 && w.written >= w.limit {
-		return len(p), nil
+func extractMySQLUsername(data []byte) string {
+	if len(data) < 5 {
+		return ""
 	}
-	if w.limit > 0 {
-		remaining := w.limit - w.written
-		if int64(len(p)) > remaining {
-			p = p[:remaining]
+	if data[4] == 0x01 {
+		offset := 5
+		for i := offset; i < len(data)-1; i++ {
+			if data[i] == 0x00 && data[i+1] == 0x00 {
+				user := string(data[offset:i])
+				if user != "" && len(user) > 0 && user != "\x00" {
+					return user
+				}
+			}
 		}
 	}
-	n, err := w.buf.Write(p)
-	w.written += int64(n)
-	return len(p), err
+	return ""
+}
+
+func extractMySQLPassword(data []byte) string {
+	if len(data) < 10 {
+		return ""
+	}
+	if data[4] == 0x02 {
+		offset := 5
+		for i := offset; i < len(data); i++ {
+			if data[i] == 0x00 {
+				return string(data[offset:i])
+			}
+		}
+	}
+	return ""
 }
 
 type TLSMITMConfig struct {

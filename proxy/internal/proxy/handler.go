@@ -34,11 +34,16 @@ const (
 // É criado um Handler por conexão, rodando em goroutine separada.
 type Handler struct {
 	flowID   string
-	conn     net.Conn
-	ndpi     *ndpi.Client
-	router   *router.Router
+	conn    net.Conn
+	ndpi    *ndpi.Client
+	router  *router.Router
 	producer *kafka.Producer
-	log      *zap.Logger
+	log     *zap.Logger
+
+	srcIP   string
+	srcPort int
+	dstIP   string
+	dstPort int
 
 	// CertManager para TLS MITM
 	certMgr *mitm.CertManager
@@ -210,6 +215,11 @@ func (h *Handler) Handle() {
 		zap.Stringer("dst", dstAddr),
 	)
 
+	h.srcIP = srcAddr.IP.String()
+	h.srcPort = srcAddr.Port
+	h.dstIP = dstAddr.IP.String()
+	h.dstPort = dstAddr.Port
+
 	log.Info("🔍 Handle() iniciado")
 	var (
 		bufSrc           bytes.Buffer
@@ -282,6 +292,24 @@ func (h *Handler) Handle() {
 			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
 			zap.Uint16("port", dstPort))
 
+// Publica evento de banner/version
+		if h.producer != nil {
+			h.producer.Publish(&kafka.Event{
+				FlowID:      h.flowID,
+				Timestamp:   time.Now(),
+				SrcIP:       h.srcIP,
+				SrcPort:     h.srcPort,
+				DstIP:       h.dstIP,
+				DstPort:     int(dstPort),
+				NDPIProto:   "MySQL",
+				NDPIApp:    "banner",
+				AttackType: string(greetingBuf[:min(50, len(greetingBuf))]),
+				Honeypot:    honeypotAddr,
+				LogType:     "application",
+			})
+			log.Info("ServerFirst: banner/version publicado no Kafka")
+		}
+
 		// Envia greeting para o cliente
 		_, err = h.conn.Write(greetingBuf)
 		if err != nil {
@@ -302,10 +330,19 @@ func (h *Handler) Handle() {
 		}
 
 		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
-			ClientConn:    h.conn,
+			ClientConn:     h.conn,
 			HoneypotConn: honeypotConn,
+			FlowID:       h.flowID,
+			SrcIP:        h.srcIP,
+			SrcPort:      h.srcPort,
+			DstIP:        h.dstIP,
+			DstPort:      h.dstPort,
+			HoneypotAddr: honeypotAddr,
 			MaxPayloadSize: h.maxPayloadBytes,
-			Logger:      mitmLogger,
+			OnEvent: func(event *kafka.Event) {
+				h.producer.Publish(event)
+			},
+			Logger: mitmLogger,
 		})
 		if err != nil {
 			log.Error("HandleServerFirst falhou", zap.Error(err))
