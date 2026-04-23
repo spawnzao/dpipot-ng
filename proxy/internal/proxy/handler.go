@@ -230,6 +230,22 @@ func (h *Handler) Handle() {
 		}
 	}
 
+	// Fallback: usa porta para determinar protocolo
+	if appProtoFlow == "Unknown" {
+		switch dstAddr.Port {
+		case 3306:
+			appProtoFlow = "MYSQL"
+		case 21:
+			appProtoFlow = "FTP"
+		case 25, 587, 465:
+			appProtoFlow = "SMTP"
+		case 143, 993:
+			appProtoFlow = "IMAP"
+		case 110, 995:
+			appProtoFlow = "POP"
+		}
+	}
+
 	log.Info("nDPI app_proto para este fluxo", zap.String("app_proto", appProtoFlow))
 
 	var (

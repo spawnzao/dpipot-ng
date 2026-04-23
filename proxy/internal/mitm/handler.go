@@ -727,29 +727,19 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 	if len(data) < 36 {
 		return ""
 	}
-	logger("extractMySQLUsername: len=%d, cap_flags=0x%02x%02x%02x%02x", len(data), data[7], data[6], data[5], data[4])
-
-	capFlags := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
 
 	offset := 32
-	if capFlags&0x020000 != 0 {
-		offset = 32
-	} else {
-		offset = 32
-	}
-
-	if offset >= len(data) {
-		return ""
-	}
-
-	for i := offset; i < len(data)-1; i++ {
+	for i := offset; i < len(data); i++ {
 		if data[i] == 0x00 {
 			user := string(data[offset:i])
-			if len(user) > 0 && len(user) < 50 && !strings.Contains(user, "\ufffd") {
+			if len(user) > 0 && len(user) < 32 && !strings.Contains(user, "\ufffd") && !strings.Contains(user, "\u001d") {
+				logger("extractMySQLUsername: found user at offset %d: %q (bytes %x)", offset, user, data[offset:i])
 				return user
 			}
 		}
 	}
+
+	logger("extractMySQLUsername: no null terminator found, dumping bytes from offset %d: %x", offset, data[offset:min(offset+32, len(data))])
 	return ""
 }
 
