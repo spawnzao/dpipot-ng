@@ -724,16 +724,28 @@ func HandleServerFirst(config ServerFirstConfig) error {
 }
 
 func extractMySQLUsername(data []byte, logger func(string, ...interface{})) string {
-	if len(data) < 10 {
+	if len(data) < 36 {
 		return ""
 	}
-	logger("extractMySQLUsername: len=%d, data[4]=0x%02x", len(data), data[4])
+	logger("extractMySQLUsername: len=%d, cap_flags=0x%02x%02x%02x%02x", len(data), data[7], data[6], data[5], data[4])
 
-	offset := 4
+	capFlags := uint32(data[4]) | uint32(data[5])<<8 | uint32(data[6])<<16 | uint32(data[7])<<24
+
+	offset := 32
+	if capFlags&0x020000 != 0 {
+		offset = 32
+	} else {
+		offset = 32
+	}
+
+	if offset >= len(data) {
+		return ""
+	}
+
 	for i := offset; i < len(data)-1; i++ {
 		if data[i] == 0x00 {
 			user := string(data[offset:i])
-			if len(user) > 0 && len(user) < 50 {
+			if len(user) > 0 && len(user) < 50 && !strings.Contains(user, "\ufffd") {
 				return user
 			}
 		}
@@ -742,20 +754,6 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 }
 
 func extractMySQLPassword(data []byte, logger func(string, ...interface{})) string {
-	if len(data) < 10 {
-		return ""
-	}
-	logger("extractMySQLPassword: len=%d, data[4]=0x%02x", len(data), data[4])
-
-	offset := 4
-	for i := offset; i < len(data); i++ {
-		if data[i] == 0x00 {
-			pass := string(data[offset:i])
-			if len(pass) > 0 && len(pass) < 100 {
-				return pass
-			}
-		}
-	}
 	return ""
 }
 
