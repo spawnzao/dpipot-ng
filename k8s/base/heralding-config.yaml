@@ -41,8 +41,8 @@ data:
         port: 23400
 
     hash_cracker:
-      enabled: true
-      wordlist_file: 'wordlist.txt'
+      enabled: false
+      wordlist_file: ''
 
     # protocols to enable (only active ones from your docker-compose)
     capabilities:

@@ -96,10 +96,6 @@ spec:
           mountPath: /var/log/heralding
         - name: tmp
           mountPath: /tmp/heralding
-        - name: wordlist
-          mountPath: /etc/heralding/wordlist.txt
-          subPath: wordlist.txt
-          readOnly: true
         
         # Health check
         livenessProbe:
@@ -123,6 +119,3 @@ spec:
         emptyDir:
           medium: Memory  # tmpfs equivalente ao docker-compose
           sizeLimit: 256Mi  # Limitando o tamanho da memória tmpfs
-      - name: wordlist
-        configMap:
-          name: heralding-wordlist

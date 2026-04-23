@@ -19,7 +19,6 @@ resources:
   - heralding-config.yaml
   - heralding-deployment.yaml
   - heralding-service.yaml
-  - heralding-wordlist.yaml
 
 
 
