@@ -642,18 +642,16 @@ type ServerFirstConfig struct {
 }
 
 func HandleServerFirst(config ServerFirstConfig) error {
-	defer config.ClientConn.Close()
-
 	config.Logger("ServerFirst: conectando ao honeypot %s", config.TargetAddr)
 	honeypotConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
 	}
-	defer honeypotConn.Close()
 	config.Logger("ServerFirst: conectado ao honeypot, enviando greeting")
 
 	_, err = config.ClientConn.Write(config.Greeting)
 	if err != nil {
+		honeypotConn.Close()
 		return fmt.Errorf("falha ao enviar greeting para o cliente: %w", err)
 	}
 	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay bidirecional")
@@ -664,7 +662,10 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	go func() {
 		defer wg.Done()
 		config.Logger("ServerFirst: goroutine cliente->honeypot iniciada")
-		io.Copy(honeypotConn, config.ClientConn)
+		_, err := io.Copy(honeypotConn, config.ClientConn)
+		if err != nil {
+			config.Logger("ServerFirst: cliente->honeypot erro: %v", err)
+		}
 		honeypotConn.Close()
 		config.Logger("ServerFirst: goroutine cliente->honeypot encerrada")
 	}()
@@ -672,7 +673,10 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	go func() {
 		defer wg.Done()
 		config.Logger("ServerFirst: goroutine honeypot->cliente iniciada")
-		io.Copy(config.ClientConn, honeypotConn)
+		_, err := io.Copy(config.ClientConn, honeypotConn)
+		if err != nil {
+			config.Logger("ServerFirst: honeypot->cliente erro: %v", err)
+		}
 		config.ClientConn.Close()
 		config.Logger("ServerFirst: goroutine honeypot->cliente encerrada")
 	}()
