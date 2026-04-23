@@ -659,6 +659,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	// Não fecha conexões aqui - o chamador é responsável por fechar após o wg.Wait()
 	go func() {
 		defer wg.Done()
 		config.Logger("ServerFirst: goroutine cliente->honeypot iniciada")
@@ -666,7 +667,6 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		if err != nil {
 			config.Logger("ServerFirst: cliente->honeypot erro: %v", err)
 		}
-		honeypotConn.Close()
 		config.Logger("ServerFirst: goroutine cliente->honeypot encerrada")
 	}()
 
@@ -677,11 +677,15 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		if err != nil {
 			config.Logger("ServerFirst: honeypot->cliente erro: %v", err)
 		}
-		config.ClientConn.Close()
 		config.Logger("ServerFirst: goroutine honeypot->cliente encerrada")
 	}()
 
 	wg.Wait()
+
+	// Fecha conexões após relay terminar
+	honeypotConn.Close()
+	config.ClientConn.Close()
+
 	return nil
 }
 
