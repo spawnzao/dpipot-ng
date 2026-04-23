@@ -255,7 +255,7 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
-		honeypotGreetingConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
 		if err != nil {
 			log.Error("falha conectando ao honeypot (server-first)",
 				zap.String("honeypot", honeypotAddr),
@@ -266,13 +266,13 @@ func (h *Handler) Handle() {
 
 		// Recebe greeting do servidor
 		greetingBuf := make([]byte, classifyBufferSize)
-		honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
-		n, err = honeypotGreetingConn.Read(greetingBuf)
-		honeypotGreetingConn.SetReadDeadline(time.Time{})
-		honeypotGreetingConn.Close()
+		honeypotConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+		n, err = honeypotConn.Read(greetingBuf)
+		honeypotConn.SetReadDeadline(time.Time{})
 
 		if err != nil {
 			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
+			honeypotConn.Close()
 			honeypotError = fmt.Sprintf("greeting failed: %v", err)
 			goto publish
 		}
@@ -282,17 +282,30 @@ func (h *Handler) Handle() {
 			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
 			zap.Uint16("port", dstPort))
 
+		// Envia greeting para o cliente
+		_, err = h.conn.Write(greetingBuf)
+		if err != nil {
+			log.Warn("falha ao enviar greeting para o cliente", zap.Error(err))
+			honeypotConn.Close()
+			honeypotError = fmt.Sprintf("greeting forward failed: %v", err)
+			goto publish
+		}
+
+		// Flush para garantir que chegou ao cliente
+		if f, ok := h.conn.(interface{ Flush() error }); ok {
+			f.Flush()
+		}
+
 		mitmLogger := func(format string, args ...interface{}) {
 			msg := fmt.Sprintf("ServerFirst: "+format, args...)
 			log.Info(msg)
 		}
 
 		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
-			ClientConn:     h.conn,
-			TargetAddr:    honeypotAddr,
-			Greeting:      greetingBuf,
+			ClientConn:    h.conn,
+			HoneypotConn: honeypotConn,
 			MaxPayloadSize: h.maxPayloadBytes,
-			Logger:        mitmLogger,
+			Logger:      mitmLogger,
 		})
 		if err != nil {
 			log.Error("HandleServerFirst falhou", zap.Error(err))

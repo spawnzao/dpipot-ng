@@ -633,39 +633,16 @@ func HandlePlaintext(clientConn net.Conn, targetAddr string, maxPayloadBytes int
 }
 
 type ServerFirstConfig struct {
-	ClientConn     net.Conn
-	TargetAddr    string
-	Greeting      []byte
+	ClientConn    net.Conn
+	HoneypotConn net.Conn
 	MaxPayloadSize int64
-	OnEvent       func(event *kafka.Event)
-	Logger        func(string, ...interface{})
+	OnEvent      func(event *kafka.Event)
+	Logger      func(string, ...interface{})
 }
 
 func HandleServerFirst(config ServerFirstConfig) error {
-	config.Logger("ServerFirst: conectando ao honeypot %s", config.TargetAddr)
-	honeypotConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
-	if err != nil {
-		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
-	}
-	config.Logger("ServerFirst: conectado ao honeypot, enviando greeting")
+	config.Logger("ServerFirst: relay iniciado com conexão existente")
 
-	_, err = config.ClientConn.Write(config.Greeting)
-	if err != nil {
-		honeypotConn.Close()
-		return fmt.Errorf("falha ao enviar greeting para o cliente: %w", err)
-	}
-
-	// Flush para garantir que o greeting chegou ao cliente
-	if f, ok := config.ClientConn.(interface{ Flush() error }); ok {
-		f.Flush()
-	}
-
-	// Pequeno delay para dar tempo do cliente processar o greeting
-	time.Sleep(100 * time.Millisecond)
-
-	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay manual")
-
-	// Relay manual usando go routines com channel para coordenação
 	errChan := make(chan error, 2)
 
 	// Goroutine 1: cliente -> honeypot
@@ -674,7 +651,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		for {
 			n, err := config.ClientConn.Read(buf)
 			if n > 0 {
-				_, wErr := honeypotConn.Write(buf[:n])
+				_, wErr := config.HoneypotConn.Write(buf[:n])
 				if wErr != nil {
 					errChan <- wErr
 					return
@@ -691,7 +668,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := honeypotConn.Read(buf)
+			n, err := config.HoneypotConn.Read(buf)
 			if n > 0 {
 				_, wErr := config.ClientConn.Write(buf[:n])
 				if wErr != nil {
@@ -707,10 +684,10 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	}()
 
 	// Espera erro ou fecha
-	err = <-errChan
-	config.Logger("ServerFirst: relay encerrou com erro: %v", err)
+	relayErr := <-errChan
+	config.Logger("ServerFirst: relay encerrou com erro: %v", relayErr)
 
-	honeypotConn.Close()
+	config.HoneypotConn.Close()
 	config.ClientConn.Close()
 
 	return nil
