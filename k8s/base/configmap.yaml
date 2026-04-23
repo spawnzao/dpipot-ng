@@ -9,16 +9,18 @@ data:
   NDPI_SOCKET_PATH: "/var/run/dpipot/ndpi.sock"
   NDPI_TIMEOUT: "5000ms"
   HONEYPOT_ROUTES: >-
-    HTTP=wordpot-svc:80,
+    HTTP=heralding:80,
     SSH=cowrie-svc:22,
-    FTP=dionaea-svc:21,
-    SMTP=dionaea-svc:25,
-    IMAP=dionaea-svc:143,
-    SIP=dionaea-svc:5060,
-    TLS=dionaea-svc:80,
-    MongoDB=mongodbhp-svc:27017,
-    MySQL=mariadb:3306
-  DEFAULT_ROUTE: "wordpot-svc:80"
+    FTP=heralding:21,
+    SMTP=heralding:25,
+    MySQL=heralding:3306,
+    Telnet=heralding:23,
+    POP=heralding:110,
+    IMAP=heralding:143,
+    RDP=heralding:3389,
+    PostgreSQL=heralding:5432,
+    VNC=heralding:5900
+  DEFAULT_ROUTE: "heralding:80"
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "0"
