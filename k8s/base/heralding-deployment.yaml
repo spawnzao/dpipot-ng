@@ -28,11 +28,10 @@ spec:
         imagePullPolicy: IfNotPresent
         
         # Comando igual ao Dockerfile
-        args:
+        command:
+          - /bin/sh
           - -c
-          - /etc/heralding/heralding.yml
-          - -l
-          - /var/log/heralding/heralding.log
+          - /usr/bin/heralding -c /etc/heralding/heralding.yml -l /var/log/heralding/heralding.log
         
         # Portas dos protocolos ativos (todas as que estavam no docker-compose)
         ports:
