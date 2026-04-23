@@ -654,38 +654,35 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		honeypotConn.Close()
 		return fmt.Errorf("falha ao enviar greeting para o cliente: %w", err)
 	}
-	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay bidirecional")
+	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay")
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Não fecha conexões aqui - o chamador é responsável por fechar após o wg.Wait()
+	// Relay bidirecional com copy ativo - continua até uma conexão fechar
 	go func() {
 		defer wg.Done()
-		config.Logger("ServerFirst: goroutine cliente->honeypot iniciada")
+		config.Logger("ServerFirst: relay cliente->honeypot iniciado")
 		_, err := io.Copy(honeypotConn, config.ClientConn)
 		if err != nil {
-			config.Logger("ServerFirst: cliente->honeypot erro: %v", err)
+			config.Logger("ServerFirst: relay cliente->honeypot erro: %v", err)
 		}
-		config.Logger("ServerFirst: goroutine cliente->honeypot encerrada")
+		config.Logger("ServerFirst: relay cliente->honeypot encerrado (cliente fechou)")
+		honeypotConn.Close()
 	}()
 
 	go func() {
 		defer wg.Done()
-		config.Logger("ServerFirst: goroutine honeypot->cliente iniciada")
+		config.Logger("ServerFirst: relay honeypot->cliente iniciado")
 		_, err := io.Copy(config.ClientConn, honeypotConn)
 		if err != nil {
-			config.Logger("ServerFirst: honeypot->cliente erro: %v", err)
+			config.Logger("ServerFirst: relay honeypot->cliente erro: %v", err)
 		}
-		config.Logger("ServerFirst: goroutine honeypot->cliente encerrada")
+		config.Logger("ServerFirst: relay honeypot->cliente encerrado (honeypot fechou)")
+		config.ClientConn.Close()
 	}()
 
 	wg.Wait()
-
-	// Fecha conexões após relay terminar
-	honeypotConn.Close()
-	config.ClientConn.Close()
-
 	return nil
 }
 
