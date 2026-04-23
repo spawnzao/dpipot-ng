@@ -248,6 +248,7 @@ func (h *Handler) Handle() {
 		isTLS          bool
 		isClientTimeout   bool
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
+		ndpiProto         string
 	)
 
 	// --- STEP 1: verifica se é porta server-first ---
@@ -257,6 +258,17 @@ func (h *Handler) Handle() {
 	if isServerFirst {
 		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
 			zap.Uint16("port", dstPort))
+
+		// Consulta nDPI via FlowTracker
+		ndpiProto = "Unknown"
+		flowIDForTracker := normalizeFlowID(net.ParseIP(h.srcIP), net.ParseIP(h.dstIP), uint16(h.srcPort), uint16(h.dstPort), 6)
+		if h.flowTracker != nil && h.flowTracker.IsEnabled() {
+			appProto, _, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
+			if err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
+				ndpiProto = appProto
+				log.Debug("nDPI via FlowTracker para server-first", zap.String("ndpi_proto", ndpiProto))
+			}
+		}
 
 		honeypotAddr = h.router.ResolveByPort(dstPort)
 		if honeypotAddr == "" {
@@ -301,7 +313,7 @@ func (h *Handler) Handle() {
 				SrcPort:     h.srcPort,
 				DstIP:       h.dstIP,
 				DstPort:     int(dstPort),
-				NDPIProto:   "MySQL",
+				NDPIProto:   ndpiProto,
 				NDPIApp:    "banner",
 				AttackType: string(greetingBuf[:min(50, len(greetingBuf))]),
 				Honeypot:    honeypotAddr,
@@ -338,6 +350,7 @@ func (h *Handler) Handle() {
 			DstIP:        h.dstIP,
 			DstPort:      h.dstPort,
 			HoneypotAddr: honeypotAddr,
+			NDPIProto:    ndpiProto,
 			MaxPayloadSize: h.maxPayloadBytes,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)

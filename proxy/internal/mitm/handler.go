@@ -614,6 +614,7 @@ type ServerFirstConfig struct {
 	DstIP        string
 	DstPort      int
 	HoneypotAddr string
+	NDPIProto    string
 	MaxPayloadSize int64
 	OnEvent      func(event *kafka.Event)
 	Logger      func(string, ...interface{})
@@ -654,7 +655,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							SrcPort:     config.SrcPort,
 							DstIP:       config.DstIP,
 							DstPort:     config.DstPort,
-							NDPIProto:   "MySQL",
+							NDPIProto:   config.NDPIProto,
 							NDPIApp:    "username",
 							AttackType: user,
 							Honeypot:   config.HoneypotAddr,
@@ -672,7 +673,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							SrcPort:     config.SrcPort,
 							DstIP:       config.DstIP,
 							DstPort:     config.DstPort,
-							NDPIProto:   "MySQL",
+							NDPIProto:   config.NDPIProto,
 							NDPIApp:    "password",
 							AttackType: pass,
 							Honeypot:   config.HoneypotAddr,
