@@ -660,6 +660,9 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		f.Flush()
 	}
 
+	// Pequeno delay para dar tempo do cliente processar o greeting
+	time.Sleep(100 * time.Millisecond)
+
 	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay manual")
 
 	// Relay manual usando go routines com channel para coordenação
