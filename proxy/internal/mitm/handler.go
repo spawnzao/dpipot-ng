@@ -623,6 +623,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	config.Logger("ServerFirst: relay iniciado com conexão existente")
 
 	hasSentGreeting := false
+	var capturedUser, capturedPass string
 
 	errChan := make(chan error, 2)
 
@@ -636,11 +637,16 @@ func HandleServerFirst(config ServerFirstConfig) error {
 
 				if !hasSentGreeting {
 					hasSentGreeting = true
-					config.Logger("ServerFirst: greeting capturada: %s", string(data[:min(20, len(data))]))
+					config.Logger("ServerFirst: greeting capturada: %s", string(data[:min(30, len(data))]))
 				}
 
+				// Tenta extrair credenciais
 				if config.OnEvent != nil {
-					if user := extractMySQLUsername(data); user != "" {
+					user := extractMySQLUsername(data, config.Logger)
+					pass := extractMySQLPassword(data, config.Logger)
+
+					if user != "" && capturedUser == "" {
+						capturedUser = user
 						config.OnEvent(&kafka.Event{
 							FlowID:      config.FlowID,
 							Timestamp:   time.Now(),
@@ -655,7 +661,10 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							LogType:     "application",
 						})
 						config.Logger("ServerFirst: username: %s", user)
-					} else if pass := extractMySQLPassword(data); pass != "" {
+					}
+
+					if pass != "" && capturedPass == "" {
+						capturedPass = pass
 						config.OnEvent(&kafka.Event{
 							FlowID:      config.FlowID,
 							Timestamp:   time.Now(),
@@ -713,33 +722,36 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	return nil
 }
 
-func extractMySQLUsername(data []byte) string {
-	if len(data) < 5 {
+func extractMySQLUsername(data []byte, logger func(string, ...interface{})) string {
+	if len(data) < 10 {
 		return ""
 	}
-	if data[4] == 0x01 {
-		offset := 5
-		for i := offset; i < len(data)-1; i++ {
-			if data[i] == 0x00 && data[i+1] == 0x00 {
-				user := string(data[offset:i])
-				if user != "" && len(user) > 0 && user != "\x00" {
-					return user
-				}
+	logger("extractMySQLUsername: len=%d, data[4]=0x%02x", len(data), data[4])
+
+	offset := 4
+	for i := offset; i < len(data)-1; i++ {
+		if data[i] == 0x00 {
+			user := string(data[offset:i])
+			if len(user) > 0 && len(user) < 50 {
+				return user
 			}
 		}
 	}
 	return ""
 }
 
-func extractMySQLPassword(data []byte) string {
+func extractMySQLPassword(data []byte, logger func(string, ...interface{})) string {
 	if len(data) < 10 {
 		return ""
 	}
-	if data[4] == 0x02 {
-		offset := 5
-		for i := offset; i < len(data); i++ {
-			if data[i] == 0x00 {
-				return string(data[offset:i])
+	logger("extractMySQLPassword: len=%d, data[4]=0x%02x", len(data), data[4])
+
+	offset := 4
+	for i := offset; i < len(data); i++ {
+		if data[i] == 0x00 {
+			pass := string(data[offset:i])
+			if len(pass) > 0 && len(pass) < 100 {
+				return pass
 			}
 		}
 	}
