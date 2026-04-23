@@ -312,28 +312,36 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
-		greetingBuf = greetingBuf[:n]
+greetingBuf = greetingBuf[:n]
 		log.Debug("recebi greeting do honeypot (server-first)",
 			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
 			zap.Uint16("port", dstPort))
 
-// Publica evento de banner/version
-		if h.producer != nil {
-			h.producer.Publish(&kafka.Event{
-				FlowID:      h.flowID,
-				Timestamp:   time.Now(),
-				SrcIP:       h.srcIP,
-				SrcPort:     h.srcPort,
-				DstIP:       h.dstIP,
-				DstPort:     int(dstPort),
-				NDPIProto:   appProtoFlow,
-				NDPIApp:    "banner",
-				AttackType: string(greetingBuf[:min(50, len(greetingBuf))]),
-				Honeypot:    honeypotAddr,
-				LogType:     "application",
-			})
-			log.Info("ServerFirst: banner/version publicado no Kafka")
+		parser := mitm.NewParser(appProtoFlow, int(dstPort))
+		bannerEvents := parser.ParseServerData(greetingBuf, func(format string, args ...interface{}) {})
+
+		for _, ev := range bannerEvents {
+			if ev.EventType == mitm.EventBanner || ev.Banner != "" {
+				if h.producer != nil {
+					h.producer.Publish(&kafka.Event{
+						FlowID:      h.flowID,
+						Timestamp:   time.Now(),
+						SrcIP:       h.srcIP,
+						SrcPort:     h.srcPort,
+						DstIP:       h.dstIP,
+						DstPort:     int(dstPort),
+						NDPIProto:   appProtoFlow,
+						NDPIApp:    string(ev.EventType),
+						AttackType: ev.Banner,
+						Honeypot:    honeypotAddr,
+						LogType:     "application",
+						PayloadDst:  greetingBuf,
+					})
+				}
+			}
 		}
+
+		log.Info("ServerFirst: banner/version publicado no Kafka")
 
 		// Envia greeting para o cliente
 		_, err = h.conn.Write(greetingBuf)

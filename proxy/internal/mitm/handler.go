@@ -624,7 +624,8 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	config.Logger("ServerFirst: relay iniciado com conexão existente")
 
 	hasSentGreeting := false
-	var capturedUser, capturedPass string
+
+	parser := NewParser(config.NDPIProto, config.DstPort)
 
 	errChan := make(chan error, 2)
 
@@ -638,16 +639,12 @@ func HandleServerFirst(config ServerFirstConfig) error {
 
 				if !hasSentGreeting {
 					hasSentGreeting = true
-					config.Logger("ServerFirst: greeting capturada: %s", string(data[:min(30, len(data))]))
+					config.Logger("ServerFirst: primeiro pacote do cliente: %d bytes", n)
 				}
 
-				// Tenta extrair credenciais
 				if config.OnEvent != nil {
-					user := extractMySQLUsername(data, config.Logger)
-					pass := extractMySQLPassword(data, config.Logger)
-
-					if user != "" && capturedUser == "" {
-						capturedUser = user
+					events := parser.ParseClientData(data, config.Logger)
+					for _, ev := range events {
 						config.OnEvent(&kafka.Event{
 							FlowID:      config.FlowID,
 							Timestamp:   time.Now(),
@@ -656,30 +653,12 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							DstIP:       config.DstIP,
 							DstPort:     config.DstPort,
 							NDPIProto:   config.NDPIProto,
-							NDPIApp:    "username",
-							AttackType: user,
+							NDPIApp:    string(ev.EventType),
+							AttackType: formatAttackType(ev),
 							Honeypot:   config.HoneypotAddr,
 							LogType:     "application",
+							PayloadSrc: data,
 						})
-						config.Logger("ServerFirst: username: %s", user)
-					}
-
-					if pass != "" && capturedPass == "" {
-						capturedPass = pass
-						config.OnEvent(&kafka.Event{
-							FlowID:      config.FlowID,
-							Timestamp:   time.Now(),
-							SrcIP:       config.SrcIP,
-							SrcPort:     config.SrcPort,
-							DstIP:       config.DstIP,
-							DstPort:     config.DstPort,
-							NDPIProto:   config.NDPIProto,
-							NDPIApp:    "password",
-							AttackType: pass,
-							Honeypot:   config.HoneypotAddr,
-							LogType:     "application",
-						})
-						config.Logger("ServerFirst: password: %s", pass)
 					}
 				}
 
@@ -701,7 +680,30 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		for {
 			n, err := config.HoneypotConn.Read(buf)
 			if n > 0 {
-				_, wErr := config.ClientConn.Write(buf[:n])
+				data := make([]byte, n)
+				copy(data, buf[:n])
+
+				if config.OnEvent != nil {
+					events := parser.ParseServerData(data, config.Logger)
+					for _, ev := range events {
+						config.OnEvent(&kafka.Event{
+							FlowID:       config.FlowID,
+							Timestamp:    time.Now(),
+							SrcIP:        config.SrcIP,
+							SrcPort:      config.SrcPort,
+							DstIP:        config.DstIP,
+							DstPort:      config.DstPort,
+							NDPIProto:    config.NDPIProto,
+							NDPIApp:     string(ev.EventType),
+							AttackType:   formatAttackType(ev),
+							Honeypot:     config.HoneypotAddr,
+							LogType:      "application",
+							PayloadDst:   data,
+						})
+					}
+				}
+
+				_, wErr := config.ClientConn.Write(data)
 				if wErr != nil {
 					errChan <- wErr
 					return
@@ -723,6 +725,27 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	return nil
 }
 
+func formatAttackType(ev CaptureEvent) string {
+	switch ev.EventType {
+	case EventCredential:
+		if ev.Username != "" {
+			return ev.Username
+		}
+		if ev.Password != "" {
+			return ev.Password
+		}
+	case EventCommand:
+		return ev.Command
+	case EventResponse:
+		return ev.Response
+	case EventBanner:
+		return ev.Banner
+	case EventRawData:
+		return ev.RawPayload
+	}
+	return ""
+}
+
 func extractMySQLUsername(data []byte, logger func(string, ...interface{})) string {
 	if len(data) < 36 {
 		return ""
@@ -733,13 +756,12 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 		if data[i] == 0x00 {
 			user := string(data[offset:i])
 			if len(user) > 0 && len(user) < 32 && !strings.Contains(user, "\ufffd") && !strings.Contains(user, "\u001d") {
-				logger("extractMySQLUsername: found user at offset %d: %q (bytes %x)", offset, user, data[offset:i])
+				logger("extractMySQLUsername: found user at offset %d: %q", offset, user)
 				return user
 			}
 		}
 	}
 
-	logger("extractMySQLUsername: no null terminator found, dumping bytes from offset %d: %x", offset, data[offset:min(offset+32, len(data))])
 	return ""
 }
 
