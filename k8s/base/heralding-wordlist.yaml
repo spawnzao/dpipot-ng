@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heralding-wordlist
+  namespace: dpipot
+data:
+  wordlist.txt: |
+    password
+    admin
+    root
+    123456
+    qwerty
+    letmein
+    welcome
+    123456789
+    password1
+    abc123

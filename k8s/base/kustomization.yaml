@@ -14,6 +14,14 @@ resources:
   - logstash.yaml
   - dionaea-config.yaml
   - dionaea-www.yaml
+  - mariadb-deployment.yaml
+  - mariadb-service.yaml
+  - heralding-config.yaml
+  - heralding-deployment.yaml
+  - heralding-service.yaml
+  - heralding-wordlist.yaml
+
+
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
@@ -22,3 +30,8 @@ images:
     newTag: latest
   - name: ubuntu
     newName: docker.io/library/ubuntu
+
+secretGenerator:
+  - name: mariadb-secret
+    literals:
+      - root-password=root123

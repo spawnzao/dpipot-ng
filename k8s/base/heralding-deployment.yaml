@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heralding
+  namespace: dpipot
+  labels:
+    app: heralding
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: heralding
+  template:
+    metadata:
+      labels:
+        app: heralding
+    spec:
+      # ReadOnly root filesystem como no docker-compose
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+      
+      containers:
+      - name: heralding
+        image: dtagdevsec/heralding:24.04.1
+        imagePullPolicy: IfNotPresent
+        
+        # Comando igual ao Dockerfile
+        args:
+          - -c
+          - /etc/heralding/heralding.yml
+          - -l
+          - /var/log/heralding/heralding.log
+        
+        # Portas dos protocolos ativos (todas as que estavam no docker-compose)
+        ports:
+        - name: ftp
+          containerPort: 21
+          protocol: TCP
+        - name: ssh
+          containerPort: 22
+          protocol: TCP
+        - name: telnet
+          containerPort: 23
+          protocol: TCP
+        - name: smtp
+          containerPort: 25
+          protocol: TCP
+        - name: http
+          containerPort: 80
+          protocol: TCP
+        - name: pop3
+          containerPort: 110
+          protocol: TCP
+        - name: imap
+          containerPort: 143
+          protocol: TCP
+        - name: mysql
+          containerPort: 3306
+          protocol: TCP
+        - name: rdp
+          containerPort: 3389
+          protocol: TCP
+        - name: postgresql
+          containerPort: 5432
+          protocol: TCP
+        - name: vnc
+          containerPort: 5900
+          protocol: TCP
+        
+        # Recursos limitados (como no docker-compose comentado)
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 250m
+            memory: 512Mi
+        
+        # ReadOnly filesystem e security hardening
+        securityContext:
+          readOnlyRootFilesystem: true
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        
+        # Volume mounts (SEMPRE PERSISTÊNCIA - logs temporários)
+        volumeMounts:
+        - name: config
+          mountPath: /etc/heralding
+          readOnly: true
+        - name: logs
+          mountPath: /var/log/heralding
+        - name: tmp
+          mountPath: /tmp/heralding
+        - name: wordlist
+          mountPath: /etc/heralding/wordlist.txt
+          subPath: wordlist.txt
+          readOnly: true
+        
+        # Health check
+        livenessProbe:
+          tcpSocket:
+            port: 21
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 21
+          initialDelaySeconds: 10
+          periodSeconds: 5
+      
+      volumes:
+      - name: config
+        configMap:
+          name: heralding-config
+      - name: logs
+        emptyDir: {}  # SEM persistência - logs efêmeros
+      - name: tmp
+        emptyDir:
+          medium: Memory  # tmpfs equivalente ao docker-compose
+          sizeLimit: 256Mi  # Limitando o tamanho da memória tmpfs
+      - name: wordlist
+        configMap:
+          name: heralding-wordlist

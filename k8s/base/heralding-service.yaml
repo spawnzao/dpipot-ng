@@ -1,0 +1,56 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: heralding-honeypot
+  labels:
+    app: heralding
+spec:
+  type: LoadBalancer  # Mude para NodePort se não tiver LB
+  selector:
+    app: heralding
+  ports:
+  # Portas dos protocolos ativos
+  - name: ftp
+    port: 21
+    targetPort: 21
+    protocol: TCP
+  - name: ssh
+    port: 22
+    targetPort: 22
+    protocol: TCP
+  - name: telnet
+    port: 23
+    targetPort: 23
+    protocol: TCP
+  - name: smtp
+    port: 25
+    targetPort: 25
+    protocol: TCP
+  - name: http
+    port: 80
+    targetPort: 80
+    protocol: TCP
+  - name: pop3
+    port: 110
+    targetPort: 110
+    protocol: TCP
+  - name: imap
+    port: 143
+    targetPort: 143
+    protocol: TCP
+  - name: mysql
+    port: 3306
+    targetPort: 3306
+    protocol: TCP
+  - name: rdp
+    port: 3389
+    targetPort: 3389
+    protocol: TCP
+  - name: postgresql
+    port: 5432
+    targetPort: 5432
+    protocol: TCP
+  - name: vnc
+    port: 5900
+    targetPort: 5900
+    protocol: TCP
