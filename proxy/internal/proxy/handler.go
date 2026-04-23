@@ -245,11 +245,10 @@ func (h *Handler) Handle() {
 	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
 
 	if isServerFirst {
-		// Server-first: conecta ao honeypot, recebe greeting, repassa para cliente
 		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
 			zap.Uint16("port", dstPort))
 
-		honeypotAddr := h.router.ResolveByPort(dstPort)
+		honeypotAddr = h.router.ResolveByPort(dstPort)
 		if honeypotAddr == "" {
 			log.Warn("não encontrou honeypot para porta server-first", zap.Uint16("port", dstPort))
 			honeypotError = fmt.Sprintf("no honeypot for port %d", dstPort)
@@ -264,14 +263,13 @@ func (h *Handler) Handle() {
 			honeypotError = fmt.Sprintf("connection failed: %v", err)
 			goto publish
 		}
-		// NÃO usa defer - a conexão será reutilizada para relay
-		// será fechada pelo honeypotConn.Close() no final do Handle()
 
 		// Recebe greeting do servidor
 		greetingBuf := make([]byte, classifyBufferSize)
 		honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 		n, err = honeypotGreetingConn.Read(greetingBuf)
 		honeypotGreetingConn.SetReadDeadline(time.Time{})
+		honeypotGreetingConn.Close()
 
 		if err != nil {
 			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
@@ -284,49 +282,24 @@ func (h *Handler) Handle() {
 			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
 			zap.Uint16("port", dstPort))
 
-		// Envia greeting para o cliente
-		_, err = h.conn.Write(greetingBuf)
+		mitmLogger := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf("ServerFirst: "+format, args...)
+			log.Info(msg)
+		}
+
+		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
+			ClientConn:     h.conn,
+			TargetAddr:    honeypotAddr,
+			Greeting:      greetingBuf,
+			MaxPayloadSize: h.maxPayloadBytes,
+			Logger:        mitmLogger,
+		})
 		if err != nil {
-			log.Warn("falha enviando greeting para o cliente (server-first)", zap.Error(err))
-			honeypotError = fmt.Sprintf("write greeting failed: %v", err)
-			goto publish
+			log.Error("HandleServerFirst falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("server-first relay failed: %v", err)
 		}
 
-		// Usa a MESMA conexão (honeypotGreetingConn) para relay!
-		// O greeting já foi enviado, agora repassa dados entre cliente e honeypot
-		honeypotConn = honeypotGreetingConn
-		honeypotGreetingConn = nil // Avoid double close
-
-		// Usa greeting como primeiro chunk para classificação
-		firstChunk = greetingBuf
-		bufSrc.Write(firstChunk)
-
-		// Classifica o protocolo usando o greeting
-		flowInfo = &ndpi.FlowInfo{
-			SrcIP:   srcAddr.IP,
-			SrcPort: uint16(srcAddr.Port),
-			DstIP:   dstAddr.IP,
-			DstPort: dstPort,
-		}
-		ndpiLabel, err := h.ndpi.Classify(context.Background(), h.flowID, firstChunk, flowInfo)
-		if err != nil {
-			log.Warn("nDPI classify falhou (server-first)", zap.Error(err))
-			ndpiLabel = "Unknown"
-		} else {
-			log.Info("protocolo classificado (server-first)", zap.String("proto", ndpiLabel))
-		}
-
-		log.Debug("reutilizando conexão do greeting para relay",
-			zap.String("honeypot", honeypotAddr),
-			zap.Bool("skipWrite", true))
-
-		// Server-first: NÃO reescreve o greeting para o honeypot (já foi usado)
-		skipFirstChunkWrite = true
-
-		// Limpa o firstChunk - não precisamos mais dele pois o greeting já foi enviado
-		firstChunk = nil
-
-		goto doRelay
+		goto publish
 	}
 
 	// --- STEP 2: tenta ler primeiro chunk do cliente ---

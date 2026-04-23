@@ -632,6 +632,55 @@ func HandlePlaintext(clientConn net.Conn, targetAddr string, maxPayloadBytes int
 	select {}
 }
 
+type ServerFirstConfig struct {
+	ClientConn     net.Conn
+	TargetAddr    string
+	Greeting      []byte
+	MaxPayloadSize int64
+	OnEvent       func(event *kafka.Event)
+	Logger        func(string, ...interface{})
+}
+
+func HandleServerFirst(config ServerFirstConfig) error {
+	defer config.ClientConn.Close()
+
+	config.Logger("ServerFirst: conectando ao honeypot %s", config.TargetAddr)
+	honeypotConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
+	}
+	defer honeypotConn.Close()
+	config.Logger("ServerFirst: conectado ao honeypot, enviando greeting")
+
+	_, err = config.ClientConn.Write(config.Greeting)
+	if err != nil {
+		return fmt.Errorf("falha ao enviar greeting para o cliente: %w", err)
+	}
+	config.Logger("ServerFirst: greeting enviado para o cliente, iniciando relay bidirecional")
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		config.Logger("ServerFirst: goroutine cliente->honeypot iniciada")
+		io.Copy(honeypotConn, config.ClientConn)
+		honeypotConn.Close()
+		config.Logger("ServerFirst: goroutine cliente->honeypot encerrada")
+	}()
+
+	go func() {
+		defer wg.Done()
+		config.Logger("ServerFirst: goroutine honeypot->cliente iniciada")
+		io.Copy(config.ClientConn, honeypotConn)
+		config.ClientConn.Close()
+		config.Logger("ServerFirst: goroutine honeypot->cliente encerrada")
+	}()
+
+	wg.Wait()
+	return nil
+}
+
 type limitedWriter struct {
 	buf     *bytes.Buffer
 	limit   int64
