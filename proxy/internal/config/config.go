@@ -38,8 +38,8 @@ func Load() (*Config, error) {
 		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 0),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",
-		ClassifierHost:    getEnv("CLASSIFIER_HOST", "127.0.0.1"),
-		ClassifierPort:    getInt("CLASSIFIER_PORT", 9090),
+		ClassifierHost:    "127.0.0.1",
+		ClassifierPort:    getInt("FLOWTRACKER_PORT", 9090),
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",

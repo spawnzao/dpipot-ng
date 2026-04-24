@@ -8,8 +8,12 @@ data:
   CERTS_PATH: "/tmp/dpipot-certs"
   NDPI_SOCKET_PATH: "/var/run/dpipot/ndpi.sock"
   NDPI_TIMEOUT: "5000ms"
+  CLASSIFIER_INTERFACE: "ens192"
+  FLOWTRACKER_PORT: "9090"
+  FLOWTRACKER_TTL: "5"
   HONEYPOT_ROUTES: >-
-    HTTP=heralding:80,
+    HTTP=wordpot-svc:80,
+    TLS=heralding:80,
     SSH=cowrie-svc:22,
     FTP=heralding:21,
     SMTP=heralding:25,
@@ -19,8 +23,9 @@ data:
     IMAP=heralding:143,
     RDP=heralding:3389,
     PostgreSQL=heralding:5432,
+    MongoDB=mongodbhp-svc:27017,
     VNC=heralding:5900
-  DEFAULT_ROUTE: "heralding:80"
+  DEFAULT_ROUTE: "wordpot-svc:80"
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "0"

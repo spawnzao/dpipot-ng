@@ -99,10 +99,6 @@ spec:
           env:
             - name: CLASSIFIER_ENABLED
               value: "true"
-            - name: CLASSIFIER_HOST
-              value: "127.0.0.1"
-            - name: CLASSIFIER_PORT
-              value: "9090"
           envFrom:
             - configMapRef:
                 name: dpipot-config
@@ -146,11 +142,9 @@ spec:
         - name: classifier
           image: ghcr.io/spawnzao/dpipot-classifier:latest
           imagePullPolicy: IfNotPresent
-          args:
-            - "-interface=ens192"
-            - "-listen=127.0.0.1:9090"
-            - "-ttl=5"
-            - "-log=debug"
+          envFrom:
+            - configMapRef:
+                name: dpipot-config
           resources:
             requests:
               cpu: 200m
