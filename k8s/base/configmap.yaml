@@ -12,7 +12,7 @@ data:
   FLOWTRACKER_TTL: "5"
   HONEYPOT_ROUTES: >-
     HTTP=heralding:80,
-    TLS=heralding:80,
+    TLS=heralding:443,
     SSH=cowrie-svc:22,
     FTP=heralding:21,
     SMTP=heralding:25,
