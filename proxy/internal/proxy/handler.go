@@ -229,9 +229,11 @@ func (h *Handler) Handle() {
 
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
+	classificadoPor := "nDPI" // default: será classificado pelo nDPI posteriormente
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		if appProto, _, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
 			appProtoFlow = appProto
+			classificadoPor = "FlowTracker"
 		}
 	}
 
@@ -239,13 +241,15 @@ func (h *Handler) Handle() {
 	if appProtoFlow == "Unknown" {
 		if proto := h.portProtocolMap[uint16(dstAddr.Port)]; proto != "" {
 			appProtoFlow = proto
+			classificadoPor = "PORT_PROTOCOL_MAP"
+			log.Debug("proto encontrado no PORT_PROTOCOL_MAP", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("proto", proto))
 		}
 	}
 
 	if appProtoFlow == "Unknown" {
-		log.Info("porta não mapeada pelo server-first, usando nDPI local", zap.Uint16("port", uint16(dstAddr.Port)))
+		log.Info("proto desconhecido para porta, usando nDPI local", zap.Uint16("port", uint16(dstAddr.Port)))
 	} else {
-		log.Info("fluxo classificado via server-first (porta)", zap.String("app_proto", appProtoFlow), zap.Uint16("port", uint16(dstAddr.Port)))
+		log.Info("proto classificado via "+classificadoPor, zap.String("app_proto", appProtoFlow), zap.Uint16("port", uint16(dstAddr.Port)))
 	}
 
 	var (
