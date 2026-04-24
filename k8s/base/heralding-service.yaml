@@ -2,14 +2,14 @@ apiVersion: v1
 kind: Service
 metadata:
   name: heralding
+  namespace: dpipot
   labels:
     app: heralding
 spec:
-  type: LoadBalancer  # Mude para NodePort se não tiver LB
+  type: ClusterIP
   selector:
     app: heralding
   ports:
-  # Portas dos protocolos ativos
   - name: ftp
     port: 21
     targetPort: 21
