@@ -841,15 +841,45 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 
 	go func() {
 		defer wg.Done()
-		src := io.TeeReader(tlsServer, &captureWriter{w: targetConn, caller: config.OnDstData})
-		io.Copy(io.Discard, src)
-		tlsServer.Close()
+		defer targetConn.Close()
+		defer tlsServer.Close()
+
+		buf := make([]byte, 8192)
+		for {
+			n, err := tlsServer.Read(buf)
+			if n > 0 {
+				if config.OnDstData != nil {
+					config.OnDstData(buf[:n])
+				}
+				if _, werr := targetConn.Write(buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 	}()
 	go func() {
 		defer wg.Done()
-		src := io.TeeReader(targetConn, &captureWriter{w: tlsServer, caller: config.OnSrcData})
-		io.Copy(io.Discard, src)
-		targetConn.Close()
+		defer targetConn.Close()
+		defer tlsServer.Close()
+
+		buf := make([]byte, 8192)
+		for {
+			n, err := targetConn.Read(buf)
+			if n > 0 {
+				if config.OnSrcData != nil {
+					config.OnSrcData(buf[:n])
+				}
+				if _, werr := tlsServer.Write(buf[:n]); werr != nil {
+					break
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 	}()
 
 	wg.Wait()
