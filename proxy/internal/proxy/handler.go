@@ -670,10 +670,10 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			TargetAddr: honeypotAddr,
 			FirstData:  firstChunk,
 			OnSrcData: func(p []byte) {
-				bufDstTLS.Write(p)
+				bufSrcTLS.Write(p) // honeypot → cliente = payload_dst
 			},
 			OnDstData: func(p []byte) {
-				bufSrcTLS.Write(p)
+				bufDstTLS.Write(p) // cliente → honeypot = payload_src
 			},
 		}
 
@@ -687,8 +687,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
 		}
 
-		payloadSrcTLS := bufDstTLS.Bytes()
-		payloadDstTLS := bufSrcTLS.Bytes()
+		payloadSrcTLS := bufDstTLS.Bytes() // cliente → honeypot
+		payloadDstTLS := bufSrcTLS.Bytes() // honeypot → cliente
 
 		if h.producer != nil && (len(payloadSrcTLS) > 0 || len(payloadDstTLS) > 0) {
 			event := &kafka.Event{
