@@ -242,7 +242,11 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	log.Info("nDPI app_proto para este fluxo", zap.String("app_proto", appProtoFlow))
+	if appProtoFlow == "Unknown" {
+		log.Info("porta não mapeada pelo server-first, usando nDPI local", zap.Uint16("port", dstPort))
+	} else {
+		log.Info("fluxo classificado via server-first (porta)", zap.String("app_proto", appProtoFlow), zap.Uint16("port", dstPort))
+	}
 
 	var (
 		bufSrc           bytes.Buffer
