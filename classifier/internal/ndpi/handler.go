@@ -29,6 +29,7 @@ type Handler struct {
 	ctx             context.Context
 	cancel          context.CancelFunc
 	serverFirstPorts []uint16
+	portProtocolMap  map[uint16]string
 }
 
 type HandlerConfig struct {
@@ -36,6 +37,7 @@ type HandlerConfig struct {
 	Logger            *zap.Logger
 	Producer          *kafka.Producer
 	ServerFirstPorts  []uint16
+	PortProtocolMap   map[uint16]string
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -58,6 +60,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		ctx:              ctx,
 		cancel:           cancel,
 		serverFirstPorts: cfg.ServerFirstPorts,
+		portProtocolMap:  cfg.PortProtocolMap,
 	}
 
 	if h.logger != nil {
@@ -301,26 +304,8 @@ func (h *Handler) isServerFirstPort(port uint16) bool {
 }
 
 func (h *Handler) portToProtocol(port uint16) string {
-	switch port {
-	case 3306:
-		return "MySQL"
-	case 21:
-		return "FTP"
-	case 25:
-		return "SMTP"
-	case 110:
-		return "POP"
-	case 143:
-		return "IMAP"
-	case 3389:
-		return "RDP"
-	case 5432:
-		return "PostgreSQL"
-	case 5900:
-		return "VNC"
-	case 23:
-		return "Telnet"
-	default:
-		return "Unknown"
+	if proto, ok := h.portProtocolMap[port]; ok {
+		return proto
 	}
+	return "Unknown"
 }

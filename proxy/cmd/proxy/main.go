@@ -92,6 +92,7 @@ func main() {
 		flowTracker,
 		certMgr,
 		cfg.ServerFirstPorts,
+		cfg.PortProtocolMap,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

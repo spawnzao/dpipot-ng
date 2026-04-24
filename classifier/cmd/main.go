@@ -86,6 +86,7 @@ func main() {
 		Logger:           logger,
 		Producer:         kafkaProducer,
 		ServerFirstPorts: cfg.ServerFirstPorts,
+		PortProtocolMap:  cfg.PortProtocolMap,
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler",

@@ -54,6 +54,9 @@ type Handler struct {
 
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
 	serverFirstPorts []uint16
+
+	// portProtocolMap para fallback via configmap
+	portProtocolMap map[uint16]string
 }
 
 func NewHandler(
@@ -67,6 +70,7 @@ func NewHandler(
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
 	serverFirstPorts []uint16,
+	portProtocolMap map[uint16]string,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -79,6 +83,7 @@ func NewHandler(
 		flowTracker:     flowTracker,
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
+		portProtocolMap:  portProtocolMap,
 	}
 }
 
@@ -230,19 +235,10 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	// Fallback: usa porta para determinar protocolo
+	// Fallback via configmap PORT_PROTOCOL_MAP
 	if appProtoFlow == "Unknown" {
-		switch dstAddr.Port {
-		case 3306:
-			appProtoFlow = "MYSQL"
-		case 21:
-			appProtoFlow = "FTP"
-		case 25, 587, 465:
-			appProtoFlow = "SMTP"
-		case 143, 993:
-			appProtoFlow = "IMAP"
-		case 110, 995:
-			appProtoFlow = "POP"
+		if proto := h.portProtocolMap[uint16(dstAddr.Port)]; proto != "" {
+			appProtoFlow = proto
 		}
 	}
 

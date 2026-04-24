@@ -28,6 +28,7 @@ type Server struct {
 	flowTracker     *flowtracker.Client
 	certMgr         *mitm.CertManager
 	serverFirstPorts []uint16
+	portProtocolMap  map[uint16]string
 }
 
 func NewServer(
@@ -40,6 +41,7 @@ func NewServer(
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
 	serverFirstPorts []uint16,
+	portProtocolMap map[uint16]string,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -51,6 +53,7 @@ func NewServer(
 		flowTracker:     flowTracker,
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
+		portProtocolMap:  portProtocolMap,
 	}
 }
 
@@ -147,6 +150,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.flowTracker,
 		s.certMgr,
 		s.serverFirstPorts,
+		s.portProtocolMap,
 	)
 	h.Handle()
 
