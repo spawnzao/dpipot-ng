@@ -11,8 +11,8 @@ data:
   FLOWTRACKER_PORT: "9090"
   FLOWTRACKER_TTL: "5"
   HONEYPOT_ROUTES: >-
-    HTTP=heralding:80,
-    TLS=heralding:80,
+    HTTP=wordpot-svc:80,
+    TLS=wordpot-svc:80,
     SSH=cowrie-svc:22,
     FTP=heralding:21,
     SMTP=heralding:25,

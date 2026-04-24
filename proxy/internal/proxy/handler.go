@@ -760,9 +760,6 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		} else {
 			log.Debug("pipe src→dst concluído", zap.Int("bytes_copied", int(n)))
 		}
-		honeypotConn.Close()
-
-		h.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	}()
 
 	// goroutine 2: honeypot → atacante
@@ -779,8 +776,6 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		} else {
 			log.Debug("pipe dst→src concluído", zap.Int("bytes_copied", int(n)))
 		}
-		honeypotConn.Close()
-		h.conn.Close()
 	}()
 
 	wg.Wait()
