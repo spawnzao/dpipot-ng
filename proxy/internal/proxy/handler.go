@@ -708,7 +708,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
 		}
 
-		goto publish
+		log.Info("fluxo encerrado", zap.String("proto", ndpiLabel), zap.String("honeypot", honeypotAddr), zap.Int("payload_src_bytes", len(payloadSrcTLS)), zap.Int("payload_dst_bytes", len(payloadDstTLS)))
+		return
 	}
 
 	// --- STEP 5: tenta conectar ao honeypot ---
