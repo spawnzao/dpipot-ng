@@ -243,9 +243,9 @@ func (h *Handler) Handle() {
 	}
 
 	if appProtoFlow == "Unknown" {
-		log.Info("porta não mapeada pelo server-first, usando nDPI local", zap.Uint16("port", dstPort))
+		log.Info("porta não mapeada pelo server-first, usando nDPI local", zap.Uint16("port", uint16(dstAddr.Port)))
 	} else {
-		log.Info("fluxo classificado via server-first (porta)", zap.String("app_proto", appProtoFlow), zap.Uint16("port", dstPort))
+		log.Info("fluxo classificado via server-first (porta)", zap.String("app_proto", appProtoFlow), zap.Uint16("port", uint16(dstAddr.Port)))
 	}
 
 	var (
@@ -666,6 +666,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		mitmConfig := mitm.TLSMITMConfig{
 			Cert:       cert,
 			TargetAddr: honeypotAddr,
+			FirstData:  firstChunk,
 		}
 
 		mitmLogger := func(format string, args ...interface{}) {

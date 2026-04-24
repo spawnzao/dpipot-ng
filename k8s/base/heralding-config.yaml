@@ -146,7 +146,7 @@ data:
         timeout: 30
 
       https:
-        enabled: true
+        enabled: false
         port: 443
         timeout: 30
 

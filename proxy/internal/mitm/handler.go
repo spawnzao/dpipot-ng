@@ -772,10 +772,36 @@ func extractMySQLPassword(data []byte, logger func(string, ...interface{})) stri
 type TLSMITMConfig struct {
 	Cert       tls.Certificate
 	TargetAddr string
+	FirstData []byte
+}
+
+type bufferedConn struct {
+	net.Conn
+	buffer []byte
+	pos    int
+}
+
+func (b *bufferedConn) Read(p []byte) (n int, err error) {
+	if b.pos < len(b.buffer) {
+		n = copy(p, b.buffer[b.pos:])
+		b.pos += n
+		if b.pos >= len(b.buffer) {
+			return n, io.EOF
+		}
+		return n, nil
+	}
+	return b.Conn.Read(p)
 }
 
 func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ...interface{})) error {
-	tlsServer := tls.Server(clientConn, &tls.Config{
+	var connToUse net.Conn = clientConn
+
+	if len(config.FirstData) > 0 {
+		connToUse = &bufferedConn{Conn: clientConn, buffer: config.FirstData}
+		logger("TLS MITM: usando primeiro chunk já lido (len=%d)", len(config.FirstData))
+	}
+
+	tlsServer := tls.Server(connToUse, &tls.Config{
 		Certificates: []tls.Certificate{config.Cert},
 	})
 

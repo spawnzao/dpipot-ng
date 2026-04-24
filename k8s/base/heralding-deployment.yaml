@@ -50,9 +50,6 @@ spec:
         - name: http
           containerPort: 80
           protocol: TCP
-        - name: https
-          containerPort: 443
-          protocol: TCP
         - name: pop3
           containerPort: 110
           protocol: TCP
