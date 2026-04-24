@@ -247,7 +247,7 @@ func (h *Handler) Handle() {
 	}
 
 	if appProtoFlow == "Unknown" {
-		log.Info("proto desconhecido para porta, usando nDPI local", zap.Uint16("port", uint16(dstAddr.Port)))
+		log.Info("porta não mapeada pelo server-first, usando nDPI local", zap.Uint16("port", uint16(dstAddr.Port)))
 	} else {
 		log.Info("proto classificado via "+classificadoPor, zap.String("app_proto", appProtoFlow), zap.Uint16("port", uint16(dstAddr.Port)))
 	}
