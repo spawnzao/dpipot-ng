@@ -37,13 +37,12 @@ func main() {
 
 	log.Info("iniciando dpipot-ng proxy",
 		zap.String("listen", cfg.ListenAddr),
-		zap.String("ndpi_socket", cfg.NDPISocketPath),
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 		zap.Any("routes", cfg.Routes),
 	)
 
 	log.Info("inicializando nDPI...")
-	ndpiClient, err := ndpi.NewClient(cfg.NDPISocketPath, cfg.NDPITimeout, log)
+	ndpiClient, err := ndpi.NewClient(cfg.NDPITimeout, log)
 	if err != nil {
 		log.Fatal("nDPI init failed", zap.Error(err))
 	}

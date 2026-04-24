@@ -26,18 +26,16 @@ type FlowInfo struct {
 }
 
 type Client struct {
-	useCGO     bool
-	socketPath string
-	timeout    time.Duration
-	ndpiDM     *gondpi.NdpiDetectionModule
-	logger     *zap.Logger
+	useCGO  bool
+	timeout time.Duration
+	ndpiDM  *gondpi.NdpiDetectionModule
+	logger  *zap.Logger
 }
 
-func NewClient(socketPath string, timeout time.Duration, logger *zap.Logger) (*Client, error) {
+func NewClient(timeout time.Duration, logger *zap.Logger) (*Client, error) {
 	c := &Client{
-		socketPath: socketPath,
-		timeout:    timeout,
-		logger:     logger,
+		timeout: timeout,
+		logger: logger,
 	}
 
 	detectionBitmask := gondpi.NewNdpiProtocolBitmask()
