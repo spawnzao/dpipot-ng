@@ -11,20 +11,20 @@ data:
   FLOWTRACKER_PORT: "9090"
   FLOWTRACKER_TTL: "5"
   HONEYPOT_ROUTES: >-
-    HTTP=wordpot-svc:80,
-    TLS=heralding:80,
+    HTTP=heralding-honeypot:80,
+    TLS=heralding-honeypot:80,
     SSH=cowrie-svc:22,
-    FTP=heralding:21,
-    SMTP=heralding:25,
-    MySQL=heralding:3306,
-    Telnet=heralding:23,
-    POP=heralding:110,
-    IMAP=heralding:143,
-    RDP=heralding:3389,
-    PostgreSQL=heralding:5432,
+    FTP=heralding-honeypot:21,
+    SMTP=heralding-honeypot:25,
+    MySQL=heralding-honeypot:3306,
+    Telnet=heralding-honeypot:23,
+    POP=heralding-honeypot:110,
+    IMAP=heralding-honeypot:143,
+    RDP=heralding-honeypot:3389,
+    PostgreSQL=heralding-honeypot:5432,
     MongoDB=mongodbhp-svc:27017,
-    VNC=heralding:5900
-  DEFAULT_ROUTE: "wordpot-svc:80"
+    VNC=heralding-honeypot:5900
+  DEFAULT_ROUTE: "heralding-honeypot:80"
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "0"
