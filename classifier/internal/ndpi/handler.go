@@ -20,20 +20,22 @@ const (
 )
 
 type Handler struct {
-	ndpiDM    *gondpi.NdpiDetectionModule
-	flowTable *flow.Table
-	ndpiFlows *sync.Map
-	logger    *zap.Logger
-	producer  *kafka.Producer
-	wg        sync.WaitGroup
-	ctx       context.Context
-	cancel    context.CancelFunc
+	ndpiDM          *gondpi.NdpiDetectionModule
+	flowTable       *flow.Table
+	ndpiFlows       *sync.Map
+	logger          *zap.Logger
+	producer        *kafka.Producer
+	wg              sync.WaitGroup
+	ctx             context.Context
+	cancel          context.CancelFunc
+	serverFirstPorts []uint16
 }
 
 type HandlerConfig struct {
-	FlowTable *flow.Table
-	Logger    *zap.Logger
-	Producer  *kafka.Producer
+	FlowTable         *flow.Table
+	Logger            *zap.Logger
+	Producer          *kafka.Producer
+	ServerFirstPorts  []uint16
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -48,13 +50,14 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	h := &Handler{
-		ndpiDM:    ndpiDM,
-		flowTable: cfg.FlowTable,
-		ndpiFlows: &sync.Map{},
-		logger:    cfg.Logger,
-		producer:  cfg.Producer,
-		ctx:       ctx,
-		cancel:    cancel,
+		ndpiDM:           ndpiDM,
+		flowTable:        cfg.FlowTable,
+		ndpiFlows:        &sync.Map{},
+		logger:           cfg.Logger,
+		producer:         cfg.Producer,
+		ctx:              ctx,
+		cancel:           cancel,
+		serverFirstPorts: cfg.ServerFirstPorts,
 	}
 
 	if h.logger != nil {
@@ -175,7 +178,34 @@ func (h *Handler) processIPv6(data []byte) {
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string) {
 	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
-	// Try to get existing flow, or create new one
+	// Verifica se é porta server-first - classifica direto sem nDPI
+	if h.isServerFirstPort(dstPort) {
+		proto := h.portToProtocol(dstPort)
+		if h.logger != nil {
+			h.logger.Info("server-first classified by port",
+				zap.String("flow_id", flowID),
+				zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
+				zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
+				zap.String("protocol", proto),
+				zap.Uint16("port", dstPort),
+			)
+		}
+
+		h.flowTable.Update(flowID, &flow.Entry{
+			Protocol:       proto,
+			MasterProtocol: "TCP",
+			Category:       0,
+			SrcIP:          srcIP.String(),
+			SrcPort:        srcPort,
+			DstIP:          dstIP.String(),
+			DstPort:        dstPort,
+			ProtocolNum:    protocol,
+			LastSeen:       time.Now(),
+		})
+		return
+	}
+
+	// Fluxo normal com nDPI
 	ndpiFlowI, loaded := h.ndpiFlows.Load(flowID)
 	if !loaded {
 		newFlow, err := gondpi.NewNdpiFlow()
@@ -259,4 +289,38 @@ func (h *Handler) Close() {
 		h.ndpiDM.Close()
 	}
 	h.wg.Wait()
+}
+
+func (h *Handler) isServerFirstPort(port uint16) bool {
+	for _, p := range h.serverFirstPorts {
+		if p == port {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) portToProtocol(port uint16) string {
+	switch port {
+	case 3306:
+		return "MySQL"
+	case 21:
+		return "FTP"
+	case 25:
+		return "SMTP"
+	case 110:
+		return "POP"
+	case 143:
+		return "IMAP"
+	case 3389:
+		return "RDP"
+	case 5432:
+		return "PostgreSQL"
+	case 5900:
+		return "VNC"
+	case 23:
+		return "Telnet"
+	default:
+		return "Unknown"
+	}
 }

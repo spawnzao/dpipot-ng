@@ -6,6 +6,8 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -26,6 +28,7 @@ var (
 	runDiag       = flag.Bool("diag", false, "Run AF_PACKET diagnostic and exit")
 	kafkaBrokers  = flag.String("kafka-brokers", "kafka-svc.dpipot.svc.cluster.local:9092", "Kafka brokers")
 	kafkaTopic    = flag.String("kafka-topic", "dpipot.events", "Kafka topic base")
+	serverFirstPorts = flag.String("server-first-ports", "21,25,110,143,465,993,995,3306,3389,5432,5900,5222,6379,1521,8883", "Ports that use server-first protocol (comma-separated)")
 )
 
 func main() {
@@ -49,7 +52,10 @@ func main() {
 		zap.String("listen", *listenAddr),
 		zap.Int("ttl_minutes", *ttlMinutes),
 		zap.String("kafka_brokers", *kafkaBrokers),
+		zap.String("server_first_ports", *serverFirstPorts),
 	)
+
+	serverFirstPorts := parseServerFirstPorts(*serverFirstPorts)
 
 	flowTable := flow.NewTable(flow.TableConfig{
 		TTL:          time.Duration(*ttlMinutes) * time.Minute,
@@ -87,9 +93,10 @@ func main() {
 	}
 
 	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{
-		FlowTable: flowTable,
-		Logger:    logger,
-		Producer:  kafkaProducer,
+		FlowTable:         flowTable,
+		Logger:            logger,
+		Producer:          kafkaProducer,
+		ServerFirstPorts:  serverFirstPorts,
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler",
@@ -358,4 +365,23 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func parseServerFirstPorts(raw string) []uint16 {
+	if raw == "" {
+		return nil
+	}
+	var ports []uint16
+	for _, p := range strings.Split(raw, ",") {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		port, err := strconv.ParseUint(p, 10, 16)
+		if err != nil {
+			continue
+		}
+		ports = append(ports, uint16(port))
+	}
+	return ports
 }
