@@ -406,89 +406,91 @@ greetingBuf = greetingBuf[:n]
 	}
 
 	if isClientTimeout {
-		// Preciso resolver o honeypot aqui para conectar sem ter classificado ainda
-		// Uso porta do dstAddr como hint para identificar o protocolo
-		honeypotAddrFromPort := h.router.ResolveByPort(uint16(dstAddr.Port))
+		// Só tenta ler greeting do honeypot se a porta for server-first
+		if !isServerFirstPort(h.serverFirstPorts, dstPort) {
+			log.Debug("timeout do cliente mas porta não é server-first, fluxo normal",
+				zap.Uint16("port", dstPort))
+		} else {
+			// Porta é server-first, conecta ao honeypot para receber greeting
+			honeypotAddrFromPort := h.router.ResolveByPort(uint16(dstAddr.Port))
 
-		if honeypotAddrFromPort != "" {
-			log.Debug("conectando ao honeypot para receber greeting do servidor",
-				zap.Stringer("dstAddr", dstAddr),
-				zap.String("honeypot", honeypotAddrFromPort),
-			)
-
-			var honeypotGreetingConn net.Conn
-			honeypotGreetingConn, err = net.DialTimeout("tcp", honeypotAddrFromPort, honeypotDialTimeout)
-			if err != nil {
-				log.Warn("falha conectando ao honeypot por porta", zap.Error(err))
-				goto publish
-			}
-			defer honeypotGreetingConn.Close()
-
-			// Agora espera o greeting do servidor (com timeout)
-			greetingBuf := make([]byte, classifyBufferSize)
-			honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
-			n, err = honeypotGreetingConn.Read(greetingBuf)
-			honeypotGreetingConn.SetReadDeadline(time.Time{})
-
-			if err != nil {
-				log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
-			} else {
-				greetingBuf = greetingBuf[:n]
-				log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
-
-				// Classifica o greeting do servidor (não do cliente!)
-				flowInfo = &ndpi.FlowInfo{
-					SrcIP:   srcAddr.IP,
-					SrcPort: uint16(srcAddr.Port),
-					DstIP:   dstAddr.IP,
-					DstPort: uint16(dstAddr.Port),
-				}
-
-				ndpiLabel, err = h.ndpi.Classify(context.Background(), h.flowID, greetingBuf, flowInfo)
-				if err != nil {
-					log.Warn("nDPI classify falhou no greeting", zap.Error(err))
-					ndpiLabel = "Unknown"
-				} else {
-					log.Info("fluxo classificado via greeting do servidor", zap.String("proto", ndpiLabel))
-				}
-
-				// Envia greeting para o cliente
-				_, err = h.conn.Write(greetingBuf)
-				if err != nil {
-					log.Warn("falha enviando greeting para o cliente", zap.Error(err))
-				}
-
-				// Agora conecta ao honeypot definitivo usando o protocolo classificado
-				honeypotAddr, _ = h.router.Resolve(ndpiLabel)
-				log.Debug("protocolo identificado via greeting, honeypot resolved",
-					zap.String("proto", ndpiLabel),
-					zap.String("honeypot", honeypotAddr),
+			if honeypotAddrFromPort != "" {
+				log.Debug("conectando ao honeypot para receber greeting do servidor",
+					zap.Stringer("dstAddr", dstAddr),
+					zap.String("honeypot", honeypotAddrFromPort),
 				)
 
-				// Usa o greeting como primeiro chunk
-				firstChunk = greetingBuf
-				bufSrc.Write(firstChunk)
-
-				// Conecta ao honeypot definitivo
-				honeypotGreetingConn.Close()
-				honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+				var honeypotGreetingConn net.Conn
+				honeypotGreetingConn, err = net.DialTimeout("tcp", honeypotAddrFromPort, honeypotDialTimeout)
 				if err != nil {
-					log.Error("falha conectando ao honeypot (greeting path)",
-						zap.String("honeypot", honeypotAddr),
-						zap.Error(err),
-					)
-					honeypotError = fmt.Sprintf("connection failed: %v", err)
+					log.Warn("falha conectando ao honeypot por porta", zap.Error(err))
 					goto publish
 				}
-				defer honeypotConn.Close()
+				defer honeypotGreetingConn.Close()
 
-				// Vai direto para o relay (Step 6)
-				goto doRelay
+				// Agora espera o greeting do servidor (com timeout)
+				greetingBuf := make([]byte, classifyBufferSize)
+				honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+				n, err = honeypotGreetingConn.Read(greetingBuf)
+				honeypotGreetingConn.SetReadDeadline(time.Time{})
+
+				if err != nil {
+					log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
+				} else {
+					greetingBuf = greetingBuf[:n]
+					log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
+
+					// Classifica o greeting do servidor (não do cliente!)
+					flowInfo = &ndpi.FlowInfo{
+						SrcIP:   srcAddr.IP,
+						SrcPort: uint16(srcAddr.Port),
+						DstIP:   dstAddr.IP,
+						DstPort: uint16(dstAddr.Port),
+					}
+
+					ndpiLabel, err = h.ndpi.Classify(context.Background(), h.flowID, greetingBuf, flowInfo)
+					if err != nil {
+						log.Warn("nDPI classify falhou no greeting", zap.Error(err))
+						ndpiLabel = "Unknown"
+					} else {
+						log.Info("fluxo classificado via greeting do servidor", zap.String("proto", ndpiLabel))
+					}
+
+					// Envia greeting para o cliente
+					_, err = h.conn.Write(greetingBuf)
+					if err != nil {
+						log.Warn("falha enviando greeting para o cliente", zap.Error(err))
+					}
+
+					// Agora conecta ao honeypot definitivo usando o protocolo classificado
+					honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+					log.Debug("protocolo identificado via greeting, honeypot resolved",
+						zap.String("proto", ndpiLabel),
+						zap.String("honeypot", honeypotAddr),
+					)
+
+					// Usa o greeting como primeiro chunk
+					firstChunk = greetingBuf
+					bufSrc.Write(firstChunk)
+
+					// Conecta ao honeypot definitivo
+					honeypotGreetingConn.Close()
+					honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+					if err != nil {
+						log.Error("falha conectando ao honeypot (greeting path)",
+							zap.String("honeypot", honeypotAddr),
+							zap.Error(err),
+						)
+						honeypotError = fmt.Sprintf("connection failed: %v", err)
+						goto publish
+					}
+					defer honeypotConn.Close()
+
+					// Vai direto para o relay (Step 6)
+					goto doRelay
+				}
 			}
 		}
-
-		// Se não conseguiu, usa a porta como hint
-		log.Debug("não conseguiu via greeting, usando porta como hint", zap.Stringer("dstAddr", dstAddr))
 	}
 
 	if n > 0 {
