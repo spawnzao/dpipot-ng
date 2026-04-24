@@ -770,9 +770,11 @@ func extractMySQLPassword(data []byte, logger func(string, ...interface{})) stri
 }
 
 type TLSMITMConfig struct {
-	Cert       tls.Certificate
-	TargetAddr string
-	FirstData []byte
+	Cert          tls.Certificate
+	TargetAddr   string
+	FirstData    []byte
+	OnSrcData    func([]byte)
+	OnDstData    func([]byte)
 }
 
 type bufferedConn struct {
@@ -791,6 +793,22 @@ func (b *bufferedConn) Read(p []byte) (n int, err error) {
 		return n, nil
 	}
 	return b.Conn.Read(p)
+}
+
+type captureWriter struct {
+	w      io.WriteCloser
+	caller func([]byte)
+}
+
+func (c *captureWriter) Write(p []byte) (n int, err error) {
+	if c.caller != nil && len(p) > 0 {
+		c.caller(p)
+	}
+	return c.w.Write(p)
+}
+
+func (c *captureWriter) Close() error {
+	return c.w.Close()
 }
 
 func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ...interface{})) error {
@@ -823,12 +841,14 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 
 	go func() {
 		defer wg.Done()
-		io.Copy(tlsServer, targetConn)
+		src := io.TeeReader(tlsServer, &captureWriter{w: targetConn, caller: config.OnDstData})
+		io.Copy(io.Discard, src)
 		tlsServer.Close()
 	}()
 	go func() {
 		defer wg.Done()
-		io.Copy(targetConn, tlsServer)
+		src := io.TeeReader(targetConn, &captureWriter{w: tlsServer, caller: config.OnSrcData})
+		io.Copy(io.Discard, src)
 		targetConn.Close()
 	}()
 

@@ -662,11 +662,19 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 	if isTLS {
 		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
 
+		var bufSrcTLS, bufDstTLS bytes.Buffer
+
 		cert := h.certMgr.Cert()
 		mitmConfig := mitm.TLSMITMConfig{
 			Cert:       cert,
 			TargetAddr: honeypotAddr,
 			FirstData:  firstChunk,
+			OnSrcData: func(p []byte) {
+				bufDstTLS.Write(p)
+			},
+			OnDstData: func(p []byte) {
+				bufSrcTLS.Write(p)
+			},
 		}
 
 		mitmLogger := func(format string, args ...interface{}) {
@@ -678,6 +686,28 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			log.Error("MITM TLS falhou", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
 		}
+
+		payloadSrcTLS := bufDstTLS.Bytes()
+		payloadDstTLS := bufSrcTLS.Bytes()
+
+		if h.producer != nil && (len(payloadSrcTLS) > 0 || len(payloadDstTLS) > 0) {
+			event := &kafka.Event{
+				FlowID:      h.flowID,
+				Timestamp:   time.Now(),
+				SrcIP:       h.srcIP,
+				SrcPort:     h.srcPort,
+				DstIP:       h.dstIP,
+				DstPort:     h.dstPort,
+				NDPIProto:   ndpiLabel,
+				Honeypot:    honeypotAddr,
+				PayloadSrc: payloadSrcTLS,
+				PayloadDst: payloadDstTLS,
+				LogType:     "application",
+			}
+			h.producer.Publish(event)
+			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
+		}
+
 		goto publish
 	}
 
