@@ -659,10 +659,10 @@ mitmLogger := func(format string, args ...interface{}) {
 						DstIP:       origDstIP.String(),
 						DstPort:     int(origDstPort),
 						NDPIProto:   "SSH",
-						NDPIApp:    "auth",
+						NDPIApp:    "auth_exhausted",
 						AttackType: "client exhausted password attempts",
 						Honeypot:   honeypotAddr,
-						LogType:    "auth_exhausted",
+						LogType:    "application",
 					}
 					h.producer.Publish(event)
 				} else {
@@ -678,10 +678,10 @@ mitmLogger := func(format string, args ...interface{}) {
 					DstIP:       origDstIP.String(),
 					DstPort:     int(origDstPort),
 					NDPIProto:   "SSH",
-					NDPIApp:    "handshake",
+					NDPIApp:    "wrong_key",
 					AttackType: "client disconnected before handshake (possible wrong host key)",
 					Honeypot:   honeypotAddr,
-					LogType:    "wrong_key",
+					LogType:    "application",
 				}
 				h.producer.Publish(event)
 			} else {
