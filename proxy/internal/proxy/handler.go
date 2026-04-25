@@ -289,12 +289,10 @@ func (h *Handler) Handle() {
 			zap.Uint16("port", dstPort),
 			zap.String("proto", h.serverFirstPortsTLS[dstPort]))
 
-		honeypotAddr = h.router.ResolveByPort(dstPort)
-		if honeypotAddr == "" {
-			log.Warn("não encontrou honeypot para porta server-first TLS", zap.Uint16("port", dstPort))
-			honeypotError = fmt.Sprintf("no honeypot for port %d", dstPort)
-			goto publish
-		}
+		honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+		log.Debug("rota SF-TLS resolvida via protocolo",
+			zap.String("proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr))
 
 		cert := h.certMgr.Cert()
 		ndpiLabel := appProtoFlow
