@@ -97,6 +97,7 @@ func main() {
 		flowTracker,
 		certMgr,
 		cfg.ServerFirstPorts,
+		cfg.ServerFirstPortsTLS,
 		cfg.PortProtocolMap,
 	)
 

@@ -22,6 +22,7 @@ type Config struct {
 	ClassifierHost  string
 	ClassifierPort int
 	ServerFirstPorts []uint16
+	ServerFirstPortsTLS map[uint16]string
 	PortProtocolMap  map[uint16]string
 }
 
@@ -49,6 +50,9 @@ func Load() (*Config, error) {
 
 	serverFirstPortsRaw := getEnv("SERVER_FIRST_PORTS", "")
 	cfg.ServerFirstPorts = parseServerFirstPorts(serverFirstPortsRaw)
+
+	serverFirstPortsTLSRaw := getEnv("SERVER_FIRST_PORTS_TLS", "")
+	cfg.ServerFirstPortsTLS = parseServerFirstPortsTLS(serverFirstPortsTLSRaw)
 
 	portProtocolMapRaw := getEnv("PORT_PROTOCOL_MAP", "")
 	cfg.PortProtocolMap = parsePortProtocolMap(portProtocolMapRaw)
@@ -145,6 +149,30 @@ func parsePortProtocolMap(raw string) map[uint16]string {
 			continue
 		}
 		parts := strings.SplitN(entry, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		port, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 16)
+		if err != nil {
+			continue
+		}
+		result[uint16(port)] = strings.TrimSpace(parts[1])
+	}
+	return result
+}
+
+func parseServerFirstPortsTLS(raw string) map[uint16]string {
+	result := make(map[uint16]string)
+	if raw == "" {
+		return result
+	}
+
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, ":", 2)
 		if len(parts) != 2 {
 			continue
 		}

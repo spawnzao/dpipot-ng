@@ -52,6 +52,9 @@ type Handler struct {
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
 	serverFirstPorts []uint16
 
+	// serverFirstPortsTLS contém as portas TLS server-first (ex: 993 IMAPS, 995 POP3S)
+	serverFirstPortsTLS map[uint16]string
+
 	// portProtocolMap para fallback via configmap
 	portProtocolMap map[uint16]string
 }
@@ -67,6 +70,7 @@ func NewHandler(
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
 	serverFirstPorts []uint16,
+	serverFirstPortsTLS map[uint16]string,
 	portProtocolMap map[uint16]string,
 ) *Handler {
 	return &Handler{
@@ -80,6 +84,7 @@ func NewHandler(
 		flowTracker:     flowTracker,
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
+		serverFirstPortsTLS: serverFirstPortsTLS,
 		portProtocolMap:  portProtocolMap,
 	}
 }
@@ -270,6 +275,61 @@ func (h *Handler) Handle() {
 	// --- STEP 1: verifica se é porta server-first ---
 	dstPort := uint16(dstAddr.Port)
 	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
+	isServerFirstTLS := mitm.IsServerFirstTLSPort(h.serverFirstPortsTLS, dstPort)
+
+	if isServerFirst && isServerFirstTLS {
+		log.Warn("porta não pode ser server-first E server-first-TLS simultaneamente", zap.Uint16("port", dstPort))
+		honeypotError = "invalid server-first configuration"
+		goto publish
+	}
+
+	// Server-first TLS (IMAPS 993, POP3S 995, etc): TLS handshake primeiro, depois relay
+	if isServerFirstTLS {
+		log.Debug("porta server-first TLS detectada",
+			zap.Uint16("port", dstPort),
+			zap.String("proto", h.serverFirstPortsTLS[dstPort]))
+
+		honeypotAddr = h.router.ResolveByPort(dstPort)
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para porta server-first TLS", zap.Uint16("port", dstPort))
+			honeypotError = fmt.Sprintf("no honeypot for port %d", dstPort)
+			goto publish
+		}
+
+		cert := h.certMgr.Cert()
+		ndpiLabel := appProtoFlow
+		if ndpiLabel == "" || ndpiLabel == "Unknown" {
+			ndpiLabel = h.serverFirstPortsTLS[dstPort]
+		}
+
+		mitmLogger := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf("SF-TLS: "+format, args...)
+			log.Info(msg)
+		}
+
+		err = mitm.HandleServerFirstTLS(mitm.ServerFirstTLSConfig{
+			ClientConn:   h.conn,
+			HoneypotConn: nil,
+			Cert:        cert,
+			FlowID:      h.flowID,
+			SrcIP:       h.srcIP,
+			SrcPort:     h.srcPort,
+			DstIP:       h.dstIP,
+			DstPort:     h.dstPort,
+			HoneypotAddr: honeypotAddr,
+			NDPIProto:   ndpiLabel,
+			MaxPayloadSize: h.maxPayloadBytes,
+			OnEvent: func(event *kafka.Event) {
+				h.producer.Publish(event)
+			},
+			Logger: mitmLogger,
+		})
+		if err != nil {
+			log.Error("HandleServerFirstTLS falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("server-first TLS relay failed: %v", err)
+		}
+		goto publish
+	}
 
 	if isServerFirst {
 		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
