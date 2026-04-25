@@ -647,7 +647,11 @@ mitmLogger := func(format string, args ...interface{}) {
 
 		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
 		if err != nil {
-			log.Error("MITM SSH falhou", zap.Error(err))
+			if strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "no auth passed yet") {
+				log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
+			} else {
+				log.Warn("MITM SSH falhou", zap.Error(err))
+			}
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
 		}
 		goto publish
