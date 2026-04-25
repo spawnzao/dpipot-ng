@@ -470,10 +470,13 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: chamando ssh.NewServerConn...")
 	conn, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
 	if err != nil {
+		errStr := err.Error()
 		logger("SSH MITM: erro em NewServerConn: %v", err)
-		logger("SSH MITM: cliente fechou a conexão antes do handshake")
 
-		if config.OnEvent != nil {
+		isAuthFailure := strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet")
+
+		if !isAuthFailure && config.OnEvent != nil {
+			logger("SSH MITM: cliente fechou a conexão antes do handshake")
 			event := &kafka.Event{
 				FlowID:      config.FlowID,
 				Timestamp:   time.Now(),
@@ -488,6 +491,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				LogType:    "application",
 			}
 			config.OnEvent(event)
+		} else {
+			logger("SSH MITM: cliente fechou a conexão (falha de autenticação)")
 		}
 
 		clientConn.Close()
