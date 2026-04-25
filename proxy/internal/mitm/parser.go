@@ -198,6 +198,78 @@ func (p *SMTPParser) ParseServerData(data []byte, logger func(string, ...interfa
 	}}
 }
 
+type TelnetParser struct{}
+
+const (
+	telnetIAC  = 0xFF
+	telnetDONT = 0xFE
+	telnetDO   = 0xFD
+	telnetWONT = 0xFC
+	telnetWILL = 0xFB
+	telnetSB   = 0xFA
+	telnetSE   = 0xF0
+)
+
+func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	text := stripTelnetControl(data)
+	if text == "" {
+		return nil
+	}
+	return []CaptureEvent{{
+		EventType: EventCommand,
+		Direction: "client->honeypot",
+		Command:   text,
+	}}
+}
+
+func (p *TelnetParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	text := stripTelnetControl(data)
+	if text == "" {
+		return nil
+	}
+	return []CaptureEvent{{
+		EventType: EventResponse,
+		Direction: "honeypot->client",
+		Response:  text,
+	}}
+}
+
+func stripTelnetControl(data []byte) string {
+	var result []byte
+	i := 0
+	for i < len(data) {
+		if data[i] == telnetIAC {
+			if i+1 >= len(data) {
+				break
+			}
+			opt := data[i+1]
+			if opt == telnetSB {
+				for i += 2; i < len(data); i++ {
+					if i+1 < len(data) && data[i] == telnetIAC && data[i+1] == telnetSE {
+						i++
+						break
+					}
+				}
+				i++
+				continue
+			}
+			if opt >= telnetDONT && opt <= telnetSE {
+				i += 2
+				continue
+			}
+			i++
+			continue
+		}
+		if data[i] >= 32 && data[i] < 127 {
+			result = append(result, data[i])
+		} else if data[i] == '\n' || data[i] == '\r' || data[i] == '\t' {
+			result = append(result, data[i])
+		}
+		i++
+	}
+	return strings.TrimSpace(string(result))
+}
+
 func NewParser(protocol string, port int) ProtocolParser {
 	switch strings.ToUpper(protocol) {
 	case "FTP":
@@ -206,10 +278,14 @@ func NewParser(protocol string, port int) ProtocolParser {
 		return &MySQLParser{}
 	case "SMTP", "MAIL":
 		return &SMTPParser{}
+	case "TELNET":
+		return &TelnetParser{}
 	default:
 		switch port {
 		case 21:
 			return &FTPParser{}
+		case 23:
+			return &TelnetParser{}
 		case 3306:
 			return &MySQLParser{}
 		case 25, 465, 587:

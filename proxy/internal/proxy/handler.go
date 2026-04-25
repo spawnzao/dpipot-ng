@@ -798,6 +798,50 @@ mitmLogger := func(format string, args ...interface{}) {
 
 	wg.Wait()
 
+	if appProtoFlow == "Telnet" || appProtoFlow == "TELNET" || dstPort == 23 {
+		parser := mitm.NewParser(appProtoFlow, int(dstPort))
+		if srcData := bufSrc.Bytes(); len(srcData) > 0 {
+			cmdEvents := parser.ParseClientData(srcData, func(format string, args ...interface{}) {})
+			for _, ev := range cmdEvents {
+				if ev.Command != "" {
+					h.producer.Publish(&kafka.Event{
+						FlowID:      h.flowID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(dstPort),
+						NDPIProto:   "Telnet",
+						NDPIApp:    "command",
+						AttackType: ev.Command,
+						Honeypot:    honeypotAddr,
+						LogType:     "application",
+					})
+				}
+			}
+		}
+		if dstData := bufDst.Bytes(); len(dstData) > 0 {
+			respEvents := parser.ParseServerData(dstData, func(format string, args ...interface{}) {})
+			for _, ev := range respEvents {
+				if ev.Response != "" {
+					h.producer.Publish(&kafka.Event{
+						FlowID:      h.flowID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(dstPort),
+						NDPIProto:   "Telnet",
+						NDPIApp:    "response",
+						AttackType: ev.Response,
+						Honeypot:    honeypotAddr,
+						LogType:     "application",
+					})
+				}
+			}
+		}
+	}
+
 publish:
 	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
 	duration := time.Since(startTime)
