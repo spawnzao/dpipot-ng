@@ -799,11 +799,14 @@ mitmLogger := func(format string, args ...interface{}) {
 	wg.Wait()
 
 	if (appProtoFlow == "Telnet" || appProtoFlow == "TELNET" || dstPort == 23) ||
-		(appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110) {
+		(appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110) ||
+		(appProtoFlow == "IMAP" || appProtoFlow == "IMAP4" || dstPort == 143 || dstPort == 993) {
 		parser := mitm.NewParser(appProtoFlow, int(dstPort))
 		protoLabel := "Telnet"
 		if appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110 {
 			protoLabel = "POP3"
+		} else if appProtoFlow == "IMAP" || appProtoFlow == "IMAP4" || dstPort == 143 || dstPort == 993 {
+			protoLabel = "IMAP"
 		}
 		if srcData := bufSrc.Bytes(); len(srcData) > 0 {
 			cmdEvents := parser.ParseClientData(srcData, func(format string, args ...interface{}) {})

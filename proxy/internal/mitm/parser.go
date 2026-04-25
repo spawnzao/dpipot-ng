@@ -316,6 +316,63 @@ func (p *POP3Parser) ParseServerData(data []byte, logger func(string, ...interfa
 	return nil
 }
 
+type IMAPParser struct{}
+
+func (p *IMAPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	var events []CaptureEvent
+	text := strings.TrimSpace(string(data))
+
+	if strings.HasPrefix(text, "A") || strings.HasPrefix(text, "a") {
+		cmd := text
+		upper := strings.ToUpper(cmd)
+
+		if strings.HasPrefix(upper, "LOGIN ") {
+			parts := strings.SplitN(cmd[6:], " ", 2)
+			if len(parts) >= 1 {
+				events = append(events, CaptureEvent{
+					EventType: EventCredential,
+					Direction: "client->honeypot",
+					Username:  strings.Trim(parts[0], "\""),
+				})
+			}
+			if len(parts) >= 2 {
+				events = append(events, CaptureEvent{
+					EventType: EventCredential,
+					Direction: "client->honeypot",
+					Password:  strings.Trim(parts[1], "\""),
+				})
+			}
+			return events
+		}
+
+		events = append(events, CaptureEvent{
+			EventType: EventCommand,
+			Direction: "client->honeypot",
+			Command:   cmd,
+		})
+	}
+	return events
+}
+
+func (p *IMAPParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	text := strings.TrimSpace(string(data))
+	if strings.HasPrefix(text, "* OK") || strings.HasPrefix(text, "* NO") || strings.HasPrefix(text, "* BAD") {
+		return []CaptureEvent{{
+			EventType: EventResponse,
+			Direction: "honeypot->client",
+			Response:  text,
+		}}
+	}
+	if strings.HasPrefix(text, "A") && (strings.HasPrefix(text[1:], " OK") || strings.HasPrefix(text[1:], " NO") || strings.HasPrefix(text[1:], " BAD")) {
+		return []CaptureEvent{{
+			EventType: EventResponse,
+			Direction: "honeypot->client",
+			Response:  text,
+		}}
+	}
+	return nil
+}
+
 func NewParser(protocol string, port int) ProtocolParser {
 	switch strings.ToUpper(protocol) {
 	case "FTP":
@@ -328,6 +385,8 @@ func NewParser(protocol string, port int) ProtocolParser {
 		return &TelnetParser{}
 	case "POP", "POP3":
 		return &POP3Parser{}
+	case "IMAP", "IMAP4":
+		return &IMAPParser{}
 	default:
 		switch port {
 		case 21:
@@ -338,6 +397,8 @@ func NewParser(protocol string, port int) ProtocolParser {
 			return &SMTPParser{}
 		case 110:
 			return &POP3Parser{}
+		case 143, 993:
+			return &IMAPParser{}
 		case 3306:
 			return &MySQLParser{}
 		default:
