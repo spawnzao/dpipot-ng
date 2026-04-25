@@ -480,10 +480,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	})
 	if err != nil {
 		logger("SSH MITM: autenticação falhou no honeypot: %s", err.Error())
-		logger("SSH MITM: conexão será encerrada, cliente pode tentar novamente")
+		logger("SSH MITM: fazendo relay TCP direto para honeypot processar autenticação")
+
+		targetSSHConn.Close()
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			io.Copy(targetConn, clientConn)
+		}()
+		go func() {
+			defer wg.Done()
+			io.Copy(clientConn, targetConn)
+		}()
+		wg.Wait()
 		targetConn.Close()
-		conn.Close()
-		return fmt.Errorf("ssh auth honeypot failed: %w", err)
+		clientConn.Close()
+		return nil
 	}
 	if targetSSHConn == nil {
 		logger("SSH MITM: targetSSHConn é nil mesmo sem erro")
