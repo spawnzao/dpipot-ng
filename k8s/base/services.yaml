@@ -41,49 +41,6 @@ spec:
       protocol: TCP
 
 ---
-# Dionaea — honeypot genérico multi-protocolo
-apiVersion: v1
-kind: Service
-metadata:
-  name: dionaea-svc
-  namespace: dpipot
-  labels:
-    app: dionaea
-spec:
-  type: ClusterIP
-  selector:
-    app: dionaea
-  ports:
-    - name: http
-      port: 80
-      targetPort: 80
-      protocol: TCP
-    - name: ftp
-      port: 21
-      targetPort: 21
-      protocol: TCP
-    - name: smb
-      port: 445
-      targetPort: 445
-      protocol: TCP
-    - name: mssql
-      port: 1433
-      targetPort: 1433
-      protocol: TCP
-    - name: mysql
-      port: 3306
-      targetPort: 3306
-      protocol: TCP
-    - name: epmapper
-      port: 135
-      targetPort: 135
-      protocol: TCP
-    - name: mongo
-      port: 27017
-      targetPort: 27017
-      protocol: TCP
-
----
 # Mailoney — honeypot SMTP
 apiVersion: v1
 kind: Service
