@@ -464,13 +464,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	if capturedCreds.Pass != "" {
 		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
 	}
-	authMethods = append(authMethods,
-		ssh.Password("root"),
-		ssh.Password("admin"),
-		ssh.Password("password"),
-		ssh.Password("123456"),
-		ssh.Password(""),
-	)
 
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s, metodos=%v",
 		capturedCreds.User, capturedCreds.Pass, len(authMethods))
@@ -486,8 +479,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		User:            capturedCreds.User,
 	})
 	if err != nil {
-		logger("SSH MITM: erro ao conectar SSH no honeypot: %s", err.Error())
-		return fmt.Errorf("ssh handshake honeypot falhou: %w", err)
+		logger("SSH MITM: autenticação falhou no honeypot: %s", err.Error())
+		logger("SSH MITM: conexão será encerrada, cliente pode tentar novamente")
+		targetConn.Close()
+		clientConn.Close()
+		return fmt.Errorf("ssh auth honeypot failed: %w", err)
 	}
 	if targetSSHConn == nil {
 		logger("SSH MITM: targetSSHConn é nil mesmo sem erro")
