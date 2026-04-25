@@ -482,10 +482,10 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				NDPIApp:    "handshake",
+				NDPIApp:    "wrong_key",
 				AttackType: "client disconnected before handshake (possible wrong host key)",
 				Honeypot:   config.TargetAddr,
-				LogType:    "wrong_key",
+				LogType:    "application",
 			}
 			config.OnEvent(event)
 		}
