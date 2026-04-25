@@ -478,14 +478,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: targetConn.LocalAddr: %v, targetConn.RemoteAddr: %v",
 		targetConn.LocalAddr(), targetConn.RemoteAddr())
 
-	logger("SSH MITM: verificando conexao targetConn antes de menulis: %v, erro: %v",
-		targetConn.LocalAddr(), targetConn.RemoteAddr())
-	_, err = targetConn.Write([]byte(""))
-	if err != nil {
-		logger("SSH MITM targetConn write error: %v", err)
-	} else {
-		logger("SSH MITM targetConn write OK")
-	}
+	logger("SSH MITM: iniciando ssh.NewClientConn...")
 
 	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
@@ -493,7 +486,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		User:            capturedCreds.User,
 	})
 	if err != nil {
-		logger("SSH MITM: erro ao conectar SSH no honeypot: %v - tipo: %T", err, err)
+		logger("SSH MITM: erro ao conectar SSH no honeypot: %v", err)
 		return fmt.Errorf("ssh handshake honeypot falhou: %w", err)
 	}
 	if targetSSHConn == nil {
