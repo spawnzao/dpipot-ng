@@ -453,10 +453,10 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				NDPIApp:    "auth",
+				NDPIApp:    "auth_failed",
 				AttackType: "unable to authenticate in honeypot",
 				Honeypot:   config.TargetAddr,
-				LogType:    "auth_failed",
+				LogType:    "application",
 			}
 			config.OnEvent(event)
 		}
