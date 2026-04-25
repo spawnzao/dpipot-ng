@@ -5,7 +5,6 @@ metadata:
   namespace: dpipot
 data:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
-  CERTS_PATH: "/tmp/dpipot-certs"
   NDPI_TIMEOUT: "5000ms"
   CLASSIFIER_INTERFACE: "ens192"
   FLOWTRACKER_PORT: "9090"

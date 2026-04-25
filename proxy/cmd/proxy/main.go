@@ -77,7 +77,6 @@ func main() {
 	if err != nil {
 		log.Fatal("CertManager init failed", zap.Error(err))
 	}
-	log.Info("CertManager inicializado", zap.String("certs_path", cfg.CertsPath))
 
 	// inicializa health server (HTTP na porta 8081)
 	healthServer := proxypkg.NewHealthServer(
