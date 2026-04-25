@@ -30,6 +30,21 @@ const (
 	originalDstTimeout  = 2 * time.Second
 )
 
+var (
+	sshHostKey     ssh.Signer
+	sshHostKeyOnce sync.Once
+)
+
+func getSSHHostKey() (ssh.Signer, error) {
+	sshHostKeyOnce.Do(func() {
+		sshHostKey, _ = generateSSHHostKey()
+	})
+	if sshHostKey == nil {
+		return generateSSHHostKey()
+	}
+	return sshHostKey, nil
+}
+
 // Handler processa uma única conexão TCP de um atacante.
 // É criado um Handler por conexão, rodando em goroutine separada.
 type Handler struct {
@@ -613,9 +628,9 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 	if isSSH {
 		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
 
-		hostKey, err := generateSSHHostKey()
+		hostKey, err := getSSHHostKey()
 		if err != nil {
-			log.Error("falha gerando host key SSH", zap.Error(err))
+			log.Error("falha obtendo host key SSH", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM setup failed: %v", err)
 			goto publish
 		}
