@@ -3,8 +3,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
-	"crypto/rsa"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -21,7 +19,6 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
-	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -29,21 +26,6 @@ const (
 	honeypotDialTimeout = 5 * time.Second
 	originalDstTimeout  = 2 * time.Second
 )
-
-var (
-	sshHostKey     ssh.Signer
-	sshHostKeyOnce sync.Once
-)
-
-func getSSHHostKey() (ssh.Signer, error) {
-	sshHostKeyOnce.Do(func() {
-		sshHostKey, _ = generateSSHHostKey()
-	})
-	if sshHostKey == nil {
-		return generateSSHHostKey()
-	}
-	return sshHostKey, nil
-}
 
 // Handler processa uma única conexão TCP de um atacante.
 // É criado um Handler por conexão, rodando em goroutine separada.
@@ -628,7 +610,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 	if isSSH {
 		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
 
-		hostKey, err := getSSHHostKey()
+		hostKey, err := GetSSHHostKey()
 		if err != nil {
 			log.Error("falha obtendo host key SSH", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM setup failed: %v", err)
@@ -956,20 +938,6 @@ func isServerFirstPort(serverFirstPorts []uint16, port uint16) bool {
 		}
 	}
 	return false
-}
-
-func generateSSHHostKey() (ssh.Signer, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		return nil, fmt.Errorf("falha gerando chave RSA: %w", err)
-	}
-
-	signer, err := ssh.NewSignerFromKey(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("falha criando signer SSH: %w", err)
-	}
-
-	return signer, nil
 }
 
 func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) string {

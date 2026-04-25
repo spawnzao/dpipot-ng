@@ -63,8 +63,15 @@ func main() {
 	flowTracker := flowtracker.NewClient(*cfg, log)
 	log.Info("FlowTracker inicializado", zap.Bool("enabled", flowTracker.IsEnabled()))
 
-	// inicializa CertManager para TLS MITM (gera certificados em memória)
-	certMgr, err := mitm.NewCertManager(func(format string, args ...interface{}) {
+	// inicializa host keys (SSH + TLS) - reutilizadas em todas as conexões
+	if err := proxypkg.InitHostKeys(func(format string, args ...interface{}) {
+		log.Info("HostKeys: "+fmt.Sprintf(format, args...))
+	}); err != nil {
+		log.Fatal("HostKeys init failed", zap.Error(err))
+	}
+
+	// inicializa CertManager usando as host keys já geradas
+	certMgr, err := mitm.NewCertManagerWithKeys(func(format string, args ...interface{}) {
 		log.Info("CertManager: "+format, zap.Any("args", args))
 	})
 	if err != nil {
