@@ -480,7 +480,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: iniciando ssh.NewClientConn...")
 
-	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, "", &ssh.ClientConfig{
+	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, config.TargetAddr, &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Auth:            authMethods,
 		User:            capturedCreds.User,
