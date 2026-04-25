@@ -647,8 +647,43 @@ mitmLogger := func(format string, args ...interface{}) {
 
 		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
 		if err != nil {
-			if strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "no auth passed yet") {
-				log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
+			errStr := err.Error()
+			if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet") {
+				if strings.Contains(errStr, "permission denied, permission denied, permission denied") {
+					log.Info("MITM SSH: cliente esgotou tentativas de senha (comportamento esperado)", zap.Error(err))
+					event := &kafka.Event{
+						FlowID:      h.flowID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(origDstPort),
+						NDPIProto:   "SSH",
+						NDPIApp:    "auth",
+						AttackType: "client exhausted password attempts",
+						Honeypot:   honeypotAddr,
+						LogType:    "auth_exhausted",
+					}
+					h.producer.Publish(event)
+				} else {
+					log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
+				}
+			} else if strings.Contains(errStr, "client closed") || strings.Contains(errStr, "handshake") {
+				log.Info("MITM SSH: cliente fechou conexão antes do handshake", zap.Error(err))
+				event := &kafka.Event{
+					FlowID:      h.flowID,
+					Timestamp:   time.Now(),
+					SrcIP:       srcAddr.IP.String(),
+					SrcPort:     srcAddr.Port,
+					DstIP:       origDstIP.String(),
+					DstPort:     int(origDstPort),
+					NDPIProto:   "SSH",
+					NDPIApp:    "handshake",
+					AttackType: "client disconnected before handshake (possible wrong host key)",
+					Honeypot:   honeypotAddr,
+					LogType:    "wrong_key",
+				}
+				h.producer.Publish(event)
 			} else {
 				log.Warn("MITM SSH falhou", zap.Error(err))
 			}
