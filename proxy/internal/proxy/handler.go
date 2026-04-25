@@ -798,12 +798,26 @@ mitmLogger := func(format string, args ...interface{}) {
 
 	wg.Wait()
 
-	if appProtoFlow == "Telnet" || appProtoFlow == "TELNET" || dstPort == 23 {
+	if (appProtoFlow == "Telnet" || appProtoFlow == "TELNET" || dstPort == 23) ||
+		(appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110) {
 		parser := mitm.NewParser(appProtoFlow, int(dstPort))
+		protoLabel := "Telnet"
+		if appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110 {
+			protoLabel = "POP3"
+		}
 		if srcData := bufSrc.Bytes(); len(srcData) > 0 {
 			cmdEvents := parser.ParseClientData(srcData, func(format string, args ...interface{}) {})
 			for _, ev := range cmdEvents {
-				if ev.Command != "" {
+				if ev.Command != "" || ev.Username != "" || ev.Password != "" {
+					eventType := "command"
+					attackType := ev.Command
+					if ev.Username != "" {
+						eventType = "credential"
+						attackType = ev.Username
+					} else if ev.Password != "" {
+						eventType = "credential"
+						attackType = ev.Password
+					}
 					h.producer.Publish(&kafka.Event{
 						FlowID:      h.flowID,
 						Timestamp:   time.Now(),
@@ -811,9 +825,9 @@ mitmLogger := func(format string, args ...interface{}) {
 						SrcPort:     srcAddr.Port,
 						DstIP:       origDstIP.String(),
 						DstPort:     int(dstPort),
-						NDPIProto:   "Telnet",
-						NDPIApp:    "command",
-						AttackType: ev.Command,
+						NDPIProto:   protoLabel,
+						NDPIApp:    eventType,
+						AttackType: attackType,
 						Honeypot:    honeypotAddr,
 						LogType:     "application",
 					})
@@ -831,7 +845,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						SrcPort:     srcAddr.Port,
 						DstIP:       origDstIP.String(),
 						DstPort:     int(dstPort),
-						NDPIProto:   "Telnet",
+						NDPIProto:   protoLabel,
 						NDPIApp:    "response",
 						AttackType: ev.Response,
 						Honeypot:    honeypotAddr,

@@ -270,6 +270,52 @@ func stripTelnetControl(data []byte) string {
 	return strings.TrimSpace(string(result))
 }
 
+type POP3Parser struct{}
+
+func (p *POP3Parser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	text := strings.TrimSpace(string(data))
+	upper := strings.ToUpper(text)
+
+	if strings.HasPrefix(upper, "USER ") {
+		return []CaptureEvent{{
+			EventType: EventCredential,
+			Direction: "client->honeypot",
+			Username:  strings.TrimPrefix(text[5:], " "),
+		}}
+	}
+	if strings.HasPrefix(upper, "PASS ") {
+		return []CaptureEvent{{
+			EventType: EventCredential,
+			Direction: "client->honeypot",
+			Password:  strings.TrimPrefix(text[5:], " "),
+		}}
+	}
+	return []CaptureEvent{{
+		EventType: EventCommand,
+		Direction: "client->honeypot",
+		Command:   text,
+	}}
+}
+
+func (p *POP3Parser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	text := strings.TrimSpace(string(data))
+	if strings.HasPrefix(text, "+OK") {
+		return []CaptureEvent{{
+			EventType: EventResponse,
+			Direction: "honeypot->client",
+			Response:  text,
+		}}
+	}
+	if strings.HasPrefix(text, "-ERR") {
+		return []CaptureEvent{{
+			EventType: EventResponse,
+			Direction: "honeypot->client",
+			Response:  text,
+		}}
+	}
+	return nil
+}
+
 func NewParser(protocol string, port int) ProtocolParser {
 	switch strings.ToUpper(protocol) {
 	case "FTP":
@@ -280,16 +326,20 @@ func NewParser(protocol string, port int) ProtocolParser {
 		return &SMTPParser{}
 	case "TELNET":
 		return &TelnetParser{}
+	case "POP", "POP3":
+		return &POP3Parser{}
 	default:
 		switch port {
 		case 21:
 			return &FTPParser{}
 		case 23:
 			return &TelnetParser{}
-		case 3306:
-			return &MySQLParser{}
 		case 25, 465, 587:
 			return &SMTPParser{}
+		case 110:
+			return &POP3Parser{}
+		case 3306:
+			return &MySQLParser{}
 		default:
 			return &RawParser{}
 		}
