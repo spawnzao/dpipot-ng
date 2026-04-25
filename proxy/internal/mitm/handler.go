@@ -240,12 +240,6 @@ func (s *SSHSession) emitResponse() {
 	s.pendingResp = ""
 }
 
-type CapturedCredentials struct {
-	Banner string
-	User   string
-	Pass   string
-}
-
 type PreloadConn struct {
 	Conn    net.Conn
 	Preload []byte
@@ -368,23 +362,45 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 	}
 }
 
+func tryAuthOnHoneypot(targetAddr, user, pass string, logger func(string, ...interface{})) bool {
+	tcpConn, err := net.DialTimeout("tcp", targetAddr, 5*time.Second)
+	if err != nil {
+		logger("SSH MITM: falha ao conectar no honeypot para autenticação: %v", err)
+		return false
+	}
+
+	sshConn, _, _, err := ssh.NewClientConn(tcpConn, targetAddr, &ssh.ClientConfig{
+		User:            user,
+		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		Timeout:         5 * time.Second,
+	})
+	if err != nil {
+		logger("SSH MITM: autenticação no honeypot falhou: %s", err.Error())
+		tcpConn.Close()
+		return false
+	}
+	logger("SSH MITM: autenticação no honeypot bem-sucedida")
+	sshConn.Close()
+	return true
+}
+
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
 	logger("SSH MITM: iniciando handshake")
-
-	capturedCreds := &CapturedCredentials{
-		Banner: string(config.Banner),
-	}
 
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:  false,
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
 	}
 
+	var authSuccess bool
+	var capturedUser, capturedPass string
+
 	serverConfig.PasswordCallback = func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
-		capturedCreds.User = conn.User()
-		capturedCreds.Pass = string(password)
-		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s, Banner: %s",
-			capturedCreds.User, capturedCreds.Pass, capturedCreds.Banner)
+		capturedUser = conn.User()
+		capturedPass = string(password)
+
+		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s", capturedUser, capturedPass)
 
 		if config.OnEvent != nil {
 			event := &kafka.Event{
@@ -396,7 +412,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
 				NDPIApp:    "username",
-				AttackType: capturedCreds.User,
+				AttackType: capturedUser,
 				Honeypot:   config.TargetAddr,
 				LogType:    "application",
 			}
@@ -411,31 +427,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
 				NDPIApp:    "password",
-				AttackType: capturedCreds.Pass,
+				AttackType: capturedPass,
 				Honeypot:   config.TargetAddr,
 				LogType:    "application",
 			}
 			config.OnEvent(event)
-
-			event = &kafka.Event{
-				FlowID:      config.FlowID,
-				Timestamp:   time.Now(),
-				SrcIP:       config.SrcIP,
-				SrcPort:     config.SrcPort,
-				DstIP:       config.DstIP,
-				DstPort:     config.DstPort,
-				NDPIProto:   "SSH",
-				NDPIApp:    "banner",
-				AttackType: capturedCreds.Banner,
-				Honeypot:   config.TargetAddr,
-				LogType:    "application",
-			}
-			config.OnEvent(event)
-
-			logger("SSH MITM: eventos de login publicados no Kafka (username, password, banner)")
 		}
 
-		return &ssh.Permissions{}, nil
+		logger("SSH MITM: tentando autenticar no honeypot...")
+
+		if tryAuthOnHoneypot(config.TargetAddr, capturedUser, capturedPass, logger) {
+			logger("SSH MITM: autenticação aceita pelo honeypot")
+			authSuccess = true
+			return &ssh.Permissions{}, nil
+		}
+
+		logger("SSH MITM: autenticação rejeitada pelo honeypot")
+		authSuccess = false
+		return nil, fmt.Errorf("permission denied")
 	}
 
 	serverConfig.AddHostKey(config.HostKey)
@@ -451,7 +460,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	defer conn.Close()
 	logger("SSH MITM: NewServerConn OK")
 
-	logger("SSH MITM: conectando ao honeypot: %s", config.TargetAddr)
+	if !authSuccess {
+		logger("SSH MITM: autenticação falhou, conexao sera encerrada")
+		return nil
+	}
+
+	logger("SSH MITM: conectando ao honeypot para MITM...")
 	targetConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
 	if err != nil {
 		logger("SSH MITM: falha ao conectar no honeypot: %v", err)
@@ -460,48 +474,17 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
 
-	var authMethods []ssh.AuthMethod
-	if capturedCreds.Pass != "" {
-		authMethods = append(authMethods, ssh.Password(capturedCreds.Pass))
-	}
-
-	logger("SSH MITM: conectando SSH ao honeypot com credenciais capturadas: user=%s, pass=%s, metodos=%v",
-		capturedCreds.User, capturedCreds.Pass, len(authMethods))
-
-	logger("SSH MITM: targetConn.LocalAddr: %v, targetConn.RemoteAddr: %v",
-		targetConn.LocalAddr(), targetConn.RemoteAddr())
-
-	logger("SSH MITM: iniciando ssh.NewClientConn...")
+	logger("SSH MITM: conectando SSH ao honeypot com credenciais ja verificadas: user=%s, pass=%s",
+		capturedUser, capturedPass)
 
 	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, config.TargetAddr, &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Auth:            authMethods,
-		User:            capturedCreds.User,
+		Auth:            []ssh.AuthMethod{ssh.Password(capturedPass)},
+		User:            capturedUser,
 	})
 	if err != nil {
-		logger("SSH MITM: autenticação falhou no honeypot: %s", err.Error())
-		logger("SSH MITM: fazendo relay TCP direto para honeypot processar autenticação")
-
-		targetSSHConn.Close()
-
-		var wg sync.WaitGroup
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			io.Copy(targetConn, clientConn)
-		}()
-		go func() {
-			defer wg.Done()
-			io.Copy(clientConn, targetConn)
-		}()
-		wg.Wait()
-		targetConn.Close()
-		clientConn.Close()
-		return nil
-	}
-	if targetSSHConn == nil {
-		logger("SSH MITM: targetSSHConn é nil mesmo sem erro")
-		return fmt.Errorf("ssh target connection é nil")
+		logger("SSH MITM: erro ao conectar SSH no honeypot: %s", err.Error())
+		return fmt.Errorf("ssh handshake honeypot failed: %w", err)
 	}
 	logger("SSH MITM: SSH conectado ao honeypot")
 	defer targetSSHConn.Close()
