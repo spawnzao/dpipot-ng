@@ -3,15 +3,16 @@ package mitm
 import (
 	"crypto/tls"
 	"fmt"
-	"io"
 	"net"
-	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 )
+
+func IsServerFirstTLSPort(portMap map[uint16]string, port uint16) bool {
+	_, ok := portMap[port]
+	return ok
+}
 
 type ServerFirstTLSConfig struct {
 	ClientConn     net.Conn
@@ -29,35 +30,6 @@ type ServerFirstTLSConfig struct {
 	Logger         func(string, ...interface{})
 }
 
-func ParseServerFirstPortsTLS(raw string) map[uint16]string {
-	result := make(map[uint16]string)
-	if raw == "" {
-		return result
-	}
-
-	for _, pair := range strings.Split(raw, ",") {
-		pair = strings.TrimSpace(pair)
-		if pair == "" {
-			continue
-		}
-		parts := strings.SplitN(pair, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		port, err := strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 16)
-		if err != nil {
-			continue
-		}
-		result[uint16(port)] = strings.TrimSpace(parts[1])
-	}
-	return result
-}
-
-func IsServerFirstTLSPort(portMap map[uint16]string, port uint16) bool {
-	_, ok := portMap[port]
-	return ok
-}
-
 func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 	config.Logger("SF-TLS: started (port=%d, proto=%s, honeypot=%s)",
 		config.DstPort, config.NDPIProto, config.HoneypotAddr)
@@ -67,7 +39,6 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 		config.Logger("SF-TLS: honeypot dial failed: %v", err)
 		return fmt.Errorf("honeypot dial: %w", err)
 	}
-	defer honeypotConn.Close()
 	config.Logger("SF-TLS: connected to honeypot")
 
 	clientTLS := tls.Server(config.ClientConn, &tls.Config{
@@ -76,75 +47,107 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 
 	if err := clientTLS.Handshake(); err != nil {
 		config.Logger("SF-TLS: handshake failed: %v", err)
+		honeypotConn.Close()
 		return fmt.Errorf("tls handshake: %w", err)
 	}
 	config.Logger("SF-TLS: TLS handshake OK")
 
 	parser := NewParser(config.NDPIProto, config.DstPort)
 
-	var wg sync.WaitGroup
-	wg.Add(2)
+	errChan := make(chan error, 2)
 
 	go func() {
-		defer wg.Done()
-		handleSFTLSData(clientTLS, honeypotConn, parser, config, "client->honeypot")
-	}()
+		buf := make([]byte, 4096)
+		for {
+			n, err := clientTLS.Read(buf)
+			if n > 0 {
+				data := make([]byte, n)
+				copy(data, buf[:n])
 
-	go func() {
-		defer wg.Done()
-		handleSFTLSData(honeypotConn, clientTLS, parser, config, "honeypot->client")
-	}()
-
-	wg.Wait()
-	config.Logger("SF-TLS: relay encerrado")
-	return nil
-}
-
-func handleSFTLSData(src net.Conn, dst net.Conn, parser ProtocolParser, config ServerFirstTLSConfig, direction string) {
-	buf := make([]byte, 4096)
-	for {
-		n, err := src.Read(buf)
-		if n > 0 {
-			data := make([]byte, n)
-			copy(data, buf[:n])
-
-			if config.OnEvent != nil {
-				var events []CaptureEvent
-				if direction == "client->honeypot" {
-					events = parser.ParseClientData(data, config.Logger)
-				} else {
-					events = parser.ParseServerData(data, config.Logger)
-				}
-
-				for _, ev := range events {
-					if ev.Command != "" || ev.Username != "" || ev.Password != "" ||
-						ev.Response != "" || ev.Banner != "" {
-						config.OnEvent(&kafka.Event{
-							FlowID:      config.FlowID,
-							Timestamp:   time.Now(),
-							SrcIP:       config.SrcIP,
-							SrcPort:     config.SrcPort,
-							DstIP:       config.DstIP,
-							DstPort:     config.DstPort,
-							NDPIProto:   config.NDPIProto,
-							Honeypot:    config.HoneypotAddr,
-							LogType:     "application",
-						})
+				if config.OnEvent != nil {
+					events := parser.ParseClientData(data, config.Logger)
+					for _, ev := range events {
+						if ev.Command != "" || ev.Username != "" || ev.Password != "" {
+							config.OnEvent(&kafka.Event{
+								FlowID:     config.FlowID,
+								Timestamp:  time.Now(),
+								SrcIP:      config.SrcIP,
+								SrcPort:    config.SrcPort,
+								DstIP:      config.DstIP,
+								DstPort:    config.DstPort,
+								NDPIProto:  config.NDPIProto,
+								NDPIApp:    string(ev.EventType),
+								AttackType: formatAttackType(ev),
+								Honeypot:   config.HoneypotAddr,
+								LogType:    "application",
+								PayloadSrc: data,
+							})
+						}
 					}
 				}
-			}
 
-			_, wErr := dst.Write(data)
-			if wErr != nil {
-				config.Logger("SF-TLS: erro escrevendo %s: %v", direction, wErr)
+				_, wErr := honeypotConn.Write(data)
+				if wErr != nil {
+					errChan <- wErr
+					return
+				}
+			}
+			if err != nil {
+				errChan <- err
 				return
 			}
 		}
-		if err != nil {
-			if err != io.EOF {
-				config.Logger("SF-TLS: erro lendo %s: %v", direction, err)
+	}()
+
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := honeypotConn.Read(buf)
+			if n > 0 {
+				data := make([]byte, n)
+				copy(data, buf[:n])
+
+				if config.OnEvent != nil {
+					events := parser.ParseServerData(data, config.Logger)
+					for _, ev := range events {
+						if ev.Response != "" || ev.Banner != "" {
+							config.OnEvent(&kafka.Event{
+								FlowID:     config.FlowID,
+								Timestamp:  time.Now(),
+								SrcIP:      config.SrcIP,
+								SrcPort:    config.SrcPort,
+								DstIP:      config.DstIP,
+								DstPort:    config.DstPort,
+								NDPIProto:  config.NDPIProto,
+								NDPIApp:    string(ev.EventType),
+								AttackType: formatAttackType(ev),
+								Honeypot:   config.HoneypotAddr,
+								LogType:    "application",
+								PayloadDst: data,
+							})
+						}
+					}
+				}
+
+				_, wErr := clientTLS.Write(data)
+				if wErr != nil {
+					errChan <- wErr
+					return
+				}
 			}
-			return
+			if err != nil {
+				errChan <- err
+				return
+			}
 		}
-	}
+	}()
+
+	relayErr := <-errChan
+	config.Logger("SF-TLS: relay ended: %v", relayErr)
+
+	honeypotConn.Close()
+	clientTLS.Close()
+	config.ClientConn.Close()
+
+	return nil
 }
