@@ -486,7 +486,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		User:            capturedCreds.User,
 	})
 	if err != nil {
-		logger("SSH MITM: erro ao conectar SSH no honeypot: %v (type: %T)", err, err)
+		logger("SSH MITM: erro ao conectar SSH no honeypot: %s", err.Error())
 		return fmt.Errorf("ssh handshake honeypot falhou: %w", err)
 	}
 	if targetSSHConn == nil {

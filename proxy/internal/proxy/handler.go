@@ -641,8 +641,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			},
 		}
 
-		mitmLogger := func(format string, args ...interface{}) {
-			log.Info("SSH-MITM: "+format, zap.Any("args", args))
+mitmLogger := func(format string, args ...interface{}) {
+			log.Info("SSH-MITM: "+fmt.Sprintf(format, args...))
 		}
 
 		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
@@ -673,7 +673,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		}
 
 		mitmLogger := func(format string, args ...interface{}) {
-			log.Info("TLS-MITM: "+format, zap.Any("args", args))
+			log.Info("TLS-MITM: "+fmt.Sprintf(format, args...))
 		}
 
 		err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
