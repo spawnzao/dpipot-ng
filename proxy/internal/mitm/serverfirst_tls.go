@@ -59,40 +59,26 @@ func IsServerFirstTLSPort(portMap map[uint16]string, port uint16) bool {
 }
 
 func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
-	config.Logger("SF-TLS: iniciado (port=%d, proto=%s, honeypot=%s)",
+	config.Logger("SF-TLS: started (port=%d, proto=%s, honeypot=%s)",
 		config.DstPort, config.NDPIProto, config.HoneypotAddr)
 
 	honeypotConn, err := net.DialTimeout("tcp", config.HoneypotAddr, 5*time.Second)
 	if err != nil {
-		config.Logger("SF-TLS: falha ao conectar honeypot: %v", err)
+		config.Logger("SF-TLS: honeypot dial failed: %v", err)
 		return fmt.Errorf("honeypot dial: %w", err)
 	}
 	defer honeypotConn.Close()
-	config.Logger("SF-TLS: conectado ao honeypot")
-
-	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{
-		Certificates: []tls.Certificate{config.Cert},
-	})
-	if err != nil {
-		config.Logger("SF-TLS: erro listener TLS: %v", err)
-		return fmt.Errorf("tls listen: %w", err)
-	}
-	defer ln.Close()
-	config.Logger("SF-TLS: listener TLS em %s", ln.Addr())
+	config.Logger("SF-TLS: connected to honeypot")
 
 	clientTLS := tls.Server(config.ClientConn, &tls.Config{
 		Certificates: []tls.Certificate{config.Cert},
 	})
-	if err != nil {
-		config.Logger("SF-TLS: erro TLS.Server: %v", err)
-		return fmt.Errorf("tls server: %w", err)
-	}
 
 	if err := clientTLS.Handshake(); err != nil {
-		config.Logger("SF-TLS: handshake TLS falhou: %v", err)
+		config.Logger("SF-TLS: handshake failed: %v", err)
 		return fmt.Errorf("tls handshake: %w", err)
 	}
-	config.Logger("SF-TLS: handshake TLS OK")
+	config.Logger("SF-TLS: TLS handshake OK")
 
 	parser := NewParser(config.NDPIProto, config.DstPort)
 

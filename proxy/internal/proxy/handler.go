@@ -289,17 +289,17 @@ func (h *Handler) Handle() {
 			zap.Uint16("port", dstPort),
 			zap.String("proto", h.serverFirstPortsTLS[dstPort]))
 
-		honeypotAddr, _ = h.router.Resolve(ndpiLabel)
-		log.Debug("rota SF-TLS resolvida via protocolo",
-			zap.String("proto", ndpiLabel),
-			zap.String("honeypot", honeypotAddr))
-
-		cert := h.certMgr.Cert()
 		ndpiLabel := appProtoFlow
 		if ndpiLabel == "" || ndpiLabel == "Unknown" {
 			ndpiLabel = h.serverFirstPortsTLS[dstPort]
 		}
 
+		honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+		log.Debug("rota SF-TLS resolvida",
+			zap.String("proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr))
+
+		cert := h.certMgr.Cert()
 		mitmLogger := func(format string, args ...interface{}) {
 			msg := fmt.Sprintf("SF-TLS: "+format, args...)
 			log.Info(msg)

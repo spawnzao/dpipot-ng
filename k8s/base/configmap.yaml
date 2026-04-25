@@ -19,6 +19,7 @@ data:
     Telnet=heralding:23,
     POP=heralding:110,
     IMAP=heralding:143,
+    MAIL_IMAPS=heralding:143,
     RDP=heralding:3389,
     PostgreSQL=heralding:5432,
     VNC=heralding:5900
