@@ -443,6 +443,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		}
 
 		logger("SSH MITM: autenticação rejeitada pelo honeypot")
+
+		if config.OnEvent != nil {
+			event := &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				NDPIApp:    "auth",
+				AttackType: "unable to authenticate in honeypot",
+				Honeypot:   config.TargetAddr,
+				LogType:    "auth_failed",
+			}
+			config.OnEvent(event)
+		}
+
 		authSuccess = false
 		return nil, fmt.Errorf("permission denied")
 	}
@@ -454,6 +472,24 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	if err != nil {
 		logger("SSH MITM: erro em NewServerConn: %v", err)
 		logger("SSH MITM: cliente fechou a conexão antes do handshake")
+
+		if config.OnEvent != nil {
+			event := &kafka.Event{
+				FlowID:      config.FlowID,
+				Timestamp:   time.Now(),
+				SrcIP:       config.SrcIP,
+				SrcPort:     config.SrcPort,
+				DstIP:       config.DstIP,
+				DstPort:     config.DstPort,
+				NDPIProto:   "SSH",
+				NDPIApp:    "handshake",
+				AttackType: "client disconnected before handshake (possible wrong host key)",
+				Honeypot:   config.TargetAddr,
+				LogType:    "wrong_key",
+			}
+			config.OnEvent(event)
+		}
+
 		clientConn.Close()
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
