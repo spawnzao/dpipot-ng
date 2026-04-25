@@ -12,8 +12,6 @@ resources:
   - honeypots.yaml
   - kafka.yaml
   - logstash.yaml
-  - dionaea-config.yaml
-  - dionaea-www.yaml
   - mariadb-deployment.yaml
   - mariadb-service.yaml
   - heralding-config.yaml
