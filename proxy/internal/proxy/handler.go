@@ -668,24 +668,8 @@ mitmLogger := func(format string, args ...interface{}) {
 				} else {
 					log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
 				}
-			} else if strings.Contains(errStr, "client closed") || strings.Contains(errStr, "handshake") {
-				log.Info("MITM SSH: cliente fechou conexão antes do handshake", zap.Error(err))
-				event := &kafka.Event{
-					FlowID:      h.flowID,
-					Timestamp:   time.Now(),
-					SrcIP:       srcAddr.IP.String(),
-					SrcPort:     srcAddr.Port,
-					DstIP:       origDstIP.String(),
-					DstPort:     int(origDstPort),
-					NDPIProto:   "SSH",
-					NDPIApp:    "wrong_key",
-					AttackType: "client disconnected before handshake (possible wrong host key)",
-					Honeypot:   honeypotAddr,
-					LogType:    "application",
-				}
-				h.producer.Publish(event)
 			} else {
-				log.Warn("MITM SSH falhou", zap.Error(err))
+				log.Info("MITM SSH: cliente fechou conexão antes do handshake", zap.Error(err))
 			}
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
 		}
