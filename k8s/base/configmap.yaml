@@ -21,7 +21,6 @@ data:
     IMAP=heralding:143,
     RDP=heralding:3389,
     PostgreSQL=heralding:5432,
-    MongoDB=mongodbhp-svc:27017,
     VNC=heralding:5900
   DEFAULT_ROUTE: "heralding:80"
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"

@@ -1,23 +1,4 @@
 ---
-# ElasticPot — simula Elasticsearch vulnerável na porta 9200
-apiVersion: v1
-kind: Service
-metadata:
-  name: elasticpot-svc
-  namespace: dpipot
-  labels:
-    app: elasticpot
-spec:
-  type: ClusterIP
-  selector:
-    app: elasticpot
-  ports:
-    - name: http
-      port: 9200
-      targetPort: 9200
-      protocol: TCP
-
----
 # Cowrie — simula SSH/Telnet
 apiVersion: v1
 kind: Service
@@ -38,25 +19,6 @@ spec:
     - name: telnet
       port: 23
       targetPort: 2323
-      protocol: TCP
-
----
-# Mailoney — honeypot SMTP
-apiVersion: v1
-kind: Service
-metadata:
-  name: mailoney-svc
-  namespace: dpipot
-  labels:
-    app: mailoney
-spec:
-  type: ClusterIP
-  selector:
-    app: mailoney
-  ports:
-    - name: smtp
-      port: 25
-      targetPort: 25
       protocol: TCP
 
 ---

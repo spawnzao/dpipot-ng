@@ -1,38 +1,4 @@
 ---
-# ── ElasticPot ───────────────────────────────────────────────────────
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: elasticpot
-  namespace: dpipot
-  labels:
-    app: elasticpot
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: elasticpot
-  template:
-    metadata:
-      labels:
-        app: elasticpot
-    spec:
-      containers:
-        - name: elasticpot
-          # imagem pública do ElasticPot disponível no Docker Hub
-          image: dtagdevsec/elasticpot:24.04
-          ports:
-            - containerPort: 9200
-              protocol: TCP
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
-
----
 # ── Cowrie (SSH/Telnet) ──────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
@@ -69,44 +35,6 @@ spec:
             limits:
               cpu: 300m
               memory: 256Mi
-
----
-# ── Mailoney (SMTP honeypot) ───────────────────────────────────────
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mailoney
-  namespace: dpipot
-  labels:
-    app: mailoney
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mailoney
-  template:
-    metadata:
-      labels:
-        app: mailoney
-    spec:
-      containers:
-        - name: mailoney
-          image: dtagdevsec/mailoney:24.04.1
-          ports:
-            - containerPort: 25
-              protocol: TCP
-          env:
-            - name: MALWARE_HOST
-              value: "0.0.0.0"
-            - name: MALWARE_PORT
-              value: "25"
-          resources:
-            requests:
-              cpu: 50m
-              memory: 64Mi
-            limits:
-              cpu: 200m
-              memory: 128Mi
 
 ---
 # ── Wordpot (HTTP honeypot) ────────────────────────────────────────

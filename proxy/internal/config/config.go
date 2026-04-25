@@ -40,7 +40,7 @@ func Load() (*Config, error) {
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",
-		"HTTP=elasticpot-svc:9200,MongoDB=mongodbhp-svc:27017,SSH=cowrie-svc:22")
+		"HTTP=wordpot-svc:80,SSH=cowrie-svc:22,FTP=heralding:21,SMTP=heralding:25,MySQL=heralding:3306")
 	routes, err := parseRoutes(routesRaw)
 	if err != nil {
 		return nil, fmt.Errorf("HONEYPOT_ROUTES inválido: %w", err)
