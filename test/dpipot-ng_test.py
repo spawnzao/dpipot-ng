@@ -44,7 +44,10 @@ class ProxyTester:
             444: "Probe"  # Teste sem dados (gera firstBytes=zero)
         }
         
-        self.tls_ports = [443, 465, 993, 995, 4433, 8443]
+        # Portas TLS server-first (Implicit SSL/TLS) - servidor envia certificado primeiro
+        self.server_first_tls_ports = [465, 993, 995]
+        # Portas TLS client-first (STARTTLS) - cliente envia Client Hello primeiro
+        self.client_first_tls_ports = [443, 4433, 8443]
     
     def print_header(self, text):
         print(f"\n{Colors.BOLD}{Colors.BLUE}{'='*80}{Colors.RESET}")
@@ -169,6 +172,73 @@ class ProxyTester:
                 'error': f"Erro: {str(e)[:50]}"
             }
     
+    def test_tls_server_first(self, sock, port, service):
+        """Server-First TLS (Implicit SSL): espera certificado do servidor primeiro"""
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            ssl_sock = ssl.wrap_socket(sock, server_side=False)
+            cert = ssl_sock.getpeercert()
+            
+            if cert:
+                is_self_signed = True
+                for item in cert.get('issuer', []):
+                    if isinstance(item, tuple) and len(item) > 0:
+                        issuer_key = item[0][0] if isinstance(item[0], tuple) else 'unknown'
+                        issuer_val = item[0][1] if isinstance(item[0], tuple) and len(item[0]) > 1 else str(item)
+                        if issuer_key == 'commonName' or issuer_key == 'CN':
+                            if issuer_val == cn:
+                                is_self_signed = False
+                
+                subject = {}
+                for item in cert.get('subject', []):
+                    if isinstance(item, tuple) and len(item) > 0:
+                        key = item[0][0] if isinstance(item[0], tuple) else 'unknown'
+                        value = item[0][1] if isinstance(item[0], tuple) and len(item[0]) > 1 else str(item)
+                        subject[key] = value
+                
+                cn = subject.get('commonName', subject.get('CN', 'N/A'))
+                
+                valid = False
+                valid_str = "Data desconhecida"
+                if 'notBefore' in cert and 'notAfter' in cert:
+                    try:
+                        not_before = datetime.strptime(cert['notBefore'], '%b %d %H:%M:%S %Y %Z')
+                        not_after = datetime.strptime(cert['notAfter'], '%b %d %H:%M:%S %Y %Z')
+                        valid = not_before <= datetime.now() <= not_after
+                        valid_str = f"Valido: {not_before.strftime('%Y-%m-%d')} ate {not_after.strftime('%Y-%m-%d')}"
+                    except:
+                        valid_str = "Formato de data invalido"
+                
+                ssl_sock.close()
+                return {
+                    'valid': True,
+                    'has_cert': True,
+                    'self_signed': is_self_signed,
+                    'cn': cn,
+                    'validity': valid_str,
+                    'details': f"CN={cn}, {valid_str}" + (" (auto-assinado)" if is_self_signed else "")
+                }
+            else:
+                ssl_sock.close()
+                return {
+                    'valid': True,
+                    'has_cert': False,
+                    'details': "Conexao TLS sem certificado"
+                }
+        except ssl.SSLError as e:
+            return {
+                'valid': False,
+                'error': f"SSL: {str(e)[:50]}"
+            }
+        except Exception as e:
+            return {
+                'valid': False,
+                'error': f"Erro: {str(e)[:50]}"
+            }
+    
     def test_all_ports(self):
         """Testa todas as portas e certificados"""
         self.print_header("VERIFICANDO PORTAS E CERTIFICADOS")
@@ -176,7 +246,25 @@ class ProxyTester:
         for port, service in sorted(self.ports.items()):
             sock = None
             
-            if port in self.tls_ports:
+            if port in self.server_first_tls_ports:
+                sock = self.check_and_test_port(port)
+                if sock:
+                    self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
+                    cert_info = self.test_tls_server_first(sock, port, service)
+                    if cert_info['valid']:
+                        if cert_info.get('has_cert', False):
+                            self.print_test(service, "Certificado TLS", True, cert_info['details'])
+                        else:
+                            self.print_test(service, "Conexão TLS", True, "Conexão TLS estabelecida")
+                    else:
+                        self.print_test(service, "Certificado TLS", False, cert_info.get('error', 'Falha'))
+                    try:
+                        sock.close()
+                    except:
+                        pass
+                else:
+                    self.print_test(service, f"Porta {port}", False, "✗ Porta fechada")
+            elif port in self.client_first_tls_ports:
                 sock = self.check_and_test_port(port)
                 if sock:
                     self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
