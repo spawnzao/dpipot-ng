@@ -12,13 +12,11 @@ resources:
   - honeypots.yaml
   - kafka.yaml
   - logstash.yaml
-  - mariadb-deployment.yaml
-  - mariadb-service.yaml
   - heralding-config.yaml
   - heralding-deployment.yaml
   - heralding-service.yaml
-
-
+  #- mariadb-deployment.yaml
+  #- mariadb-service.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
@@ -28,7 +26,7 @@ images:
   - name: ubuntu
     newName: docker.io/library/ubuntu
 
-secretGenerator:
-  - name: mariadb-secret
-    literals:
-      - root-password=root123
+# secretGenerator:
+#   - name: mariadb-secret
+#     literals:
+#       - root-password=root123
