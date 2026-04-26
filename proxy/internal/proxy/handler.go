@@ -264,6 +264,7 @@ func (h *Handler) Handle() {
 		isSSH          bool
 		isTLS          bool
 		isClientTimeout   bool
+		isProbe          bool
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 	)
 
@@ -545,6 +546,12 @@ greetingBuf = greetingBuf[:n]
 	if n > 0 {
 		firstChunk = firstChunk[:n]
 		bufSrc.Write(firstChunk)
+
+		// Detecta se é conexão de probe (firstChunk todo zeros, sem dados enviados)
+		if bytes.Count(firstChunk, []byte{0}) == len(firstChunk) {
+			isProbe = true
+			log.Debug("🔍 conexão de probe detectada", zap.ByteString("firstChunk", firstChunk))
+		}
 	}
 
 	// --- STEP 2: obtém IP/porta original ---
@@ -657,6 +664,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		zap.ByteString("firstChunk", firstChunk),
 		zap.Bool("isSSH", isSSH),
 		zap.Bool("isTLS", isTLS),
+		zap.Bool("isProbe", isProbe),
 	)
 
 	// SSH: usa MITM

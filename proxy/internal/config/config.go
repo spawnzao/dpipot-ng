@@ -11,17 +11,18 @@ import (
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
 type Config struct {
 	ListenAddr         string
-	NDPITimeout      time.Duration
-	Routes           map[string]string
-	DefaultRoute    string
-	KafkaBrokers     string
-	KafkaTopic       string
-	MaxPayloadBytes int64
-	LogLevel        string
+	NDPITimeout        time.Duration
+	ProxyTimeout       time.Duration
+	Routes             map[string]string
+	DefaultRoute       string
+	KafkaBrokers        string
+	KafkaTopic         string
+	MaxPayloadBytes    int64
+	LogLevel           string
 	ClassifierEnabled bool
-	ClassifierHost  string
-	ClassifierPort int
-	ServerFirstPorts map[uint16]string
+	ClassifierHost    string
+	ClassifierPort    int
+	ServerFirstPorts      map[uint16]string
 	ServerFirstPortsTLS map[uint16]string
 }
 
@@ -29,6 +30,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:        getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
 		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
+		ProxyTimeout:      getDuration("PROXY_TIMEOUT", 10*time.Second),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
 		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
