@@ -461,6 +461,13 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
+	isProbe = (n == 0) && (err == io.EOF || err == nil)
+	if isProbe {
+		log.Debug("cliente fechou conexão imediatamente (0 bytes lidos)", zap.Int("n", n), zap.Error(err))
+		honeypotError = ""
+		goto publish
+	}
+
 	if isClientTimeout {
 		// Só tenta ler greeting do honeypot se a porta for server-first
 		if !isServerFirstPort(h.serverFirstPorts, dstPort) {
