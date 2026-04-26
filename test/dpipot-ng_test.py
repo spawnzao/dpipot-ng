@@ -79,22 +79,28 @@ class ProxyTester:
         except:
             return False
     
-    def validate_certificate(self, host, port):
-        """Valida certificado SSL/TLS incluindo auto-assinados"""
+    def check_port_with_socket(self, port):
+        """Conecta e retorna socket para reusing em handshake TLS"""
         try:
-            # Configura contexto para aceitar certificados auto-assinados
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE  # Aceita qualquer certificado
-            
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
-            sock.connect((host, port))
+            result = sock.connect_ex((self.target_ip, port))
+            if result == 0:
+                return sock
+            sock.close()
+            return None
+        except:
+            return None
+    
+    def test_tls_handshake(self, sock, port, service):
+        """Faz handshake TLS usando socket existente"""
+        try:
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
             
-            # Tenta o handshake SSL
-            ssl_sock = context.wrap_socket(sock, server_hostname=host)
+            ssl_sock = context.wrap_socket(sock, server_hostname=self.target_ip)
             
-            # Obtém o certificado
             cert = ssl_sock.getpeercert()
             
             if cert:
@@ -168,20 +174,29 @@ class ProxyTester:
         self.print_header("VERIFICANDO PORTAS E CERTIFICADOS")
         
         for port, service in sorted(self.ports.items()):
+            sock = None
             is_open = self.check_port(port)
             
             if is_open:
                 self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
                 
                 if port in self.tls_ports:
-                    cert_info = self.validate_certificate(self.target_ip, port)
-                    if cert_info['valid']:
-                        if cert_info.get('has_cert', False):
-                            self.print_test(service, "Certificado TLS", True, cert_info['details'])
+                    sock = self.check_port_with_socket(port)
+                    if sock:
+                        cert_info = self.test_tls_handshake(sock, port, service)
+                        if cert_info['valid']:
+                            if cert_info.get('has_cert', False):
+                                self.print_test(service, "Certificado TLS", True, cert_info['details'])
+                            else:
+                                self.print_test(service, "Conexão TLS", True, "Conexão TLS estabelecida")
                         else:
-                            self.print_test(service, "Conexão TLS", True, "Conexão TLS estabelecida")
+                            self.print_test(service, "Certificado TLS", False, cert_info.get('error', 'Falha'))
+                        try:
+                            sock.close()
+                        except:
+                            pass
                     else:
-                        self.print_test(service, "Certificado TLS", False, cert_info.get('error', 'Falha'))
+                        self.print_test(service, "TLS", False, "Falha ao criar socket")
             else:
                 self.print_test(service, f"Porta {port}", False, "✗ Porta fechada")
     

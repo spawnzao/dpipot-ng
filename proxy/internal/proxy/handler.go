@@ -224,6 +224,10 @@ func (h *Handler) Handle() {
 
 	log.Info("🔍 Handle() iniciado")
 
+	// Aplica timeout de conexão (para evitar conexões órfãs)
+	connectionTimeout := 10 * time.Second
+	h.conn.SetDeadline(time.Now().Add(connectionTimeout))
+
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
@@ -547,10 +551,10 @@ greetingBuf = greetingBuf[:n]
 		firstChunk = firstChunk[:n]
 		bufSrc.Write(firstChunk)
 
-		// Detecta se é conexão de probe (firstChunk todo zeros, sem dados enviados)
-		if bytes.Count(firstChunk, []byte{0}) == len(firstChunk) {
+		// Detecta se é conexão de probe (primeiros dados são zeros - sem dados enviados)
+		if n > 0 && bytes.Count(firstChunk, []byte{0}) == n {
 			isProbe = true
-			log.Debug("🔍 conexão de probe detectada", zap.ByteString("firstChunk", firstChunk))
+			log.Debug("🔍 conexão de probe detectada", zap.Int("bytes", n))
 		}
 	}
 
