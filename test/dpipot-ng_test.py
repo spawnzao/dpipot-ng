@@ -79,8 +79,8 @@ class ProxyTester:
         except:
             return False
     
-    def check_port_with_socket(self, port):
-        """Conecta e retorna socket para reusing em handshake TLS"""
+    def check_and_test_port(self, port):
+        """Conecta e retorna socket para teste TLS"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
@@ -175,30 +175,31 @@ class ProxyTester:
         
         for port, service in sorted(self.ports.items()):
             sock = None
-            is_open = self.check_port(port)
             
-            if is_open:
-                self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
-                
-                if port in self.tls_ports:
-                    sock = self.check_port_with_socket(port)
-                    if sock:
-                        cert_info = self.test_tls_handshake(sock, port, service)
-                        if cert_info['valid']:
-                            if cert_info.get('has_cert', False):
-                                self.print_test(service, "Certificado TLS", True, cert_info['details'])
-                            else:
-                                self.print_test(service, "Conexão TLS", True, "Conexão TLS estabelecida")
+            if port in self.tls_ports:
+                sock = self.check_and_test_port(port)
+                if sock:
+                    self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
+                    cert_info = self.test_tls_handshake(sock, port, service)
+                    if cert_info['valid']:
+                        if cert_info.get('has_cert', False):
+                            self.print_test(service, "Certificado TLS", True, cert_info['details'])
                         else:
-                            self.print_test(service, "Certificado TLS", False, cert_info.get('error', 'Falha'))
-                        try:
-                            sock.close()
-                        except:
-                            pass
+                            self.print_test(service, "Conexão TLS", True, "Conexão TLS estabelecida")
                     else:
-                        self.print_test(service, "TLS", False, "Falha ao criar socket")
+                        self.print_test(service, "Certificado TLS", False, cert_info.get('error', 'Falha'))
+                    try:
+                        sock.close()
+                    except:
+                        pass
+                else:
+                    self.print_test(service, f"Porta {port}", False, "✗ Porta fechada")
             else:
-                self.print_test(service, f"Porta {port}", False, "✗ Porta fechada")
+                is_open = self.check_port(port)
+                if is_open:
+                    self.print_test(service, f"Porta {port}", True, "✓ Porta aberta")
+                else:
+                    self.print_test(service, f"Porta {port}", False, "✗ Porta fechada")
     
     def test_ftp(self):
         """Testa FTP"""
