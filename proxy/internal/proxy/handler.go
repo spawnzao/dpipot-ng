@@ -561,7 +561,7 @@ greetingBuf = greetingBuf[:n]
 		}
 		if isAllZeros {
 			isProbe = true
-			log.Debug("🔍 conexão de probe detectada", zap.Int("bytes", n))
+			log.Info("🔍 conexão de probe detectada", zap.Int("bytes", n), zap.Bool("isProbe", isProbe))
 		}
 	}
 
