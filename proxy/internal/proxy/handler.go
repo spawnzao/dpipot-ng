@@ -552,13 +552,14 @@ greetingBuf = greetingBuf[:n]
 		bufSrc.Write(firstChunk)
 
 		// Detecta se é conexão de probe (todos os bytes lidos são zeros)
-		isAllZeros := true
+		zeroCount := 0
 		for i := 0; i < n; i++ {
-			if firstChunk[i] != 0 {
-				isAllZeros = false
-				break
+			if firstChunk[i] == 0 {
+				zeroCount++
 			}
 		}
+		isAllZeros := zeroCount == n
+		log.Info("🔍 dados recebidos", zap.Int("n", n), zap.Int("zeros", zeroCount), zap.Bool("isAllZeros", isAllZeros))
 		if isAllZeros {
 			isProbe = true
 			log.Info("🔍 conexão de probe detectada", zap.Int("bytes", n), zap.Bool("isProbe", isProbe))
