@@ -442,6 +442,8 @@ greetingBuf = greetingBuf[:n]
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err = h.conn.Read(firstChunk)
 	h.conn.SetReadDeadline(time.Time{})
+	
+	log.Info("📥 dados lidos do cliente", zap.Int("n", n), zap.Error(err))
 
 	// Se der timeout (i/o timeout), pode ser:
 	// 1. Cliente ainda não enviou dados (esperando greeting do servidor - ex: MySQL)
