@@ -15,10 +15,9 @@ on:
       environment:
         description: 'ambiente para deploy'
         required: true
-        default: 'dev'
+        default: 'prod'
         type: choice
         options:
-          - dev
           - prod
 
 jobs:
@@ -61,7 +60,7 @@ jobs:
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "target=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
           else
-            echo "target=dev" >> $GITHUB_OUTPUT
+            echo "target=prod" >> $GITHUB_OUTPUT
           fi
 
       - name: aplica manifests no microk8s
