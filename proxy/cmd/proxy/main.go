@@ -98,7 +98,6 @@ func main() {
 		certMgr,
 		cfg.ServerFirstPorts,
 		cfg.ServerFirstPortsTLS,
-		cfg.PortProtocolMap,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

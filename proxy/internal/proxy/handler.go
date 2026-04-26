@@ -50,13 +50,10 @@ type Handler struct {
 	flowTracker     *flowtracker.Client
 
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
-	serverFirstPorts []uint16
+	serverFirstPorts map[uint16]string
 
 	// serverFirstPortsTLS contém as portas TLS server-first (ex: 993 IMAPS, 995 POP3S)
 	serverFirstPortsTLS map[uint16]string
-
-	// portProtocolMap para fallback via configmap
-	portProtocolMap map[uint16]string
 }
 
 func NewHandler(
@@ -69,9 +66,8 @@ func NewHandler(
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
-	serverFirstPorts []uint16,
+	serverFirstPorts map[uint16]string,
 	serverFirstPortsTLS map[uint16]string,
-	portProtocolMap map[uint16]string,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -85,7 +81,6 @@ func NewHandler(
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
-		portProtocolMap:  portProtocolMap,
 	}
 }
 
@@ -237,11 +232,11 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	// Fallback via configmap PORT_PROTOCOL_MAP
+	// Fallback via SERVER_FIRST_PORTS (same as PORT_PROTOCOL_MAP now)
 	if appProtoFlow == "Unknown" {
-		if proto := h.portProtocolMap[uint16(dstAddr.Port)]; proto != "" {
+		if proto := h.serverFirstPorts[uint16(dstAddr.Port)]; proto != "" {
 			appProtoFlow = proto
-			log.Debug("proto encontrado no PORT_PROTOCOL_MAP", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("proto", proto))
+			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("proto", proto))
 		}
 	}
 
@@ -989,13 +984,9 @@ func (w *limitedTeeWriter) Read(p []byte) (int, error) {
 	return 0, io.EOF
 }
 
-func isServerFirstPort(serverFirstPorts []uint16, port uint16) bool {
-	for _, p := range serverFirstPorts {
-		if p == port {
-			return true
-		}
-	}
-	return false
+func isServerFirstPort(serverFirstPorts map[uint16]string, port uint16) bool {
+	_, ok := serverFirstPorts[port]
+	return ok
 }
 
 func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) string {
