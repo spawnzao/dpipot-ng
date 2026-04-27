@@ -462,7 +462,7 @@ greetingBuf = greetingBuf[:n]
 	}
 
 	isProbe = false
-	if n == 0 {
+	if n == 0 && !isServerFirstPort(h.serverFirstPorts, dstPort) {
 		if err == nil || err == io.EOF {
 			isProbe = true
 		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
