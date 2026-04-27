@@ -461,9 +461,16 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
-	isProbe = (n == 0) && (err == io.EOF || err == nil)
+	isProbe = false
+	if n == 0 {
+		if err == nil || err == io.EOF {
+			isProbe = true
+		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			isProbe = true
+		}
+	}
 	if isProbe {
-		log.Debug("cliente fechou conexão imediatamente (0 bytes lidos)", zap.Int("n", n), zap.Error(err))
+		log.Debug("cliente não enviou dados ou fechou conexão (0 bytes lidos)", zap.Int("n", n), zap.Error(err))
 		honeypotError = ""
 		goto publish
 	}
