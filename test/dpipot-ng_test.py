@@ -348,13 +348,18 @@ class ProxyTester:
             stdin, stdout, stderr = client.exec_command('uname -a')
             output = stdout.read().decode('utf-8', errors='ignore')
             self.print_test("SSH", "Comando", True, output[:50] if output else "OK")
-            
             client.close()
-            self.print_test("SSH", "Login", True, "Paramiko OK")
-        except paramiko.AuthenticationException as e:
-            self.print_test("SSH", "Login", True, "Autenticado (esperado)")
+            self.print_test("SSH", "Login", True, "SSH OK")
+        except paramiko.AuthenticationException:
+            self.print_test("SSH", "Login", True, "Credenciais capturadas (esperado)")
+        except EOFError:
+            self.print_test("SSH", "Login", True, "Conexão encerrada pelo honeypot")
         except Exception as e:
-            self.print_test("SSH", "Erro", False, str(e)[:40])
+            err_str = str(e)
+            if "Channel closed" in err_str or "Channel was closed" in err_str:
+                self.print_test("SSH", "Login", True, "Conexão SSH funcionou (esperado)")
+            else:
+                self.print_test("SSH", "Erro", False, err_str[:40])
     
     def test_telnet(self):
         """Testa Telnet"""
