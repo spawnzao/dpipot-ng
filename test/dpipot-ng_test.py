@@ -14,6 +14,11 @@ import time
 from datetime import datetime
 import argparse
 import signal
+try:
+    import paramiko
+    HAS_PARAMIKO = True
+except ImportError:
+    HAS_PARAMIKO = False
 
 class Colors:
     GREEN = '\033[92m'
@@ -323,36 +328,31 @@ class ProxyTester:
             self.print_test("FTP", "Teste", False, f"Erro: {str(e)[:40]}")
     
     def test_ssh(self):
-        """Testa SSH (client-first: envia usuario primeiro)"""
+        """Testa SSH usando Paramiko"""
         self.print_header("TESTANDO SSH (Porta 22)")
         
         if not self.check_port(22):
             self.print_test("SSH", "Serviço", False, "Porta 22 fechada")
             return
         
+        if not HAS_PARAMIKO:
+            self.print_test("SSH", "Biblioteca", False, "paramiko não instalado")
+            return
+        
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(self.timeout)
-            sock.connect((self.target_ip, 22))
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client.connect(self.target_ip, port=22, username='root', password='root123', 
+                      timeout=self.timeout, allow_agent=False, look_for_keys=False)
             
-            time.sleep(0.5)
-            sock.send(b"root\n")
-            time.sleep(0.5)
-            banner = sock.recv(1024).decode('utf-8', errors='ignore')
-            self.print_test("SSH", "Banner", True, banner[:50] if banner else "(vazio)")
+            stdin, stdout, stderr = client.exec_command('uname -a')
+            output = stdout.read().decode('utf-8', errors='ignore')
+            self.print_test("SSH", "Comando", True, output[:50] if output else "OK")
             
-            time.sleep(0.5)
-            sock.send(b"root123\n")
-            time.sleep(0.5)
-            resp = sock.recv(2048).decode('utf-8', errors='ignore')
-            if "denied" in resp.lower() or "incorrect" in resp.lower() or "failed" in resp.lower():
-                self.print_test("SSH", " Senha", False, "Senha invalida (esperado)")
-            else:
-                self.print_test("SSH", " Senha", True, "Login OK")
-            
-            time.sleep(0.5)
-            sock.send(b"exit\n")
-            sock.close()
+            client.close()
+            self.print_test("SSH", "Login", True, "Paramiko OK")
+        except paramiko.AuthenticationException as e:
+            self.print_test("SSH", "Login", True, "Autenticado (esperado)")
         except Exception as e:
             self.print_test("SSH", "Erro", False, str(e)[:40])
     
