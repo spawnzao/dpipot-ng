@@ -482,6 +482,110 @@ class ProxyTester:
         except Exception as e:
             self.print_test("IMAP", "Teste", False, f"Erro: {str(e)[:40]}")
     
+    def test_smtps(self):
+        """Testa SMTPS (porta 465 - Server-First TLS)"""
+        self.print_header("TESTANDO SMTPS (Porta 465)")
+        
+        if not self.check_port(465):
+            self.print_test("SMTPS", "Serviço", False, "Porta 465 fechada")
+            return
+        
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            sock.connect((self.target_ip, 465))
+            
+            ssl_sock = context.wrap_socket(sock, server_hostname="test")
+            banner = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("SMTPS", "Banner", True, banner[:50] if banner else "TLS OK")
+            
+            ssl_sock.send(b"EHLO test.com\r\n")
+            response = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            if "250" in response:
+                self.print_test("SMTPS", "EHLO", True, "Comando aceito")
+            else:
+                self.print_test("SMTPS", "EHLO", False, response[:40])
+            
+            ssl_sock.send(b"QUIT\r\n")
+            ssl_sock.close()
+        except Exception as e:
+            self.print_test("SMTPS", "Teste", False, f"Erro: {str(e)[:40]}")
+    
+    def test_imaps(self):
+        """Testa IMAPS (porta 993 - Server-First TLS)"""
+        self.print_header("TESTANDO IMAPS (Porta 993)")
+        
+        if not self.check_port(993):
+            self.print_test("IMAPS", "Serviço", False, "Porta 993 fechada")
+            return
+        
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            sock.connect((self.target_ip, 993))
+            
+            ssl_sock = context.wrap_socket(sock, server_hostname="test")
+            banner = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("IMAPS", "Banner", True, banner[:50] if banner else "TLS OK")
+            
+            ssl_sock.send(b"a1 CAPABILITY\r\n")
+            response = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            if "OK" in response:
+                self.print_test("IMAPS", "CAPABILITY", True, "Comando aceito")
+            else:
+                self.print_test("IMAPS", "CAPABILITY", False, response[:40])
+            
+            ssl_sock.send(b"a2 LOGOUT\r\n")
+            ssl_sock.close()
+        except Exception as e:
+            self.print_test("IMAPS", "Teste", False, f"Erro: {str(e)[:40]}")
+    
+    def test_pop3s(self):
+        """Testa POP3S (porta 995 - Server-First TLS)"""
+        self.print_header("TESTANDO POP3S (Porta 995)")
+        
+        if not self.check_port(995):
+            self.print_test("POP3S", "Serviço", False, "Porta 995 fechada")
+            return
+        
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(self.timeout)
+            sock.connect((self.target_ip, 995))
+            
+            ssl_sock = context.wrap_socket(sock, server_hostname="test")
+            banner = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("POP3S", "Banner", True, banner[:50] if banner else "TLS OK")
+            
+            ssl_sock.send(b"USER test\r\n")
+            response = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+            if "+OK" in response:
+                ssl_sock.send(b"PASS test\r\n")
+                response = ssl_sock.recv(1024).decode('utf-8', errors='ignore')
+                if "+OK" in response:
+                    self.print_test("POP3S", "Login", True, "Autenticação OK")
+                    ssl_sock.send(b"QUIT\r\n")
+                else:
+                    self.print_test("POP3S", "Login", False, "Senha inválida")
+            else:
+                self.print_test("POP3S", "Login", False, "Usuário inválido")
+            
+            ssl_sock.close()
+        except Exception as e:
+            self.print_test("POP3S", "Teste", False, f"Erro: {str(e)[:40]}")
+    
     def test_http_https(self):
         """Testa HTTP/HTTPS"""
         self.print_header("TESTANDO HTTP/HTTPS")
@@ -606,6 +710,9 @@ class ProxyTester:
         self.test_smtp()
         self.test_pop3()
         self.test_imap()
+        self.test_smtps()
+        self.test_imaps()
+        self.test_pop3s()
         self.test_http_https()
         self.test_mysql()
         self.test_vnc()
