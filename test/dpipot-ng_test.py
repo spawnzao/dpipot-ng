@@ -323,7 +323,7 @@ class ProxyTester:
             self.print_test("FTP", "Teste", False, f"Erro: {str(e)[:40]}")
     
     def test_ssh(self):
-        """Testa SSH"""
+        """Testa SSH (client-first: envia usuario primeiro)"""
         self.print_header("TESTANDO SSH (Porta 22)")
         
         if not self.check_port(22):
@@ -334,14 +334,12 @@ class ProxyTester:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(self.timeout)
             sock.connect((self.target_ip, 22))
-            banner = sock.recv(1024).decode('utf-8', errors='ignore')
-            self.print_test("SSH", "Banner", True, banner[:50] if banner else "(vazio)")
             
             time.sleep(0.5)
             sock.send(b"root\n")
             time.sleep(0.5)
-            resp = sock.recv(1024).decode('utf-8', errors='ignore')
-            self.print_test("SSH", " Usuario", True, resp[:50] if resp else "enviado")
+            banner = sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("SSH", "Banner", True, banner[:50] if banner else "(vazio)")
             
             time.sleep(0.5)
             sock.send(b"root123\n")
