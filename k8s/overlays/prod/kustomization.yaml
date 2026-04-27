@@ -6,6 +6,7 @@ namespace: dpipot
 resources:
   - ../../base
   - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
+  - pvc-cache.yaml     # PVC novo — precisa ser resource, não patch
 
 # imagens com tag latest
 images:
@@ -53,3 +54,6 @@ patches:
                 imagePullPolicy: "Always"
               - name: classifier
                 imagePullPolicy: "Always"
+
+# ⭐ O secret llm-api-key foi criado manualmente
+# secretGenerator removido - secret já existe no cluster
