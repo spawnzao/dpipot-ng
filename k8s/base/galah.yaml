@@ -20,11 +20,16 @@ spec:
       - name: galah
         image: dtagdevsec/galah:24.04.1
         args:
-          - "--provider=openai"
-          - "--model=llama-3.3-70b-versatile"
-          - "--base-url=https://api.groq.com/openai/v1"
-          - "--cache-db-file=/cache/galah_cache.db"
-          - "--cache-duration=24"
+          - "--provider"
+          - "openai"
+          - "--model"
+          - "llama-3.3-70b-versatile"
+          - "--base-url"
+          - "https://api.groq.com/openai/v1"
+          - "--cache-db-file"
+          - "/cache/galah_cache.db"
+          - "--cache-duration"
+          - "24"
         env:
         - name: LLM_API_KEY
           valueFrom:
