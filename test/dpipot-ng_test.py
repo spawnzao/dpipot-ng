@@ -335,10 +335,28 @@ class ProxyTester:
             sock.settimeout(self.timeout)
             sock.connect((self.target_ip, 22))
             banner = sock.recv(1024).decode('utf-8', errors='ignore')
-            self.print_test("SSH", "Banner", True, banner[:50])
+            self.print_test("SSH", "Banner", True, banner[:50] if banner else "(vazio)")
+            
+            time.sleep(0.5)
+            sock.send(b"root\n")
+            time.sleep(0.5)
+            resp = sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("SSH", " Usuario", True, resp[:50] if resp else "enviado")
+            
+            time.sleep(0.5)
+            sock.send(b"root123\n")
+            time.sleep(0.5)
+            resp = sock.recv(2048).decode('utf-8', errors='ignore')
+            if "denied" in resp.lower() or "incorrect" in resp.lower() or "failed" in resp.lower():
+                self.print_test("SSH", " Senha", False, "Senha invalida (esperado)")
+            else:
+                self.print_test("SSH", " Senha", True, "Login OK")
+            
+            time.sleep(0.5)
+            sock.send(b"exit\n")
             sock.close()
         except Exception as e:
-            self.print_test("SSH", "Banner", False, f"Erro: {str(e)[:40]}")
+            self.print_test("SSH", "Erro", False, str(e)[:40])
     
     def test_telnet(self):
         """Testa Telnet"""
@@ -354,9 +372,26 @@ class ProxyTester:
             sock.connect((self.target_ip, 23))
             banner = sock.recv(1024).decode('utf-8', errors='ignore')
             self.print_test("Telnet", "Conexão", True, banner[:50] if banner else "Conexão OK")
+            
+            time.sleep(0.5)
+            sock.send(b"anonymous\n")
+            time.sleep(0.5)
+            resp = sock.recv(1024).decode('utf-8', errors='ignore')
+            self.print_test("Telnet", " Usuario", True, resp[:50] if "login" in resp.lower() else "enviado")
+            
+            time.sleep(0.5)
+            sock.send(b"test\n")
+            time.sleep(0.5)
+            resp = sock.recv(2048).decode('utf-8', errors='ignore')
+            if "denied" in resp.lower() or "incorrect" in resp.lower() or "failed" in resp.lower() or "incorrect" in resp.lower():
+                self.print_test("Telnet", " Senha", False, "Senha incorreta (esperado)")
+            else:
+                self.print_test("Telnet", " Senha", True, "Login OK")
+            
+            sock.send(b"quit\n")
             sock.close()
         except Exception as e:
-            self.print_test("Telnet", "Conexão", False, f"Erro: {str(e)[:40]}")
+            self.print_test("Telnet", "Erro", False, str(e)[:40])
     
     def test_smtp(self):
         """Testa SMTP"""
