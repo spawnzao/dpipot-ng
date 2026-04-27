@@ -16,6 +16,7 @@ data:
     SSH=cowrie-svc:22,
     FTP=heralding:21,
     SMTP=heralding:25,
+    SMTPS=heralding:25,
     MySQL=heralding:3306,
     Telnet=heralding:23,
     POP=heralding:110,
