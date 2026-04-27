@@ -179,7 +179,7 @@ def test_tls_server_first(self, sock, port, service):
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             
-            ssl_sock = context.wrap_socket(sock)
+            ssl_sock = context.wrap_socket(sock, server_hostname="test")
             cert = ssl_sock.getpeercert()
             
             if cert:
