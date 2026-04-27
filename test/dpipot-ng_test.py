@@ -175,11 +175,11 @@ class ProxyTester:
     def test_tls_server_first(self, sock, port, service):
         """Server-First TLS (Implicit SSL): espera certificado do servidor primeiro"""
         try:
-            context = ssl.create_default_context()
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
             
-            ssl_sock = ssl.wrap_socket(sock, server_side=False)
+            ssl_sock = context.wrap_socket(sock, server_hostname="")
             cert = ssl_sock.getpeercert()
             
             if cert:
