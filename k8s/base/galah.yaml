@@ -24,13 +24,15 @@ spec:
           - "openai"
           - "--model"
           - "llama-3.3-70b-versatile"
-          - "--base-url"
+          - "--server-url"
           - "https://api.groq.com/openai/v1"
           - "--cache-db-file"
           - "/cache/galah_cache.db"
           - "--cache-duration"
           - "24"
         env:
+        - name: LLM_PROVIDER
+          value: "openai"
         - name: LLM_API_KEY
           valueFrom:
             secretKeyRef:
