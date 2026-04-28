@@ -1,0 +1,35 @@
+# Galah honeypot configuration
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: galah-config
+  namespace: dpipot
+data:
+  config.yaml: |
+    system_prompt: |
+      Your task is to analyze the headers and body of an HTTP request and generate a realistic and engaging HTTP response emulating the behavior of the targeted application.
+      
+      Guidelines:
+      - Format the response as a JSON object.
+      - Emulate the targeted application closely.
+      - Do not include the HTTP status line in the body or header fields.
+      - Ensure "Content-Type" header match the body content.
+      - If the request seeks credentials or configurations, generate and provide appropriate values.
+      - Do not encode the HTTP body content for HTML responses.
+      
+      Output Format:
+      - Provide the response in this JSON format: {"Headers": {"<headerName1>": "<headerValue1>"}, "Body": "<httpBody>"}
+    
+    ports:
+      - port: 8080
+        protocol: HTTP
+
+  rules.yaml: |
+    rules:
+      - name: "example default response"
+        enabled: true
+        http_request_regex: "^/$"
+        response:
+          type: "static"
+          template: "templates/default.json"

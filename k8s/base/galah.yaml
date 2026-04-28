@@ -19,35 +19,41 @@ spec:
       containers:
       - name: galah
         image: dtagdevsec/galah:24.04.1
+        command: ["/bin/sh", "-c"]
         args:
-          - "--provider"
-          - "openai"
-          - "--model"
-          - "llama-3.3-70b-versatile"
-          - "--server-url"
-          - "https://api.groq.com/openai/v1"
-          - "--cache-db-file"
-          - "/cache/galah_cache.db"
-          - "--cache-duration"
-          - "24"
+          - |
+            cp /galah/config/config.yaml /tmp/config.yaml
+            cp /galah/config/rules.yaml /tmp/rules.yaml
+            /opt/galah/galah \
+              --provider=openai \
+              --model=llama-3.3-70b-versatile \
+              --api-key=$LLM_API_KEY \
+              --config-file /tmp/config.yaml \
+              --rules-config-file /tmp/rules.yaml \
+              --cache-db-file /galah/data/cache.db \
+              --cache-duration 24 \
+              --event-log-file /galah/data/event_log.json
         env:
-        - name: LLM_PROVIDER
-          value: "openai"
         - name: LLM_API_KEY
           valueFrom:
             secretKeyRef:
               name: llm-api-key
               key: api_key
+        - name: OPENAI_API_BASE
+          value: "https://api.groq.com/openai/v1"
         ports:
         - containerPort: 8080
-        - containerPort: 8443
-        - containerPort: 8888
-        - containerPort: 443
+          name: http
         volumeMounts:
-        - name: galah-cache
-          mountPath: /cache
+        - name: galah-config
+          mountPath: /galah/config
+        - name: galah-data
+          mountPath: /galah/data
       volumes:
-      - name: galah-cache
+      - name: galah-config
+        configMap:
+          name: galah-config
+      - name: galah-data
         persistentVolumeClaim:
           claimName: galah-cache-pvc
 ---
@@ -65,15 +71,3 @@ spec:
       protocol: TCP
       port: 8080
       targetPort: 8080
-    - name: https-alt
-      protocol: TCP
-      port: 8443
-      targetPort: 8443
-    - name: http-alt
-      protocol: TCP
-      port: 8888
-      targetPort: 8888
-    - name: https
-      protocol: TCP
-      port: 443
-      targetPort: 443

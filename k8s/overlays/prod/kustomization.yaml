@@ -7,6 +7,7 @@ resources:
   - ../../base
   - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
   - pvc-cache.yaml     # PVC novo — precisa ser resource, não patch
+  - secrets/galah-secrets.yaml
 
 # imagens com tag latest
 images:
@@ -55,5 +56,3 @@ patches:
               - name: classifier
                 imagePullPolicy: "Always"
 
-# ⭐ O secret llm-api-key foi criado manualmente
-# secretGenerator removido - secret já existe no cluster

@@ -15,8 +15,8 @@ resources:
   - heralding-config.yaml
   - heralding-deployment.yaml
   - heralding-service.yaml
-  #- mariadb-deployment.yaml
-  #- mariadb-service.yaml
+  - galah-config.yaml
+  - galah.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
@@ -25,8 +25,3 @@ images:
     newTag: latest
   - name: ubuntu
     newName: docker.io/library/ubuntu
-
-# secretGenerator:
-#   - name: mariadb-secret
-#     literals:
-#       - root-password=root123
