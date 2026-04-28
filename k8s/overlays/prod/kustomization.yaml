@@ -7,7 +7,7 @@ resources:
   - ../../base
   - kafka-pvc.yaml      # PVC novo — precisa ser resource, não patch
   - pvc-cache.yaml     # PVC novo — precisa ser resource, não patch
-  - secrets/galah-secrets.yaml
+  # secrets já existem no cluster (llm-api-key, logstash-elasticsearch-secrets)
 
 # imagens com tag latest
 images:
