@@ -68,7 +68,7 @@ COPY --from=builder /proxy /proxy
 
 # Copy the httpclassifier configuration file
 #COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
-COPY proxy/internal/httpclassifier/legitimate_paths.yaml /etc/dpipot/legitimate_paths.yaml
+COPY internal/httpclassifier/legitimate_paths.yaml /etc/dpipot/legitimate_paths.yaml
 
 # Run as non-root user
 USER proxy
