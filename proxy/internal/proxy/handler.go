@@ -54,6 +54,12 @@ type Handler struct {
 
 	// serverFirstPortsTLS contém as portas TLS server-first (ex: 993 IMAPS, 995 POP3S)
 	serverFirstPortsTLS map[uint16]string
+
+	// httpAuthPorts contém as portas HTTP que precisam de autenticação (plaintext)
+	httpAuthPorts map[uint16]bool
+
+	// httpAuthPortsTLS contém as portas HTTP TLS que precisam de autenticação
+	httpAuthPortsTLS map[uint16]bool
 }
 
 func NewHandler(
@@ -68,6 +74,8 @@ func NewHandler(
 	certMgr *mitm.CertManager,
 	serverFirstPorts map[uint16]string,
 	serverFirstPortsTLS map[uint16]string,
+	httpAuthPorts map[uint16]bool,
+	httpAuthPortsTLS map[uint16]bool,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -81,6 +89,8 @@ func NewHandler(
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
+		httpAuthPorts: httpAuthPorts,
+		httpAuthPortsTLS: httpAuthPortsTLS,
 	}
 }
 
@@ -277,6 +287,17 @@ func (h *Handler) Handle() {
 	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
 	isServerFirstTLS := mitm.IsServerFirstTLSPort(h.serverFirstPortsTLS, dstPort)
 
+	// Verifica se é porta HTTP AUTH (plaintext ou TLS)
+	isHttpAuth := h.httpAuthPorts[dstPort]
+	isHttpAuthTLS := h.httpAuthPortsTLS[dstPort]
+
+	// Não pode ser server-first E HTTP_AUTH simultaneamente
+	if (isServerFirst || isServerFirstTLS) && (isHttpAuth || isHttpAuthTLS) {
+		log.Warn("porta não pode ser server-first E HTTP_AUTH simultaneamente", zap.Uint16("port", dstPort))
+		honeypotError = "invalid port configuration"
+		goto publish
+	}
+
 	if isServerFirst && isServerFirstTLS {
 		log.Warn("porta não pode ser server-first E server-first-TLS simultaneamente", zap.Uint16("port", dstPort))
 		honeypotError = "invalid server-first configuration"
@@ -325,6 +346,91 @@ func (h *Handler) Handle() {
 		if err != nil {
 			log.Error("HandleServerFirstTLS falhou", zap.Error(err))
 			honeypotError = fmt.Sprintf("server-first TLS relay failed: %v", err)
+		}
+		goto publish
+	}
+
+	// HTTP AUTH TLS: faz MITM TLS e roteia para AUTH
+	if isHttpAuthTLS {
+		log.Debug("porta HTTP AUTH TLS detectada",
+			zap.Uint16("port", dstPort))
+
+		honeypotAddr, _ = h.router.Resolve("AUTH")
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
+			honeypotError = "no honeypot for AUTH"
+			goto publish
+		}
+
+		cert := h.certMgr.Cert()
+		mitmLogger := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf("HTTP_AUTH_TLS: "+format, args...)
+			log.Info(msg)
+		}
+
+		err = mitm.HandleServerFirstTLS(mitm.ServerFirstTLSConfig{
+			ClientConn:   h.conn,
+			HoneypotConn: nil,
+			Cert:        cert,
+			FlowID:      h.flowID,
+			SrcIP:       h.srcIP,
+			SrcPort:     h.srcPort,
+			DstIP:       h.dstIP,
+			DstPort:     h.dstPort,
+			HoneypotAddr: honeypotAddr,
+			NDPIProto:   "HTTP-AUTH",
+			MaxPayloadSize: h.maxPayloadBytes,
+			OnEvent: func(event *kafka.Event) {
+				h.producer.Publish(event)
+			},
+			Logger: mitmLogger,
+		})
+		if err != nil {
+			log.Error("HandleServerFirstTLS (HTTP_AUTH_TLS) falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("HTTP_AUTH_TLS relay failed: %v", err)
+		}
+		goto publish
+	}
+
+	// HTTP AUTH (plaintext) - roteia langsung untuk AUTH
+	if isHttpAuth {
+		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
+			zap.Uint16("port", dstPort))
+
+		honeypotAddr, _ = h.router.Resolve("AUTH")
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
+			honeypotError = "no honeypot for AUTH"
+			goto publish
+		}
+
+		// Conecta ao honeypot AUTH
+		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		if err != nil {
+			log.Error("falha conectando ao honeypot (HTTP AUTH)",
+				zap.String("honeypot", honeypotAddr),
+				zap.Error(err))
+			honeypotError = fmt.Sprintf("connection to AUTH failed: %v", err)
+			goto publish
+		}
+
+		log.Debug("conectado ao honeypot AUTH",
+			zap.String("honeypot", honeypotAddr))
+
+		// Relay simples: cliente <-> honeypot (sem NDPI classification)
+		ndpiLabel = "HTTP-AUTH"
+
+		go func() {
+			_, _ = io.Copy(honeypotConn, h.conn)
+			honeypotConn.Close()
+			h.conn.Close()
+		}()
+		_, err = io.Copy(h.conn, honeypotConn)
+		honeypotConn.Close()
+		h.conn.Close()
+
+		if err != nil && err != io.EOF {
+			log.Debug("erro no relay HTTP AUTH", zap.Error(err))
 		}
 		goto publish
 	}

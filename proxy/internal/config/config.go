@@ -24,6 +24,8 @@ type Config struct {
 	ClassifierPort    int
 	ServerFirstPorts      map[uint16]string
 	ServerFirstPortsTLS map[uint16]string
+	HttpAuthPorts        map[uint16]bool
+	HttpAuthPortsTLS     map[uint16]bool
 }
 
 func Load() (*Config, error) {
@@ -54,6 +56,12 @@ func Load() (*Config, error) {
 
 	serverFirstPortsTLSRaw := getEnv("SERVER_FIRST_PORTS_TLS", "")
 	cfg.ServerFirstPortsTLS = parseServerFirstPortsTLS(serverFirstPortsTLSRaw)
+
+	httpAuthPortsRaw := getEnv("HTTP_AUTH_PORTS", "")
+	cfg.HttpAuthPorts = parsePortList(httpAuthPortsRaw)
+
+	httpAuthPortsTLSRaw := getEnv("HTTP_AUTH_PORTS_TLS", "")
+	cfg.HttpAuthPortsTLS = parsePortList(httpAuthPortsTLSRaw)
 
 	return cfg, nil
 }
@@ -184,6 +192,26 @@ func parseServerFirstPortsTLS(raw string) map[uint16]string {
 			continue
 		}
 		result[uint16(port)] = strings.TrimSpace(parts[1])
+	}
+	return result
+}
+
+func parsePortList(raw string) map[uint16]bool {
+	result := make(map[uint16]bool)
+	if raw == "" {
+		return result
+	}
+
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		port, err := strconv.ParseUint(entry, 10, 16)
+		if err != nil {
+			continue
+		}
+		result[uint16(port)] = true
 	}
 	return result
 }

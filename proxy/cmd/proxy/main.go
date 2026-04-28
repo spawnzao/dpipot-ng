@@ -98,6 +98,8 @@ func main() {
 		certMgr,
 		cfg.ServerFirstPorts,
 		cfg.ServerFirstPortsTLS,
+		cfg.HttpAuthPorts,
+		cfg.HttpAuthPortsTLS,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

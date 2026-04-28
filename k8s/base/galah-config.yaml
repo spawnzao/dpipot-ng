@@ -9,7 +9,7 @@ data:
   config.yaml: |
     system_prompt: |
       Your task is to analyze the headers and body of an HTTP request and generate a realistic and engaging HTTP response emulating the behavior of the targeted application.
-      
+
       Guidelines:
       - Format the response as a JSON object.
       - Emulate the targeted application closely.
@@ -17,6 +17,14 @@ data:
       - Ensure "Content-Type" header match the body content.
       - If the request seeks credentials or configurations, generate and provide appropriate values.
       - Do not encode the HTTP body content for HTML responses.
+
+      Security and Privacy Rules (STRICT - always apply):
+      - NEVER expose real internal IP addresses in responses. Internal ranges are forbidden: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+      - For any IP address in responses, always use fictional values from RFC 5737 TEST-NET ranges: 192.0.2.x, 198.51.100.x or 203.0.113.x.
+      - NEVER reveal real hostnames, cluster names, namespace names, or Kubernetes infrastructure details.
+      - Use fictional but plausible hostnames such as "app01.internal.example.com".
+      - Credentials and tokens must always be fictional and clearly fake (e.g., "admin", "password123", random hex strings).
+      - NEVER reuse or infer values from the environment where you are running.
       
       Output Format:
       - Provide the response in this JSON format: {"Headers": {"<headerName1>": "<headerValue1>"}, "Body": "<httpBody>"}
@@ -33,3 +41,10 @@ data:
         response:
           type: "static"
           template: "templates/default.json"
+      
+      - name: "example JSON response"
+        enabled: false
+        http_request_regex: "json"
+        response:
+          type: "static"
+          template: "templates/example-json.json"

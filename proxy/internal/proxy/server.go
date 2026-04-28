@@ -29,6 +29,8 @@ type Server struct {
 	certMgr         *mitm.CertManager
 	serverFirstPorts map[uint16]string
 	serverFirstPortsTLS map[uint16]string
+	httpAuthPorts map[uint16]bool
+	httpAuthPortsTLS map[uint16]bool
 }
 
 func NewServer(
@@ -42,6 +44,8 @@ func NewServer(
 	certMgr *mitm.CertManager,
 	serverFirstPorts map[uint16]string,
 	serverFirstPortsTLS map[uint16]string,
+	httpAuthPorts map[uint16]bool,
+	httpAuthPortsTLS map[uint16]bool,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -54,6 +58,8 @@ func NewServer(
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
+		httpAuthPorts: httpAuthPorts,
+		httpAuthPortsTLS: httpAuthPortsTLS,
 	}
 }
 
@@ -151,6 +157,8 @@ func (s *Server) handle(conn net.Conn) {
 		s.certMgr,
 		s.serverFirstPorts,
 		s.serverFirstPortsTLS,
+		s.httpAuthPorts,
+		s.httpAuthPortsTLS,
 	)
 	h.Handle()
 
