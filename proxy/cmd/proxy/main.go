@@ -87,7 +87,7 @@ func main() {
 		log,
 	)
 
-// initialize HTTP classifier with whitelist
+	// initialize HTTP classifier with whitelist
 	path := os.Getenv("HTTP_CLASSIFIER_CONFIG")
 	if path == "" {
     	path = "/etc/dpipot/legitimate_paths.yaml"
