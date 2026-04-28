@@ -350,7 +350,7 @@ func (h *Handler) Handle() {
 		goto publish
 	}
 
-	// HTTP AUTH (plaintext) - roteia langsung untuk AUTH
+	// HTTP AUTH (plaintext): routes to AUTH honeypot
 	if isHttpAuth {
 		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
 			zap.Uint16("port", dstPort))
