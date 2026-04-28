@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ── stage 1: build proxy Go ─────────────────────────────────────────────
 FROM golang:1.26-bookworm AS builder
 
@@ -55,10 +53,12 @@ COPY --from=builder /usr/local/lib/libndpi.so /usr/local/lib/libndpi.so
 
 ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 
+# Copy httpclassifier config (from builder stage)
+COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
+
 RUN id -u proxy 2>/dev/null || useradd -u 1000 -m proxy
 
 COPY --from=builder /proxy /proxy
-COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
 
 USER proxy
 EXPOSE 8080
