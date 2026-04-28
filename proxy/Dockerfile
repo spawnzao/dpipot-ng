@@ -58,6 +58,7 @@ ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
 RUN id -u proxy 2>/dev/null || useradd -u 1000 -m proxy
 
 COPY --from=builder /proxy /proxy
+COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
 
 USER proxy
 EXPOSE 8080
