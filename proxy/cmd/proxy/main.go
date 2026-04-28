@@ -88,7 +88,7 @@ func main() {
 	)
 
 	// inicializa classificador HTTP por lista branca
-	httpClassifier, err := httpclassifier.LoadFromFile("proxy/internal/httpclassifier/legitimate_paths.yaml")
+	httpClassifier, err := httpclassifier.LoadFromFile("/app/proxy/internal/httpclassifier/legitimate_paths.yaml")
 	if err != nil {
 		log.Fatal("falha carregando legitimate_paths.yaml", zap.Error(err))
 	}
