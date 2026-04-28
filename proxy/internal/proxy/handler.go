@@ -350,37 +350,6 @@ func (h *Handler) Handle() {
 		goto publish
 	}
 
-	// HTTP AUTH (plaintext): routes to AUTH honeypot
-	if isHttpAuth {
-		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
-			zap.Uint16("port", dstPort))
-
-		honeypotAddr, _ = h.router.Resolve("AUTH")
-		if honeypotAddr == "" {
-			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
-			honeypotError = "no honeypot for AUTH"
-			goto publish
-		}
-
-		// Conecta ao honeypot AUTH
-		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
-		if err != nil {
-			log.Error("falha conectando ao honeypot (HTTP AUTH)",
-				zap.String("honeypot", honeypotAddr),
-				zap.Error(err))
-			honeypotError = fmt.Sprintf("connection to AUTH failed: %v", err)
-			goto publish
-		}
-
-		log.Debug("conectado ao honeypot AUTH", zap.String("honeypot", honeypotAddr))
-
-		// Usa o relay existente com Kafka event capture
-		ndpiLabel = "HTTP-AUTH"
-		skipFirstChunkWrite = true // já enviou no Connect
-
-		goto doRelay
-	}
-
 	if isServerFirst {
 		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
 			zap.Uint16("port", dstPort))
@@ -736,6 +705,19 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+
+	// Se for porta HTTP_AUTH (plaintext), sobrescreve para AUTH
+	if isHttpAuth {
+		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
+			zap.Uint16("port", dstPort))
+		honeypotAddr, _ = h.router.Resolve("AUTH")
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
+			honeypotError = "no honeypot for AUTH"
+			goto publish
+		}
+		ndpiLabel = "HTTP-AUTH"
+	}
 
 	// --- STEP 4.5: verifica se precisa de MITM ---
 	isSSH = mitm.IsSSH(firstChunk)
