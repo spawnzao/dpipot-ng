@@ -1042,7 +1042,7 @@ publish:
 		SrcPort:       srcAddr.Port,
 		DstIP:         origDstIP.String(),
 		DstPort:       int(origDstPort),
-		NDPIProto:     masterProtoFlow,
+		NDPIProto:     ndpiLabel,
 		NDPIApp:       appProtoFlow,
 		Honeypot:      honeypotAddr,
 		HoneypotError: honeypotError,
