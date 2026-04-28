@@ -44,18 +44,23 @@ spec:
         ports:
         - containerPort: 8080
           name: http
-        volumeMounts:
-        - name: galah-config
-          mountPath: /galah/config
-        - name: galah-data
-          mountPath: /galah/data
-      volumes:
-      - name: galah-config
-        configMap:
-          name: galah-config
-      - name: galah-data
-        persistentVolumeClaim:
-          claimName: galah-cache-pvc
+       volumeMounts:
+       - name: galah-config
+         mountPath: /galah/config
+       - name: galah-data
+         mountPath: /galah/data
+       - name: http-classifier-config
+         mountPath: /etc/dpipot
+     volumes:
+       - name: galah-config
+         configMap:
+           name: galah-config
+       - name: galah-data
+         persistentVolumeClaim:
+           claimName: galah-cache-pvc
+       - name: http-classifier-config
+         configMap:
+           name: http-classifier-config
 ---
 apiVersion: v1
 kind: Service
