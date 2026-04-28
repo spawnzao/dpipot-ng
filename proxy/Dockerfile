@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # ── stage 1: build proxy Go ─────────────────────────────────────────────
 FROM golang:1.26-bookworm AS builder
 
@@ -35,6 +33,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
+# Debug: list files to verify structure
+RUN find /app -name "legitimate_paths.yaml" -o -name "classifier.go" -path "*/httpclassifier/*" | head -10
+
 # Build the proxy
 RUN CGO_ENABLED=1 CGO_CFLAGS="-I/usr/local/include" CGO_LDFLAGS="-L/usr/local/lib -lndpi -lpcap -lpthread -lm" \
     go build -ldflags="-s -w" -o /proxy ./cmd/proxy
@@ -66,7 +67,8 @@ RUN id -u proxy 2>/dev/null || useradd -u 1000 -m proxy
 COPY --from=builder /proxy /proxy
 
 # Copy the httpclassifier configuration file
-COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
+#COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /app/proxy/internal/httpclassifier/legitimate_paths.yaml
+COPY proxy/internal/httpclassifier/legitimate_paths.yaml /etc/dpipot/legitimate_paths.yaml
 
 # Run as non-root user
 USER proxy

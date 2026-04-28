@@ -39,3 +39,4 @@ data:
   TLS_USE_REALISTIC: "true"
   #TLS_CERT_ORG: "Nexus Systems"
   #TLS_CERT_DOMAIN: "mail.nexussys.com"
+  HTTP_CLASSIFIER_CONFIG: "/etc/dpipot/legitimate_paths.yaml"
