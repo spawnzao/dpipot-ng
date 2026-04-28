@@ -58,9 +58,6 @@ spec:
        - name: galah-data
          persistentVolumeClaim:
            claimName: galah-cache-pvc
-       - name: http-classifier-config
-         configMap:
-           name: http-classifier-config
 ---
 apiVersion: v1
 kind: Service

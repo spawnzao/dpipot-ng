@@ -17,7 +17,6 @@ resources:
   - heralding-service.yaml
   - galah-config.yaml
   - galah.yaml
-  - http-classifier-config.yaml
 
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy

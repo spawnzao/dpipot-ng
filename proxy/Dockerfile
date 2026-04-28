@@ -67,7 +67,7 @@ RUN id -u proxy 2>/dev/null || useradd -u 1000 -m proxy
 COPY --from=builder /proxy /proxy
 
 # Copy the httpclassifier configuration file
-COPY --from=builder /app/proxy/internal/httpclassifier/legitimate_paths.yaml /etc/dpipot/legitimate_paths.yaml
+COPY internal/httpclassifier/legitimate_paths.yaml /etc/dpipot/legitimate_paths.yaml
 
 # Run as non-root user
 USER proxy
