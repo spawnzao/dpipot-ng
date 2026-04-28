@@ -350,48 +350,6 @@ func (h *Handler) Handle() {
 		goto publish
 	}
 
-	// HTTP AUTH TLS: faz MITM TLS e roteia para AUTH
-	if isHttpAuthTLS {
-		log.Debug("porta HTTP AUTH TLS detectada",
-			zap.Uint16("port", dstPort))
-
-		honeypotAddr, _ = h.router.Resolve("AUTH")
-		if honeypotAddr == "" {
-			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
-			honeypotError = "no honeypot for AUTH"
-			goto publish
-		}
-
-		cert := h.certMgr.Cert()
-		mitmLogger := func(format string, args ...interface{}) {
-			msg := fmt.Sprintf("HTTP_AUTH_TLS: "+format, args...)
-			log.Info(msg)
-		}
-
-		err = mitm.HandleServerFirstTLS(mitm.ServerFirstTLSConfig{
-			ClientConn:   h.conn,
-			HoneypotConn: nil,
-			Cert:        cert,
-			FlowID:      h.flowID,
-			SrcIP:       h.srcIP,
-			SrcPort:     h.srcPort,
-			DstIP:       h.dstIP,
-			DstPort:     h.dstPort,
-			HoneypotAddr: honeypotAddr,
-			NDPIProto:   "HTTP-AUTH",
-			MaxPayloadSize: h.maxPayloadBytes,
-			OnEvent: func(event *kafka.Event) {
-				h.producer.Publish(event)
-			},
-			Logger: mitmLogger,
-		})
-		if err != nil {
-			log.Error("HandleServerFirstTLS (HTTP_AUTH_TLS) falhou", zap.Error(err))
-			honeypotError = fmt.Sprintf("HTTP_AUTH_TLS relay failed: %v", err)
-		}
-		goto publish
-	}
-
 	// HTTP AUTH (plaintext) - roteia langsung untuk AUTH
 	if isHttpAuth {
 		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
@@ -414,25 +372,13 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
-		log.Debug("conectado ao honeypot AUTH",
-			zap.String("honeypot", honeypotAddr))
+		log.Debug("conectado ao honeypot AUTH", zap.String("honeypot", honeypotAddr))
 
-		// Relay simples: cliente <-> honeypot (sem NDPI classification)
+		// Usa o relay existente com Kafka event capture
 		ndpiLabel = "HTTP-AUTH"
+		skipFirstChunkWrite = true // já enviou no Connect
 
-		go func() {
-			_, _ = io.Copy(honeypotConn, h.conn)
-			honeypotConn.Close()
-			h.conn.Close()
-		}()
-		_, err = io.Copy(h.conn, honeypotConn)
-		honeypotConn.Close()
-		h.conn.Close()
-
-		if err != nil && err != io.EOF {
-			log.Debug("erro no relay HTTP AUTH", zap.Error(err))
-		}
-		goto publish
+		goto doRelay
 	}
 
 	if isServerFirst {
@@ -869,7 +815,21 @@ mitmLogger := func(format string, args ...interface{}) {
 	}
 
 	// TLS: usa MITM com certificados do CertManager (do disco ou gerados)
+	// Se for porta HTTP_AUTH_TLS, roteia para AUTH em vez do protocolo nDPI
 	if isTLS {
+		// Se for porta HTTP_AUTH_TLS, roteia para AUTH
+		if isHttpAuthTLS {
+			log.Debug("porta HTTP AUTH TLS detectada, roteando para AUTH",
+				zap.Uint16("port", dstPort))
+			honeypotAddr, _ = h.router.Resolve("AUTH")
+			if honeypotAddr == "" {
+				log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
+				honeypotError = "no honeypot for AUTH"
+				goto publish
+			}
+			ndpiLabel = "HTTP-AUTH"
+		}
+
 		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
 
 		var bufSrcTLS, bufDstTLS bytes.Buffer
