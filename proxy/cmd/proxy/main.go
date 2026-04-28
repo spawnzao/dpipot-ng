@@ -87,18 +87,16 @@ func main() {
 		log,
 	)
 
+// initialize HTTP classifier with whitelist
 	path := os.Getenv("HTTP_CLASSIFIER_CONFIG")
 	if path == "" {
     	path = "/etc/dpipot/legitimate_paths.yaml"
 	}
 	httpClassifier, err := httpclassifier.LoadFromFile(path)
-
-// inicializa classificador HTTP por lista branca
-	httpClassifier, err := httpclassifier.LoadFromFile("/app/proxy/internal/httpclassifier/legitimate_paths.yaml")
 	if err != nil {
-		log.Fatal("falha carregando legitimate_paths.yaml", zap.Error(err))
+		log.Fatal("failed to load legitimate_paths.yaml", zap.Error(err))
 	}
-	log.Info("classificador HTTP carregado com sucesso", zap.String("path", "/app/proxy/internal/httpclassifier/legitimate_paths.yaml"))
+	log.Info("HTTP classifier loaded successfully", zap.String("path", path))
 
 	// inicializa servidor TCP
 	server := proxypkg.NewServer(
