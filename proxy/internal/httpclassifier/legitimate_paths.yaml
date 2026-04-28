@@ -1,0 +1,15 @@
+legitimate_requests:
+  - "GET /"
+  - "HEAD /"
+  - "GET /favicon.ico"
+  - "GET /robots.txt"
+  - "GET /index.html"
+  - "GET /index.php"
+  - "GET /sitemap.xml"
+
+  - "GET /static/*"
+  - "GET /assets/*"
+  - "GET /css/*"
+  - "GET /js/*"
+  - "GET /images/*"
+  - "GET /fonts/*"

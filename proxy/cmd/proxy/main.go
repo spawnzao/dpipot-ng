@@ -10,6 +10,7 @@ import (
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/config"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	kafkapkg "github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
@@ -86,6 +87,12 @@ func main() {
 		log,
 	)
 
+	// inicializa classificador HTTP por lista branca
+	httpClassifier, err := httpclassifier.LoadFromFile("proxy/internal/httpclassifier/legitimate_paths.yaml")
+	if err != nil {
+		log.Fatal("falha carregando legitimate_paths.yaml", zap.Error(err))
+	}
+
 	// inicializa servidor TCP
 	server := proxypkg.NewServer(
 		cfg.ListenAddr,
@@ -100,6 +107,7 @@ func main() {
 		cfg.ServerFirstPortsTLS,
 		cfg.HttpAuthPorts,
 		cfg.HttpAuthPortsTLS,
+		httpClassifier,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)

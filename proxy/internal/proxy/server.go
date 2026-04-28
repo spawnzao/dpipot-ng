@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
@@ -31,6 +32,7 @@ type Server struct {
 	serverFirstPortsTLS map[uint16]string
 	httpAuthPorts map[uint16]bool
 	httpAuthPortsTLS map[uint16]bool
+	httpClassifier *httpclassifier.Classifier
 }
 
 func NewServer(
@@ -46,6 +48,7 @@ func NewServer(
 	serverFirstPortsTLS map[uint16]string,
 	httpAuthPorts map[uint16]bool,
 	httpAuthPortsTLS map[uint16]bool,
+	httpClassifier *httpclassifier.Classifier,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -58,8 +61,9 @@ func NewServer(
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
-		httpAuthPorts: httpAuthPorts,
-		httpAuthPortsTLS: httpAuthPortsTLS,
+		httpAuthPorts:      httpAuthPorts,
+		httpAuthPortsTLS:    httpAuthPortsTLS,
+		httpClassifier:   httpClassifier,
 	}
 }
 
@@ -159,6 +163,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.serverFirstPortsTLS,
 		s.httpAuthPorts,
 		s.httpAuthPortsTLS,
+		s.httpClassifier,
 	)
 	h.Handle()
 

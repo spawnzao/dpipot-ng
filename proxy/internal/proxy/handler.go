@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
+	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
@@ -60,6 +61,9 @@ type Handler struct {
 
 	// httpAuthPortsTLS contém as portas HTTP TLS que precisam de autenticação
 	httpAuthPortsTLS map[uint16]bool
+
+	// httpClassifier classifica requisições HTTP por lista branca
+	httpClassifier *httpclassifier.Classifier
 }
 
 func NewHandler(
@@ -76,6 +80,7 @@ func NewHandler(
 	serverFirstPortsTLS map[uint16]string,
 	httpAuthPorts map[uint16]bool,
 	httpAuthPortsTLS map[uint16]bool,
+	httpClassifier *httpclassifier.Classifier,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -89,8 +94,9 @@ func NewHandler(
 		certMgr:         certMgr,
 		serverFirstPorts: serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
-		httpAuthPorts: httpAuthPorts,
-		httpAuthPortsTLS: httpAuthPortsTLS,
+		httpAuthPorts:      httpAuthPorts,
+		httpAuthPortsTLS:    httpAuthPortsTLS,
+		httpClassifier:     httpClassifier,
 	}
 }
 
@@ -705,6 +711,39 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+
+	// Classificação HTTP por lista branca
+	if h.httpClassifier != nil && (ndpiLabel == "HTTP") && !isHttpAuth && !isHttpAuthTLS {
+		class, httpMethod, httpPath := h.httpClassifier.Classify(firstChunk)
+
+		switch class {
+		case httpclassifier.ClassUnknown:
+			log.Debug("HTTP: payload nao reconhecido como HTTP textual, mantendo rota normal",
+				zap.String("proto", ndpiLabel),
+			)
+
+		case httpclassifier.ClassLegitimate:
+			log.Debug("HTTP legitimo, mantendo rota normal",
+				zap.String("method", httpMethod),
+				zap.String("path", httpPath),
+			)
+
+		case httpclassifier.ClassMalicious:
+			log.Info("HTTP malicioso detectado, roteando para HTTP-ATTACK",
+				zap.String("method", httpMethod),
+				zap.String("path", httpPath),
+				zap.String("src", h.srcIP),
+			)
+			if addr, _ := h.router.Resolve("HTTP-ATTACK"); addr != "" {
+				honeypotAddr = addr
+				ndpiLabel = "HTTP-ATTACK"
+			} else {
+				log.Warn("honeypot HTTP-ATTACK nao configurado, mantendo rota normal",
+					zap.String("path", httpPath),
+				)
+			}
+		}
+	}
 
 	// Se for porta HTTP_AUTH (plaintext), sobrescreve para AUTH
 	if isHttpAuth {
