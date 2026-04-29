@@ -718,12 +718,12 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 		switch class {
 		case httpclassifier.ClassUnknown:
-			log.Debug("HTTP: payload nao reconhecido como HTTP textual, mantendo rota normal",
+			log.Debug("HTTP: payload não reconhecido como HTTP textual, mantendo rota normal",
 				zap.String("proto", ndpiLabel),
 			)
 
 		case httpclassifier.ClassLegitimate:
-			log.Debug("HTTP legitimo, mantendo rota normal",
+			log.Debug("HTTP legítimo, mantendo rota normal",
 				zap.String("method", httpMethod),
 				zap.String("path", httpPath),
 			)
@@ -738,7 +738,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 				honeypotAddr = addr
 				ndpiLabel = "HTTP-ATTACK"
 			} else {
-				log.Warn("honeypot HTTP-ATTACK nao configurado, mantendo rota normal",
+				log.Warn("honeypot HTTP-ATTACK não configurado, mantendo rota normal",
 					zap.String("path", httpPath),
 				)
 			}
@@ -873,8 +873,19 @@ mitmLogger := func(format string, args ...interface{}) {
 			mitmConfig.OnFirstDecrypted = func(chunk []byte) string {
 				class, httpMethod, httpPath := h.httpClassifier.Classify(chunk)
 				switch class {
+				case httpclassifier.ClassUnknown:
+					log.Debug("HTTPS: payload não reconhecido como HTTP textual, mantendo rota normal",
+						zap.String("proto", ndpiLabel),
+					)
+
+				case httpclassifier.ClassLegitimate:
+					log.Debug("HTTPS legítimo, mantendo rota normal",
+						zap.String("method", httpMethod),
+						zap.String("path", httpPath),
+					)
+
 				case httpclassifier.ClassMalicious:
-					log.Info("HTTPS malicioso detectado via TLS MITM, roteando para HTTP-ATTACK",
+					log.Info("HTTPS malicioso detectado, roteando para HTTP-ATTACK",
 						zap.String("method", httpMethod),
 						zap.String("path", httpPath),
 						zap.String("src", h.srcIP),
@@ -884,12 +895,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						ndpiLabel = "HTTPS-ATTACK"
 						return attackAddr
 					}
-					log.Warn("honeypot HTTP-ATTACK não configurado, mantendo rota TLS normal",
-						zap.String("path", httpPath),
-					)
-				case httpclassifier.ClassLegitimate:
-					log.Debug("HTTPS legítimo via MITM, mantendo rota normal",
-						zap.String("method", httpMethod),
+					log.Warn("honeypot HTTP-ATTACK não configurado, mantendo rota normal",
 						zap.String("path", httpPath),
 					)
 				}
