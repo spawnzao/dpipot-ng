@@ -717,7 +717,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 		switch class {
 		case httpclassifier.ClassUnknown:
-			log.Debug("HTTP: payload não reconhecido como HTTP textual, mantendo rota normal",
+			log.Debug("HTTP: payload não reconhecido, mantendo rota normal",
 				zap.String("proto", ndpiLabel),
 			)
 
@@ -728,7 +728,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			)
 
 		case httpclassifier.ClassMalicious:
-			log.Info("🚨 HTTP malicioso detectado, roteando para HTTP_SUSPECT",
+			log.Info("🚨 HTTP suspeito detectado, roteando para HTTP_SUSPECT",
 				zap.String("method", httpMethod),
 				zap.String("path", httpPath),
 				zap.String("src", h.srcIP),
@@ -873,7 +873,7 @@ mitmLogger := func(format string, args ...interface{}) {
 				class, httpMethod, httpPath := h.httpClassifier.Classify(chunk)
 				switch class {
 				case httpclassifier.ClassUnknown:
-					log.Debug("HTTPS: payload não reconhecido como HTTP textual, mantendo rota normal",
+					log.Debug("HTTPS: payload não reconhecido, mantendo rota normal",
 						zap.String("proto", ndpiLabel),
 					)
 
@@ -884,7 +884,7 @@ mitmLogger := func(format string, args ...interface{}) {
 					)
 
 				case httpclassifier.ClassMalicious:
-					log.Info("🚨 HTTPS malicioso detectado, roteando para HTTP_SUSPECT",
+					log.Info("🚨 HTTPS suspeito detectado, roteando para HTTP_SUSPECT",
 						zap.String("method", httpMethod),
 						zap.String("path", httpPath),
 						zap.String("src", h.srcIP),
