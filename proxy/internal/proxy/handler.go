@@ -676,9 +676,9 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			log.Info("fluxo classificado via FlowTracker",
 				zap.String("ndpi_proto", masterProtoFlow),
 				zap.String("ndpi_app", appProtoFlow),
-				zap.String("flow_id", flowIDForTracker))
+			)
 		} else {
-			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.String("flow_id", flowIDForTracker), zap.Error(err))
+			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.Error(err))
 			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
 			defer cancel()
 			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
