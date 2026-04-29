@@ -43,6 +43,7 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 
 	clientTLS := tls.Server(config.ClientConn, &tls.Config{
 		Certificates: []tls.Certificate{config.Cert},
+		MinVersion:   tls.VersionTLS10,
 	})
 
 	if err := clientTLS.Handshake(); err != nil {

@@ -851,6 +851,7 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 
 	tlsServer := tls.Server(connToUse, &tls.Config{
 		Certificates: []tls.Certificate{config.Cert},
+		MinVersion:   tls.VersionTLS10,
 	})
 
 	if err := tlsServer.Handshake(); err != nil {
