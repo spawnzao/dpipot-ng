@@ -144,7 +144,7 @@ func (s *Server) handle(conn net.Conn) {
 	flowID := uuid.New().String()
 	log := s.log.With(zap.String("flow_id", flowID))
 
-	log.Debug("🔌Handler started!",
+	log.Debug("🔌 Handler started!",
 		zap.String("local_addr", conn.LocalAddr().String()),
 		zap.String("remote_addr", conn.RemoteAddr().String()),
 	)
