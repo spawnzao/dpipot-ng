@@ -868,6 +868,35 @@ mitmLogger := func(format string, args ...interface{}) {
 			},
 		}
 
+		// Classificação HTTP sobre TLS (HTTPS): inspeciona o primeiro chunk decriptado
+		if h.httpClassifier != nil && !isHttpAuth && !isHttpAuthTLS {
+			mitmConfig.OnFirstDecrypted = func(chunk []byte) string {
+				class, httpMethod, httpPath := h.httpClassifier.Classify(chunk)
+				switch class {
+				case httpclassifier.ClassMalicious:
+					log.Info("HTTPS malicioso detectado via TLS MITM, roteando para HTTP-ATTACK",
+						zap.String("method", httpMethod),
+						zap.String("path", httpPath),
+						zap.String("src", h.srcIP),
+					)
+					if attackAddr, _ := h.router.Resolve("HTTP-ATTACK"); attackAddr != "" {
+						honeypotAddr = attackAddr
+						ndpiLabel = "HTTPS-ATTACK"
+						return attackAddr
+					}
+					log.Warn("honeypot HTTP-ATTACK não configurado, mantendo rota TLS normal",
+						zap.String("path", httpPath),
+					)
+				case httpclassifier.ClassLegitimate:
+					log.Debug("HTTPS legítimo via MITM, mantendo rota normal",
+						zap.String("method", httpMethod),
+						zap.String("path", httpPath),
+					)
+				}
+				return ""
+			}
+		}
+
 		mitmLogger := func(format string, args ...interface{}) {
 			log.Info("TLS-MITM: "+fmt.Sprintf(format, args...))
 		}
