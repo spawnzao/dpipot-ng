@@ -7,6 +7,8 @@ import (
 	"syscall"
 	"time"
 
+	"go.uber.org/zap/zapcore"
+
 	"github.com/spawnzao/dpipot-ng/classifier/internal/capture"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/config"
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
@@ -23,7 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	logger, err := zap.NewDevelopment()
+	logger, err := newLogger(cfg.LogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to init logger: %v\n", err)
 		os.Exit(1)
@@ -156,3 +158,30 @@ func main() {
 	logger.Info("classifier stopped")
 }
 
+func newLogger(level string) (*zap.Logger, error) {
+	lvl := zapcore.InfoLevel
+	if err := lvl.UnmarshalText([]byte(level)); err != nil {
+		lvl = zapcore.InfoLevel
+	}
+	cfg := zap.Config{
+		Level:       zap.NewAtomicLevelAt(lvl),
+		Development: false,
+		Encoding:    "json",
+		EncoderConfig: zapcore.EncoderConfig{
+			TimeKey:        "ts",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "caller",
+			MessageKey:     "msg",
+			StacktraceKey:  "stacktrace",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    zapcore.LowercaseLevelEncoder,
+			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeDuration: zapcore.StringDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		},
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
+	}
+	return cfg.Build()
+}
