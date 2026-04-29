@@ -30,11 +30,11 @@ spec:
               value: "yes"
           resources:
             requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 300m
+              cpu: 100m
               memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
 
 ---
 # ── Wordpot (HTTP honeypot) ────────────────────────────────────────
