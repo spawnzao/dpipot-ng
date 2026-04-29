@@ -727,22 +727,14 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 				zap.String("path", httpPath),
 			)
 
-			case httpclassifier.ClassMalicious:
-					log.Info("🚨 HTTPS malicioso detectado, roteando para HTTP_SUSPECT",
-						zap.String("method", httpMethod),
-						zap.String("path", httpPath),
-						zap.String("src", h.srcIP),
-					)
-					if attackAddr, _ := h.router.Resolve("HTTP_SUSPECT"); attackAddr != "" {
-						honeypotAddr = attackAddr
-						ndpiLabel = "HTTPS_SUSPECT"
-						return attackAddr
-					}
-					log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
-						zap.String("path", httpPath),
-					)
-			if attackAddr, _ := h.router.Resolve("HTTP_SUSPECT"); attackAddr != "" {
-				honeypotAddr = attackAddr
+		case httpclassifier.ClassMalicious:
+			log.Info("🚨 HTTP malicioso detectado, roteando para HTTP_SUSPECT",
+				zap.String("method", httpMethod),
+				zap.String("path", httpPath),
+				zap.String("src", h.srcIP),
+			)
+			if addr, _ := h.router.Resolve("HTTP_SUSPECT"); addr != "" {
+				honeypotAddr = addr
 				ndpiLabel = "HTTP_SUSPECT"
 			} else {
 				log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
@@ -899,7 +891,7 @@ mitmLogger := func(format string, args ...interface{}) {
 					)
 					if attackAddr, _ := h.router.Resolve("HTTP_SUSPECT"); attackAddr != "" {
 						honeypotAddr = attackAddr
-						ndpiLabel = "HTTPS_SUSPECT"
+						ndpiLabel = "HTTP_SUSPECT"
 						return attackAddr
 					}
 					log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
