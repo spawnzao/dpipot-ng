@@ -48,3 +48,4 @@ k8s/overlays/*/secrets.yaml
 
 DOCUMENTATION.md
 POST_REBOOT.mdcmd
+cmd
