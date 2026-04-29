@@ -728,16 +728,16 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			)
 
 		case httpclassifier.ClassMalicious:
-			log.Info("🚨 HTTP malicioso detectado, roteando para HTTP-ATTACK",
+			log.Info("🚨 HTTPS malicioso detectado, roteando para HTTP_SUSPECT",
 				zap.String("method", httpMethod),
 				zap.String("path", httpPath),
 				zap.String("src", h.srcIP),
 			)
-			if addr, _ := h.router.Resolve("HTTP-ATTACK"); addr != "" {
-				honeypotAddr = addr
-				ndpiLabel = "HTTP-ATTACK"
+			if attackAddr, _ := h.router.Resolve("HTTP_SUSPECT"); attackAddr != "" {
+				honeypotAddr = attackAddr
+				ndpiLabel = "HTTP_SUSPECT"
 			} else {
-				log.Warn("honeypot HTTP-ATTACK não configurado, mantendo rota normal",
+				log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
 					zap.String("path", httpPath),
 				)
 			}

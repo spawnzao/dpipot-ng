@@ -14,7 +14,7 @@ data:
     HTTP=wordpot-svc:80,
     TLS=wordpot-svc:80,
     HTTP_AUTH=heralding:80,
-    HTTP-ATTACK=galah-svc:8080,
+    HTTP_SUSPECT=galah-svc:8080,
     SSH=cowrie-svc:22,
     FTP=heralding:21,
     MYSQL=heralding:3306,
