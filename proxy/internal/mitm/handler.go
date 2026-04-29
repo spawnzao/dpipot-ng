@@ -797,11 +797,14 @@ func extractMySQLPassword(data []byte, logger func(string, ...interface{})) stri
 }
 
 type TLSMITMConfig struct {
-	Cert          tls.Certificate
-	TargetAddr   string
-	FirstData    []byte
-	OnSrcData    func([]byte)
-	OnDstData    func([]byte)
+	Cert             tls.Certificate
+	TargetAddr       string
+	FirstData        []byte
+	OnSrcData        func([]byte)
+	OnDstData        func([]byte)
+	// OnFirstDecrypted é chamado com o primeiro chunk decriptado do cliente.
+	// Retorna novo endereço de destino para redirecionar, ou "" para manter o atual.
+	OnFirstDecrypted func([]byte) string
 }
 
 type bufferedConn struct {
@@ -855,6 +858,23 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 	}
 	logger("TLS MITM: handshake feito com cliente")
 
+	// Lê o primeiro chunk decriptado para permitir reclassificação (ex: HTTPS malicioso)
+	var firstDecrypted []byte
+	if config.OnFirstDecrypted != nil {
+		buf := make([]byte, 4096)
+		tlsServer.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, _ := tlsServer.Read(buf)
+		tlsServer.SetReadDeadline(time.Time{})
+		if n > 0 {
+			firstDecrypted = make([]byte, n)
+			copy(firstDecrypted, buf[:n])
+			if newAddr := config.OnFirstDecrypted(firstDecrypted); newAddr != "" {
+				config.TargetAddr = newAddr
+				logger("TLS MITM: reclassificado, novo destino: %s", newAddr)
+			}
+		}
+	}
+
 	targetConn, err := net.DialTimeout("tcp", config.TargetAddr, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
@@ -870,6 +890,16 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 		defer wg.Done()
 		defer targetConn.Close()
 		defer tlsServer.Close()
+
+		// Reenvia o primeiro chunk decriptado (interceptado para classificação) ao honeypot
+		if len(firstDecrypted) > 0 {
+			if config.OnDstData != nil {
+				config.OnDstData(firstDecrypted)
+			}
+			if _, werr := targetConn.Write(firstDecrypted); werr != nil {
+				return
+			}
+		}
 
 		buf := make([]byte, 8192)
 		for {
