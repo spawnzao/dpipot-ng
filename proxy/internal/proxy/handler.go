@@ -349,7 +349,11 @@ func (h *Handler) Handle() {
 			Logger: mitmLogger,
 		})
 		if err != nil {
-			log.Error("HandleServerFirstTLS falhou", zap.Error(err))
+			if isExpectedTLSError(err) {
+				log.Warn("HandleServerFirstTLS falhou", zap.Error(err))
+			} else {
+				log.Error("HandleServerFirstTLS falhou", zap.Error(err))
+			}
 			honeypotError = fmt.Sprintf("server-first TLS relay failed: %v", err)
 		}
 		goto publish
@@ -908,7 +912,11 @@ mitmLogger := func(format string, args ...interface{}) {
 
 		err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
 		if err != nil {
-			log.Error("MITM TLS falhou", zap.Error(err))
+			if isExpectedTLSError(err) {
+				log.Warn("MITM TLS falhou", zap.Error(err))
+			} else {
+				log.Error("MITM TLS falhou", zap.Error(err))
+			}
 			honeypotError = fmt.Sprintf("MITM failed: %v", err)
 		}
 
@@ -1144,6 +1152,20 @@ func (w *limitedTeeWriter) Read(p []byte) (int, error) {
 func isServerFirstPort(serverFirstPorts map[uint16]string, port uint16) bool {
 	_, ok := serverFirstPorts[port]
 	return ok
+}
+
+// isExpectedTLSError returns true for TLS handshake failures that are routine
+// in a honeypot: old-version scanners, incompatible cipher suites, and probes
+// that reset the connection immediately. These are logged at Warn instead of Error.
+func isExpectedTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unsupported versions") ||
+		strings.Contains(msg, "no cipher suite") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "EOF")
 }
 
 func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) string {
