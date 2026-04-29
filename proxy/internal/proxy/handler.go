@@ -729,7 +729,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			)
 
 		case httpclassifier.ClassMalicious:
-			log.Info("HTTP malicioso detectado, roteando para HTTP-ATTACK",
+			log.Info("🚨 HTTP malicioso detectado, roteando para HTTP-ATTACK",
 				zap.String("method", httpMethod),
 				zap.String("path", httpPath),
 				zap.String("src", h.srcIP),
@@ -885,7 +885,7 @@ mitmLogger := func(format string, args ...interface{}) {
 					)
 
 				case httpclassifier.ClassMalicious:
-					log.Info("HTTPS malicioso detectado, roteando para HTTP-ATTACK",
+					log.Info("🚨 HTTPS malicioso detectado, roteando para HTTP-ATTACK",
 						zap.String("method", httpMethod),
 						zap.String("path", httpPath),
 						zap.String("src", h.srcIP),

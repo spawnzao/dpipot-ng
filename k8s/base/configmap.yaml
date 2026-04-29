@@ -22,6 +22,7 @@ data:
     MySQL=heralding:3306,
     Telnet=heralding:23,
     POP=heralding:110,
+    MAIL_POPS=heralding:110,
     IMAP=heralding:143,
     MAIL_IMAPS=heralding:143,
     RDP=heralding:3389,

@@ -694,11 +694,11 @@ class ProxyTester:
     def run_all_tests(self):
         """Executa todos os testes"""
         print(f"{Colors.BOLD}{Colors.PURPLE}")
-        print("╔═══════════════════════════════════════════════════════════════════╗")
-        print("║              PROXY TESTER COMPLETO - v3.0                          ║")
-        print("║                Inclui suporte a certificados auto-assinados        ║")
-        print(f"║                         Target: {self.target_ip}                 ║")
-        print("╚═══════════════════════════════════════════════════════════════════╝")
+        print("╔══════════════════════════════════════════════════════════════════╗")
+        print("║                   PROXY TESTER COMPLETO - v3.0                   ║")
+        print("║           Inclui suporte a certificados auto-assinados           ║")
+        print(f"║                    Target: {self.target_ip}                      ║")
+        print("╚══════════════════════════════════════════════════════════════════╝")
         print(f"{Colors.RESET}")
         
         start_time = time.time()
