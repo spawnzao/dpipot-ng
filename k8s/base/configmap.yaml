@@ -13,17 +13,17 @@ data:
   HONEYPOT_ROUTES: >-
     HTTP=wordpot-svc:80,
     TLS=wordpot-svc:80,
-    AUTH=heralding:80,
+    HTTP_AUTH=heralding:80,
     HTTP-ATTACK=galah-svc:8080,
     SSH=cowrie-svc:22,
     FTP=heralding:21,
-    SMTP=heralding:25,
+    MYSQL=heralding:3306,
+    TELNET=heralding:23,
+    MAIL_SMTP=heralding:25,
     MAIL_SMTPS=heralding:25,
-    MySQL=heralding:3306,
-    Telnet=heralding:23,
-    POP=heralding:110,
+    MAIL_POP=heralding:110,
     MAIL_POPS=heralding:110,
-    IMAP=heralding:143,
+    MAIL_IMAP=heralding:143,
     MAIL_IMAPS=heralding:143,
     RDP=heralding:3389,
     PostgreSQL=heralding:5432,
@@ -33,8 +33,8 @@ data:
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "0"
   LOG_LEVEL: "debug"
-  SERVER_FIRST_PORTS: "21:FTP,23:Telnet,25:SMTP,110:POP,143:IMAP,3306:MYSQL,5900:VNC"
-  SERVER_FIRST_PORTS_TLS: "993:IMAP,995:POP,465:SMTP"
+  SERVER_FIRST_PORTS: "21:FTP,23:Telnet,25:MAIL_SMTP,110:MAIL_POP,143:MAIL_IMAP,3306:MYSQL,5900:VNC"
+  SERVER_FIRST_PORTS_TLS: "993:MAIL_IMAP,995:MAIL_POP,465:MAIL_SMTP"
   HTTP_AUTH_PORTS: "8161,8080,4848,8983,7474,3000,8888,15672,9000,2375,8069,8181,61616,6379,9300"
   HTTP_AUTH_PORTS_TLS: "8443,7687,5601,9090,2376,10250,9200"
   TLS_USE_REALISTIC: "true"

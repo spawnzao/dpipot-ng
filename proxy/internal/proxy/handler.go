@@ -292,7 +292,7 @@ func (h *Handler) Handle() {
 	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
 	isServerFirstTLS := mitm.IsServerFirstTLSPort(h.serverFirstPortsTLS, dstPort)
 
-	// Verifica se é porta HTTP AUTH (plaintext ou TLS)
+	// Verifica se é porta HTTP_AUTH (plaintext ou TLS)
 	isHttpAuth := h.httpAuthPorts[dstPort]
 	isHttpAuthTLS := h.httpAuthPortsTLS[dstPort]
 
@@ -746,15 +746,15 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 	// Se for porta HTTP_AUTH (plaintext), sobrescreve para AUTH
 	if isHttpAuth {
-		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para AUTH",
+		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para HTTP_AUTH",
 			zap.Uint16("port", dstPort))
-		honeypotAddr, _ = h.router.Resolve("AUTH")
+		honeypotAddr, _ = h.router.Resolve("HTTP_AUTH")
 		if honeypotAddr == "" {
-			log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
-			honeypotError = "no honeypot for AUTH"
+			log.Warn("não encontrou honeypot para HTTP_AUTH", zap.Uint16("port", dstPort))
+			honeypotError = "no honeypot for HTTP_AUTH"
 			goto publish
 		}
-		ndpiLabel = "HTTP-AUTH"
+		ndpiLabel = "HTTP_AUTH"
 	}
 
 	// --- STEP 4.5: verifica se precisa de MITM ---
@@ -837,17 +837,17 @@ mitmLogger := func(format string, args ...interface{}) {
 	// TLS: usa MITM com certificados do CertManager (do disco ou gerados)
 	// Se for porta HTTP_AUTH_TLS, roteia para AUTH em vez do protocolo nDPI
 	if isTLS {
-		// Se for porta HTTP_AUTH_TLS, roteia para AUTH
+		// Se for porta HTTP_AUTH_TLS, roteia para HTTP_AUTH
 		if isHttpAuthTLS {
-			log.Debug("porta HTTP AUTH TLS detectada, roteando para AUTH",
+			log.Debug("porta HTTP AUTH TLS detectada, roteando para HTTP_AUTH",
 				zap.Uint16("port", dstPort))
-			honeypotAddr, _ = h.router.Resolve("AUTH")
+			honeypotAddr, _ = h.router.Resolve("HTTP_AUTH")
 			if honeypotAddr == "" {
-				log.Warn("não encontrou honeypot para AUTH", zap.Uint16("port", dstPort))
-				honeypotError = "no honeypot for AUTH"
+				log.Warn("não encontrou honeypot para HTTP_AUTH", zap.Uint16("port", dstPort))
+				honeypotError = "no honeypot for HTTP_AUTH"
 				goto publish
 			}
-			ndpiLabel = "HTTP-AUTH"
+			ndpiLabel = "HTTP_AUTH"
 		}
 
 		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
