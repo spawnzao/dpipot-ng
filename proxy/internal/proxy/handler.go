@@ -414,7 +414,7 @@ greetingBuf = greetingBuf[:n]
 						NDPIApp:    string(ev.EventType),
 						AttackType: ev.Banner,
 						Honeypot:    honeypotAddr,
-						LogType:     "application",
+						Instance:      "proxy",
 						PayloadDst:  greetingBuf,
 					})
 				}
@@ -824,7 +824,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						NDPIApp:    "auth_exhausted",
 						AttackType: "client exhausted password attempts",
 						Honeypot:   honeypotAddr,
-						LogType:    "application",
+						Instance:      "proxy",
 					}
 					h.producer.Publish(event)
 				} else {
@@ -935,7 +935,7 @@ mitmLogger := func(format string, args ...interface{}) {
 				Honeypot:    honeypotAddr,
 				PayloadSrc: payloadSrcTLS,
 				PayloadDst: payloadDstTLS,
-				LogType:     "application",
+				Instance:      "proxy",
 			}
 			h.producer.Publish(event)
 			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
@@ -1047,7 +1047,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						NDPIApp:    eventType,
 						AttackType: attackType,
 						Honeypot:    honeypotAddr,
-						LogType:     "application",
+						Instance:      "proxy",
 					})
 				}
 			}
@@ -1067,7 +1067,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						NDPIApp:    "response",
 						AttackType: ev.Response,
 						Honeypot:    honeypotAddr,
-						LogType:     "application",
+						Instance:      "proxy",
 					})
 				}
 			}
@@ -1091,7 +1091,7 @@ publish:
 		PayloadSrc:    bufSrc.Bytes(),
 		PayloadDst:    bufDst.Bytes(),
 		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
-		LogType:       "application",
+		Instance:      "proxy",
 	}
 	h.producer.Publish(event)
 

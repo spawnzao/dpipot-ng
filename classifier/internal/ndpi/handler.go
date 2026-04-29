@@ -282,7 +282,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			PayloadLen:  len(payload),
 			EtherType:   fmt.Sprintf("0x%04x", ethertype),
 			ProtocolNum: protocol,
-			LogType:     "nDPI",
+			Instance:      "classifier",
 		})
 	}
 }

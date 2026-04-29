@@ -210,7 +210,7 @@ func (s *SSHSession) emitCommand() {
 		NDPIApp:   "command",
 		AttackType: s.pendingCmd,
 		Honeypot: s.honeypot,
-		LogType:   "application",
+		Instance:      "proxy",
 	}
 	s.onEvent(event)
 	s.logger("SSH-MITM: comando publicado no Kafka: %q", s.pendingCmd)
@@ -233,7 +233,7 @@ func (s *SSHSession) emitResponse() {
 		NDPIApp:   "response",
 		CVE:       strings.TrimSpace(s.pendingResp),
 		Honeypot: s.honeypot,
-		LogType:   "application",
+		Instance:      "proxy",
 	}
 	s.onEvent(event)
 	s.logger("SSH-MITM: resposta publicada no Kafka: %d bytes", len(s.pendingResp))
@@ -342,7 +342,7 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 				NDPIApp:    "exit",
 				Honeypot:   config.TargetAddr,
 				AttackType: string(req.Payload),
-				LogType:    "application",
+				Instance:      "proxy",
 			}
 			onEvent(event)
 		}
@@ -414,7 +414,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIApp:    "username",
 				AttackType: capturedUser,
 				Honeypot:   config.TargetAddr,
-				LogType:    "application",
+				Instance:      "proxy",
 			}
 			config.OnEvent(event)
 
@@ -429,7 +429,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIApp:    "password",
 				AttackType: capturedPass,
 				Honeypot:   config.TargetAddr,
-				LogType:    "application",
+				Instance:      "proxy",
 			}
 			config.OnEvent(event)
 		}
@@ -456,7 +456,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIApp:    "auth_failed",
 				AttackType: "Authentication failed — rejected by honeypot.",
 				Honeypot:   config.TargetAddr,
-				LogType:    "application",
+				Instance:      "proxy",
 			}
 			config.OnEvent(event)
 		}
@@ -488,7 +488,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIApp:    "wrong_key",
 				AttackType: "client disconnected before handshake (possible wrong host key)",
 				Honeypot:   config.TargetAddr,
-				LogType:    "application",
+				Instance:      "proxy",
 			}
 			config.OnEvent(event)
 		} else {
@@ -683,7 +683,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							NDPIApp:    string(ev.EventType),
 							AttackType: formatAttackType(ev),
 							Honeypot:   config.HoneypotAddr,
-							LogType:     "application",
+							Instance:      "proxy",
 							PayloadSrc: data,
 						})
 					}
@@ -724,7 +724,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 							NDPIApp:     string(ev.EventType),
 							AttackType:   formatAttackType(ev),
 							Honeypot:     config.HoneypotAddr,
-							LogType:      "application",
+							Instance:      "proxy",
 							PayloadDst:   data,
 						})
 					}

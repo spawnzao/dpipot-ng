@@ -27,7 +27,7 @@ type Event struct {
 	AttackType    string    `json:"attack_type,omitempty"`
 	CVE           string    `json:"cve,omitempty"`
 	Severity      string    `json:"severity,omitempty"`
-	LogType       string    `json:"log_type,omitempty"`
+	Instance      string    `json:"instance,omitempty"`
 }
 
 type Producer struct {
@@ -106,7 +106,7 @@ func (p *Producer) drain() {
 		}
 
 		topic := p.topicApp
-		if event.LogType == "debug" {
+		if event.Instance == "debug" {
 			topic = p.topicDebug
 		}
 

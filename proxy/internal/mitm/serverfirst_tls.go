@@ -80,7 +80,7 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 								NDPIApp:    string(ev.EventType),
 								AttackType: formatAttackType(ev),
 								Honeypot:   config.HoneypotAddr,
-								LogType:    "application",
+								Instance:      "proxy",
 								PayloadSrc: data,
 							})
 						}
@@ -123,7 +123,7 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 								NDPIApp:    string(ev.EventType),
 								AttackType: formatAttackType(ev),
 								Honeypot:   config.HoneypotAddr,
-								LogType:    "application",
+								Instance:      "proxy",
 								PayloadDst: data,
 							})
 						}

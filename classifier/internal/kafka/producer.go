@@ -24,7 +24,7 @@ type Event struct {
 	PayloadLen   int       `json:"payload_len,omitempty"`
 	EtherType    string    `json:"ethertype,omitempty"`
 	ProtocolNum uint8     `json:"protocol_num,omitempty"`
-	LogType     string    `json:"log_type"`
+	Instance    string    `json:"instance"`
 }
 
 type Producer struct {
