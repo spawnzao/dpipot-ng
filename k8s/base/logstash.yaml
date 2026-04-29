@@ -82,6 +82,9 @@ data:
       if ![level] {
         mutate { add_field => { "level" => "unknown" } }
       }
+
+      # Normaliza level para minúsculo (evita índices com uppercase inválidos no ES)
+      mutate { lowercase => ["level"] }
     }
     output {
       elasticsearch {

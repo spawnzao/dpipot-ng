@@ -49,6 +49,12 @@ data:
               - /var/log/pods/*${data.kubernetes.pod.uid}*/${data.kubernetes.container.name}/*.log
 
     processors:
+      # Descarta logs de pods fora do namespace dpipot
+      - drop_event:
+          when:
+            not:
+              equals:
+                kubernetes.namespace: "dpipot"
       # Decodifica o JSON do stdout (proxy/classifier usam JSON logger)
       # Para logs não-JSON o campo message permanece intacto
       - decode_json_fields:

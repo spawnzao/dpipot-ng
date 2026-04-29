@@ -232,7 +232,8 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
 			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
 			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
-			zap.Uint8("proto", protocol),
+			zap.Uint8("ip_proto", protocol),
+			zap.String("transport", ipProtoName(protocol)),
 			zap.String("tcp_flags", tcpFlags),
 			zap.String("master_proto", proto.MasterProtocolId.ToName()),
 			zap.String("app_proto", proto.AppProtocolId.ToName()),
@@ -301,6 +302,21 @@ func (h *Handler) isServerFirstPort(port uint16) bool {
 		}
 	}
 	return false
+}
+
+func ipProtoName(proto uint8) string {
+	switch proto {
+	case 1:
+		return "icmp"
+	case 6:
+		return "tcp"
+	case 17:
+		return "udp"
+	case 58:
+		return "icmpv6"
+	default:
+		return fmt.Sprintf("%d", proto)
+	}
 }
 
 func (h *Handler) portToProtocol(port uint16) string {
