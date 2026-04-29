@@ -697,7 +697,7 @@ class ProxyTester:
         print("╔══════════════════════════════════════════════════════════════════╗")
         print("║                   PROXY TESTER COMPLETO - v3.0                   ║")
         print("║           Inclui suporte a certificados auto-assinados           ║")
-        print(f"║                    Target: {self.target_ip}                      ║")
+        print(f"║                      Target: {self.target_ip}                      ║")
         print("╚══════════════════════════════════════════════════════════════════╝")
         print(f"{Colors.RESET}")
         
