@@ -228,7 +228,6 @@ func (h *Handler) Handle() {
 	dstAddr := h.conn.LocalAddr().(*net.TCPAddr)
 
 	log := h.log.With(
-		zap.String("flow_id", h.flowID),
 		zap.Stringer("src", srcAddr),
 		zap.Stringer("dst", dstAddr),
 	)
