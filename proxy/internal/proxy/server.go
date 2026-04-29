@@ -124,7 +124,7 @@ func (s *Server) ListenAndServe() error {
 		}
 
 		remoteAddr := conn.RemoteAddr().String()
-		s.log.Info("🎯 conexão aceita",
+		s.log.Info("🎯 Conexão aceita",
 			zap.String("local_addr", conn.LocalAddr().String()),
 			zap.String("remote_addr", remoteAddr),
 		)
@@ -144,7 +144,7 @@ func (s *Server) handle(conn net.Conn) {
 	flowID := uuid.New().String()
 	log := s.log.With(zap.String("flow_id", flowID))
 
-	log.Info("handler started",
+	log.Debug("🔌Handler started!",
 		zap.String("local_addr", conn.LocalAddr().String()),
 		zap.String("remote_addr", conn.RemoteAddr().String()),
 	)
