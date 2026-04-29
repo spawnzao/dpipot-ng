@@ -12,6 +12,7 @@ resources:
   - honeypots.yaml
   - kafka.yaml
   - logstash.yaml
+  - filebeat.yaml
   - heralding-config.yaml
   - heralding-deployment.yaml
   - heralding-service.yaml

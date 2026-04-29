@@ -8,9 +8,13 @@ data:
   logstash.yml: |
     http.host: "0.0.0.0"
     xpack.monitoring.enabled: false
+
   pipelines.yml: |
     - pipeline.id: kafka-to-elasticsearch
       path.config: "/usr/share/logstash/pipeline/kafka-to-elasticsearch.conf"
+    - pipeline.id: kubernetes-logs
+      path.config: "/usr/share/logstash/pipeline/kubernetes-logs.conf"
+
   kafka-to-elasticsearch.conf: |
     input {
       kafka {
@@ -22,18 +26,7 @@ data:
       }
     }
     output {
-      if [topic] =~ "debug" {
-        elasticsearch {
-          hosts => ["${ELASTICSEARCH_HOST}"]
-          index => "logs-debug-%{+YYYY.MM.dd}"
-          action => "create"
-          manage_template => false
-          user => "${ELASTICSEARCH_USER}"
-          password => "${ELASTIC_PASSWORD}"
-          ssl => true
-          cacert => "/usr/share/logstash/config/certs/ca.crt"
-        }
-      } else if [topic] =~ "ndpi" {
+      if [topic] =~ "ndpi" {
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "logs-ndpi-%{+YYYY.MM.dd}"
@@ -57,6 +50,64 @@ data:
         }
       }
     }
+
+  kubernetes-logs.conf: |
+    input {
+      beats {
+        port => 5044
+      }
+    }
+    filter {
+      # Remove campos internos do Filebeat/ECS desnecessários no ES
+      mutate {
+        remove_field => ["agent", "ecs", "input", "tags", "@version"]
+      }
+
+      # Só remove o campo "message" (JSON bruto) quando o decode já produziu "msg"
+      # — preserva a mensagem original para logs não-JSON (cowrie, kafka, etc.)
+      if [msg] {
+        mutate { remove_field => ["message"] }
+      }
+
+      # Usa o campo "ts" da app como @timestamp; só aplica quando o campo existe
+      if [ts] {
+        date {
+          match => ["ts", "ISO8601"]
+          target => "@timestamp"
+          remove_field => ["ts"]
+        }
+      }
+    }
+    output {
+      elasticsearch {
+        hosts           => ["${ELASTICSEARCH_HOST}"]
+        # Índice separado por nível: applogs-info-YYYY.MM.dd, applogs-error-YYYY.MM.dd …
+        # ":-unknown" é o default quando o campo level não existe (logs não-JSON)
+        index           => "applogs-%{[level]:-unknown}-%{+YYYY.MM.dd}"
+        action          => "create"
+        manage_template => false
+        user            => "${ELASTICSEARCH_USER}"
+        password        => "${ELASTIC_PASSWORD}"
+        ssl             => true
+        cacert          => "/usr/share/logstash/config/certs/ca.crt"
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: dpipot
+spec:
+  selector:
+    app: logstash
+  ports:
+    - name: beats
+      port: 5044
+      targetPort: 5044
+    - name: http
+      port: 9600
+      targetPort: 9600
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -132,6 +183,8 @@ spec:
             items:
               - key: kafka-to-elasticsearch.conf
                 path: kafka-to-elasticsearch.conf
+              - key: kubernetes-logs.conf
+                path: kubernetes-logs.conf
         - name: elastic-certs
           secret:
             secretName: elastic-certs
