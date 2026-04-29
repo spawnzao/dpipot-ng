@@ -26,10 +26,21 @@ data:
       }
     }
     output {
-      if [topic] =~ "ndpi" {
+      if [instance] == "proxy" {
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
-          index => "logs-ndpi-%{+YYYY.MM.dd}"
+          index => "dpipot-proxy-%{+YYYY.MM.dd}"
+          action => "create"
+          manage_template => false
+          user => "${ELASTICSEARCH_USER}"
+          password => "${ELASTIC_PASSWORD}"
+          ssl => true
+          cacert => "/usr/share/logstash/config/certs/ca.crt"
+        }
+      } else if [instance] == "classifier" {
+        elasticsearch {
+          hosts => ["${ELASTICSEARCH_HOST}"]
+          index => "dpipot-classifier-%{+YYYY.MM.dd}"
           action => "create"
           manage_template => false
           user => "${ELASTICSEARCH_USER}"
@@ -40,7 +51,7 @@ data:
       } else {
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
-          index => "logs-application-%{+YYYY.MM.dd}"
+          index => "dpipot-unknown-%{+YYYY.MM.dd}"
           action => "create"
           manage_template => false
           user => "${ELASTICSEARCH_USER}"
