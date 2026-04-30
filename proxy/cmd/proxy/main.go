@@ -113,6 +113,7 @@ func main() {
 		cfg.HttpAuthPorts,
 		cfg.HttpAuthPortsTLS,
 		httpClassifier,
+		cfg.ProxyTimeout,
 	)
 
 	// captura sinais de shutdown (SIGTERM do Kubernetes, SIGINT do terminal)
