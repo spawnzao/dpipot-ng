@@ -1077,6 +1077,7 @@ mitmLogger := func(format string, args ...interface{}) {
 publish:
 	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
 	duration := time.Since(startTime)
+	durationMs := float64(duration.Nanoseconds()) / 1e6
 	event := &kafka.Event{
 		FlowID:        h.flowID,
 		Timestamp:     time.Now(),
@@ -1091,6 +1092,7 @@ publish:
 		PayloadSrc:    bufSrc.Bytes(),
 		PayloadDst:    bufDst.Bytes(),
 		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
+		DurationMs:    durationMs,
 		Instance:      "proxy",
 	}
 	h.producer.Publish(event)
@@ -1101,6 +1103,7 @@ publish:
 			zap.String("honeypot", honeypotAddr),
 			zap.String("error", honeypotError),
 			zap.Int("payload_src_bytes", bufSrc.Len()),
+			zap.Float64("duration_ms", durationMs),
 		)
 	} else {
 		log.Info("fluxo encerrado",
@@ -1108,7 +1111,7 @@ publish:
 			zap.String("honeypot", honeypotAddr),
 			zap.Int("payload_src_bytes", bufSrc.Len()),
 			zap.Int("payload_dst_bytes", bufDst.Len()),
-			zap.Duration("duration", duration),
+			zap.Float64("duration_ms", durationMs),
 		)
 	}
 }
