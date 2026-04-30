@@ -24,6 +24,7 @@ type Event struct {
 	PayloadSrc    []byte    `json:"payload_src"`
 	PayloadDst    []byte    `json:"payload_dst"`
 	PayloadSize   int64     `json:"payload_size"`
+	DurationMs    float64   `json:"duration_ms,omitempty"`
 	AttackType    string    `json:"attack_type,omitempty"`
 	CVE           string    `json:"cve,omitempty"`
 	Severity      string    `json:"severity,omitempty"`
