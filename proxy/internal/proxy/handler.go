@@ -992,7 +992,7 @@ mitmLogger := func(format string, args ...interface{}) {
 	teeWriterSrc = newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
 	teeWriterDst = newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
 
-	startTime = time.Now()
+	// Não resetar startTime - queremos o tempo total da conexão
 	wg.Add(2)
 
 	// goroutine 1: atacante → honeypot
