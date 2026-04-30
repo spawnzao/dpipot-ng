@@ -805,6 +805,8 @@ type TLSMITMConfig struct {
 	// OnFirstDecrypted é chamado com o primeiro chunk decriptado do cliente.
 	// Retorna novo endereço de destino para redirecionar, ou "" para manter o atual.
 	OnFirstDecrypted func([]byte) string
+	// ProxyTimeout define o timeout de vida total da conexão
+	ProxyTimeout      time.Duration
 }
 
 type bufferedConn struct {
@@ -860,13 +862,16 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 	logger("TLS MITM: handshake feito com cliente")
 
 	// Lê o primeiro chunk decriptado para permitir reclassificação (ex: HTTPS malicioso)
-	var firstDecrypted []byte
-	if config.OnFirstDecrypted != nil {
-		buf := make([]byte, 4096)
-		tlsServer.SetReadDeadline(time.Now().Add(2 * time.Second))
-		n, _ := tlsServer.Read(buf)
-		tlsServer.SetReadDeadline(time.Time{})
-		if n > 0 {
+		var firstDecrypted []byte
+		if config.OnFirstDecrypted != nil {
+			buf := make([]byte, 4096)
+			tlsServer.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, _ := tlsServer.Read(buf)
+			// Mantém o deadline de vida total da conexão
+			if config.ProxyTimeout > 0 {
+				tlsServer.SetDeadline(time.Now().Add(config.ProxyTimeout))
+			}
+			if n > 0 {
 			firstDecrypted = make([]byte, n)
 			copy(firstDecrypted, buf[:n])
 			if newAddr := config.OnFirstDecrypted(firstDecrypted); newAddr != "" {

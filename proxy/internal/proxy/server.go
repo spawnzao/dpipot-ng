@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
@@ -33,6 +34,7 @@ type Server struct {
 	httpAuthPorts map[uint16]bool
 	httpAuthPortsTLS map[uint16]bool
 	httpClassifier *httpclassifier.Classifier
+	proxyTimeout    time.Duration
 }
 
 func NewServer(
@@ -49,6 +51,7 @@ func NewServer(
 	httpAuthPorts map[uint16]bool,
 	httpAuthPortsTLS map[uint16]bool,
 	httpClassifier *httpclassifier.Classifier,
+	proxyTimeout time.Duration,
 ) *Server {
 	return &Server{
 		listenAddr:      listenAddr,
@@ -64,6 +67,7 @@ func NewServer(
 		httpAuthPorts:      httpAuthPorts,
 		httpAuthPortsTLS:    httpAuthPortsTLS,
 		httpClassifier:   httpClassifier,
+		proxyTimeout:    proxyTimeout,
 	}
 }
 
@@ -164,6 +168,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.httpAuthPorts,
 		s.httpAuthPortsTLS,
 		s.httpClassifier,
+		s.proxyTimeout,
 	)
 	h.Handle()
 

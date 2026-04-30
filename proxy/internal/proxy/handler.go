@@ -64,6 +64,9 @@ type Handler struct {
 
 	// httpClassifier classifica requisições HTTP por lista branca
 	httpClassifier *httpclassifier.Classifier
+
+	// proxyTimeout define o timeout de vida total da conexão
+	proxyTimeout time.Duration
 }
 
 func NewHandler(
@@ -81,6 +84,7 @@ func NewHandler(
 	httpAuthPorts map[uint16]bool,
 	httpAuthPortsTLS map[uint16]bool,
 	httpClassifier *httpclassifier.Classifier,
+	proxyTimeout time.Duration,
 ) *Handler {
 	return &Handler{
 		flowID:          flowID,
@@ -97,6 +101,7 @@ func NewHandler(
 		httpAuthPorts:      httpAuthPorts,
 		httpAuthPortsTLS:    httpAuthPortsTLS,
 		httpClassifier:     httpClassifier,
+		proxyTimeout:    proxyTimeout,
 	}
 }
 
@@ -239,9 +244,9 @@ func (h *Handler) Handle() {
 
 	log.Info("🔍 Handle() iniciado")
 
-	// Aplica timeout de conexão (para evitar conexões órfãs)
-	connectionTimeout := 10 * time.Second
-	h.conn.SetDeadline(time.Now().Add(connectionTimeout))
+	// Aplica timeout de vida total da conexão (PROXY_TIMEOUT)
+	deadline := time.Now().Add(h.proxyTimeout)
+	h.conn.SetDeadline(deadline)
 
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
@@ -383,7 +388,8 @@ func (h *Handler) Handle() {
 		greetingBuf := make([]byte, classifyBufferSize)
 		honeypotConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 		n, err = honeypotConn.Read(greetingBuf)
-		honeypotConn.SetReadDeadline(time.Time{})
+		// Mantém o deadline de vida total da conexão
+		honeypotConn.SetDeadline(deadline)
 
 		if err != nil {
 			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
@@ -467,11 +473,12 @@ greetingBuf = greetingBuf[:n]
 	}
 
 	// --- STEP 2: tenta ler primeiro chunk do cliente ---
-	// Para protocolos que o cliente fala primero (HTTP, FTP, etc), isso funciona
+	// Para protocolos que o cliente fala primero (HTTP é FTP, etc), isso funciona
 	firstChunk = make([]byte, classifyBufferSize)
 	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 	n, err = h.conn.Read(firstChunk)
-	h.conn.SetReadDeadline(time.Time{})
+	// Mantém o deadline de vida total da conexão
+	h.conn.SetDeadline(deadline)
 	
 	log.Info("📥 dados lidos do cliente", zap.Int("n", n), zap.Error(err))
 
@@ -532,7 +539,8 @@ greetingBuf = greetingBuf[:n]
 				greetingBuf := make([]byte, classifyBufferSize)
 				honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
 				n, err = honeypotGreetingConn.Read(greetingBuf)
-				honeypotGreetingConn.SetReadDeadline(time.Time{})
+				// Mantém o deadline de vida total da conexão
+				honeypotGreetingConn.SetDeadline(deadline)
 
 				if err != nil {
 					log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
@@ -712,6 +720,11 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 
 	log.Info("fluxo classificado", zap.String("service", ndpiLabel))
 
+	// Garante que ndpiLabel nunca seja vazio
+	if ndpiLabel == "" {
+		ndpiLabel = "Unknown"
+	}
+
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
@@ -860,15 +873,16 @@ mitmLogger := func(format string, args ...interface{}) {
 
 		cert := h.certMgr.Cert()
 		mitmConfig := mitm.TLSMITMConfig{
-			Cert:       cert,
-			TargetAddr: honeypotAddr,
-			FirstData:  firstChunk,
+			Cert:         cert,
+			TargetAddr:   honeypotAddr,
+			FirstData:    firstChunk,
 			OnSrcData: func(p []byte) {
 				bufSrcTLS.Write(p) // honeypot → cliente = payload_dst
 			},
 			OnDstData: func(p []byte) {
 				bufDstTLS.Write(p) // cliente → honeypot = payload_src
 			},
+			ProxyTimeout: h.proxyTimeout,
 		}
 
 		// Classificação HTTP sobre TLS (HTTPS): inspeciona o primeiro chunk decriptado
@@ -956,6 +970,8 @@ mitmLogger := func(format string, args ...interface{}) {
 		goto publish
 	}
 	defer honeypotConn.Close()
+	// Aplica o timeout de vida total na conexão com o honeypot
+	honeypotConn.SetDeadline(deadline)
 
 	doRelay:
 	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
