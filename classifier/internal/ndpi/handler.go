@@ -280,9 +280,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			Category:    category,
 			TCPFlags:    tcpFlags,
 			PayloadLen:  len(payload),
-			EtherType:   fmt.Sprintf("0x%04x", ethertype),
-			ProtocolNum: protocol,
-			Instance:      "classifier",
+			EtherType: fmt.Sprintf("0x%04x", ethertype),
+			IPProto:   protocol,
+			Transport: ipProtoName(protocol),
+			Instance:  "classifier",
 		})
 	}
 }

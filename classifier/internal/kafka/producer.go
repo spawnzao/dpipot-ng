@@ -23,8 +23,9 @@ type Event struct {
 	TCPFlags     string    `json:"tcp_flags,omitempty"`
 	PayloadLen   int       `json:"payload_len,omitempty"`
 	EtherType    string    `json:"ethertype,omitempty"`
-	ProtocolNum uint8     `json:"protocol_num,omitempty"`
-	Instance    string    `json:"instance"`
+	IPProto      uint8     `json:"ip_proto,omitempty"`
+	Transport    string    `json:"transport,omitempty"`
+	Instance     string    `json:"instance"`
 }
 
 type Producer struct {
