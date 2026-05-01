@@ -89,25 +89,45 @@ data:
         }
       }
 
-      # Garante que level sempre existe — logs não-JSON chegam sem esse campo
-      if ![level] {
-        mutate { add_field => { "level" => "unknown" } }
-      }
-
       # Normaliza level para minúsculo (evita índices com uppercase inválidos no ES)
-      mutate { lowercase => ["level"] }
+      if [level] {
+        mutate { lowercase => ["level"] }
+      }
     }
     output {
-      elasticsearch {
-        hosts           => ["${ELASTICSEARCH_HOST}"]
-        # Índice separado por nível: applogs-info-YYYY.MM.dd, applogs-error-YYYY.MM.dd …
-        index           => "applogs-%{[level]}-%{+YYYY.MM.dd}"
-        action          => "create"
-        manage_template => false
-        user            => "${ELASTICSEARCH_USER}"
-        password        => "${ELASTIC_PASSWORD}"
-        ssl             => true
-        cacert          => "/usr/share/logstash/config/certs/ca.crt"
+      if [kubernetes][container][name] in ["proxy", "classifier"] {
+        elasticsearch {
+          hosts           => ["${ELASTICSEARCH_HOST}"]
+          index           => "dpipot-app-%{+YYYY.MM.dd}"
+          action          => "create"
+          manage_template => false
+          user            => "${ELASTICSEARCH_USER}"
+          password        => "${ELASTIC_PASSWORD}"
+          ssl             => true
+          cacert          => "/usr/share/logstash/config/certs/ca.crt"
+        }
+      } else if [kubernetes][container][name] in ["logstash", "filebeat", "promtail", "kafka"] {
+        elasticsearch {
+          hosts           => ["${ELASTICSEARCH_HOST}"]
+          index           => "dpipot-infra-%{+YYYY.MM.dd}"
+          action          => "create"
+          manage_template => false
+          user            => "${ELASTICSEARCH_USER}"
+          password        => "${ELASTIC_PASSWORD}"
+          ssl             => true
+          cacert          => "/usr/share/logstash/config/certs/ca.crt"
+        }
+      } else {
+        elasticsearch {
+          hosts           => ["${ELASTICSEARCH_HOST}"]
+          index           => "dpipot-pods-%{+YYYY.MM.dd}"
+          action          => "create"
+          manage_template => false
+          user            => "${ELASTICSEARCH_USER}"
+          password        => "${ELASTIC_PASSWORD}"
+          ssl             => true
+          cacert          => "/usr/share/logstash/config/certs/ca.crt"
+        }
       }
     }
 ---
