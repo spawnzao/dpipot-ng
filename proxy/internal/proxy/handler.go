@@ -260,7 +260,7 @@ func (h *Handler) Handle() {
 	if appProtoFlow == "Unknown" {
 		if proto := h.serverFirstPorts[uint16(dstAddr.Port)]; proto != "" {
 			appProtoFlow = proto
-			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("service", proto))
+			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("app_proto", proto))
 		}
 	}
 
@@ -318,7 +318,7 @@ func (h *Handler) Handle() {
 	if isServerFirstTLS {
 		log.Debug("porta server-first TLS detectada",
 			zap.Uint16("port", dstPort),
-			zap.String("service", h.serverFirstPortsTLS[dstPort]))
+			zap.String("app_proto", h.serverFirstPortsTLS[dstPort]))
 
 		ndpiLabel := appProtoFlow
 		if ndpiLabel == "" || ndpiLabel == "Unknown" {
@@ -327,7 +327,7 @@ func (h *Handler) Handle() {
 
 		honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 		log.Debug("rota SF-TLS resolvida",
-			zap.String("service", ndpiLabel),
+			zap.String("app_proto", ndpiLabel),
 			zap.String("honeypot", honeypotAddr))
 
 		cert := h.certMgr.Cert()
@@ -555,7 +555,7 @@ greetingBuf = greetingBuf[:n]
 						log.Warn("nDPI classify falhou no greeting", zap.Error(err))
 						ndpiLabel = "Unknown"
 					} else {
-						log.Info("fluxo classificado via greeting do servidor", zap.String("service", ndpiLabel))
+						log.Info("fluxo classificado via greeting do servidor", zap.String("app_proto", ndpiLabel))
 					}
 
 					// Envia greeting para o cliente
@@ -567,7 +567,7 @@ greetingBuf = greetingBuf[:n]
 					// Agora conecta ao honeypot definitivo usando o protocolo classificado
 					honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 					log.Debug("protocolo identificado via greeting, honeypot resolved",
-						zap.String("service", ndpiLabel),
+						zap.String("app_proto", ndpiLabel),
 						zap.String("honeypot", honeypotAddr),
 					)
 
@@ -712,7 +712,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		}
 	}
 
-	log.Info("fluxo classificado", zap.String("service", ndpiLabel))
+	log.Info("fluxo classificado", zap.String("app_proto", ndpiLabel))
 
 	// Garante que ndpiLabel nunca seja vazio
 	if ndpiLabel == "" {
@@ -729,7 +729,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		switch class {
 		case httpclassifier.ClassUnknown:
 			log.Debug("HTTP: payload não reconhecido, mantendo rota normal",
-				zap.String("service", ndpiLabel),
+				zap.String("app_proto", ndpiLabel),
 			)
 
 		case httpclassifier.ClassLegitimate:
@@ -886,7 +886,7 @@ mitmLogger := func(format string, args ...interface{}) {
 				switch class {
 				case httpclassifier.ClassUnknown:
 					log.Debug("HTTPS: payload não reconhecido, mantendo rota normal",
-						zap.String("service", ndpiLabel),
+						zap.String("app_proto", ndpiLabel),
 					)
 
 				case httpclassifier.ClassLegitimate:
@@ -949,7 +949,7 @@ mitmLogger := func(format string, args ...interface{}) {
 			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
 		}
 
-		log.Info("fluxo encerrado", zap.String("service", ndpiLabel), zap.String("honeypot", honeypotAddr), zap.Int("payload_src_bytes", len(payloadSrcTLS)), zap.Int("payload_dst_bytes", len(payloadDstTLS)))
+		log.Info("fluxo encerrado", zap.String("app_proto", ndpiLabel), zap.String("honeypot", honeypotAddr), zap.Int("payload_src_bytes", len(payloadSrcTLS)), zap.Int("payload_dst_bytes", len(payloadDstTLS)))
 		return
 	}
 
@@ -1109,7 +1109,7 @@ publish:
 
 	if honeypotError != "" {
 		log.Info("fluxo encerrado com erro",
-			zap.String("service", ndpiLabel),
+			zap.String("app_proto", ndpiLabel),
 			zap.String("honeypot", honeypotAddr),
 			zap.String("error", honeypotError),
 			zap.Int("payload_src_bytes", bufSrc.Len()),
@@ -1117,7 +1117,7 @@ publish:
 		)
 	} else {
 		log.Info("fluxo encerrado",
-			zap.String("service", ndpiLabel),
+			zap.String("app_proto", ndpiLabel),
 			zap.String("honeypot", honeypotAddr),
 			zap.Int("payload_src_bytes", bufSrc.Len()),
 			zap.Int("payload_dst_bytes", bufDst.Len()),

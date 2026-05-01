@@ -71,7 +71,7 @@ data:
     filter {
       # Remove campos internos do Filebeat/ECS desnecessários no ES
       mutate {
-        remove_field => ["agent", "ecs", "input", "tags", "@version"]
+        remove_field => ["agent", "ecs", "input", "tags", "@version", "service"]
       }
 
       # Só remove o campo "message" (JSON bruto) quando o decode já produziu "msg"
