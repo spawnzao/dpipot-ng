@@ -28,6 +28,9 @@ spec:
           env:
             - name: COWRIE_TELNET_ENABLED
               value: "yes"
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /home/cowrie/var/log/cowrie
           resources:
             requests:
               cpu: 100m
@@ -35,6 +38,30 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
+        # Sidecar: streams cowrie.json to stdout so Filebeat can collect it.
+        # Cowrie logs to files by default; this is the standard K8s pattern
+        # for containers that don't write to stdout.
+        - name: cowrie-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/cowrie.json ]; do sleep 1; done
+              exec tail -n +1 -F /logs/cowrie.json
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /logs
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: cowrie-logs
+          emptyDir: {}
 
 ---
 # ── Wordpot (HTTP honeypot) ────────────────────────────────────────
@@ -71,9 +98,27 @@ spec:
             limits:
               cpu: 200m
               memory: 128Mi
+        # Sidecar: streams wordpot.log to stdout so Filebeat can collect it.
+        - name: wordpot-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/wordpot.log ]; do sleep 1; done
+              exec tail -n +1 -F /logs/wordpot.log
+          volumeMounts:
+            - name: wordpot-logs
+              mountPath: /logs
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
       securityContext:
         runAsUser: 0
       volumes:
         - name: wordpot-logs
           emptyDir: {}
-
