@@ -386,10 +386,8 @@ func (h *Handler) Handle() {
 
 		// Recebe greeting do servidor
 		greetingBuf := make([]byte, classifyBufferSize)
-		honeypotConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+		// Mantém o deadline de vida total da conexão (não usar timeout curto)
 		n, err = honeypotConn.Read(greetingBuf)
-		// Mantém o deadline de vida total da conexão
-		honeypotConn.SetDeadline(deadline)
 
 		if err != nil {
 			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
@@ -475,10 +473,8 @@ greetingBuf = greetingBuf[:n]
 	// --- STEP 2: tenta ler primeiro chunk do cliente ---
 	// Para protocolos que o cliente fala primero (HTTP é FTP, etc), isso funciona
 	firstChunk = make([]byte, classifyBufferSize)
-	h.conn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+	// Mantém o deadline de vida total da conexão (não usar timeout curto)
 	n, err = h.conn.Read(firstChunk)
-	// Mantém o deadline de vida total da conexão
-	h.conn.SetDeadline(deadline)
 	
 	log.Info("📥 dados lidos do cliente", zap.Int("n", n), zap.Error(err))
 
@@ -537,10 +533,8 @@ greetingBuf = greetingBuf[:n]
 
 				// Agora espera o greeting do servidor (com timeout)
 				greetingBuf := make([]byte, classifyBufferSize)
-				honeypotGreetingConn.SetReadDeadline(time.Now().Add(originalDstTimeout))
+				// Mantém o deadline de vida total da conexão (não usar timeout curto)
 				n, err = honeypotGreetingConn.Read(greetingBuf)
-				// Mantém o deadline de vida total da conexão
-				honeypotGreetingConn.SetDeadline(deadline)
 
 				if err != nil {
 					log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
