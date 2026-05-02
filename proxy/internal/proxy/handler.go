@@ -246,7 +246,7 @@ func (h *Handler) Handle() {
 
 	// Aplica timeout de vida total da conexão (PROXY_TIMEOUT)
 	deadline := time.Now().Add(h.proxyTimeout)
-	h.conn.SetDeadline(deadline)
+	h.conn.SetDeadline(deadline) // re-aplicado após File() calls abaixo
 
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
@@ -348,6 +348,7 @@ func (h *Handler) Handle() {
 			HoneypotAddr: honeypotAddr,
 			NDPIProto:   ndpiLabel,
 			MaxPayloadSize: h.maxPayloadBytes,
+			Deadline:    deadline,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},
@@ -457,6 +458,7 @@ greetingBuf = greetingBuf[:n]
 			HoneypotAddr: honeypotAddr,
 			NDPIProto:    appProtoFlow,
 			MaxPayloadSize: h.maxPayloadBytes,
+			Deadline:     deadline,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},
@@ -643,6 +645,10 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
+	// Re-aplica deadline: getTproxyDst/getOriginalDst chamam tcpConn.File() que
+	// duplica o fd via dup(2) e quebra o mecanismo de SetDeadline no Go.
+	h.conn.SetDeadline(deadline)
+
 	log.Debug("IP original via TPROXY/REDIRECT",
 		zap.Stringer("origDstIP", origDstIP),
 		zap.Uint16("origDstPort", origDstPort),
@@ -805,6 +811,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			SrcPort:    srcAddr.Port,
 			DstIP:      origDstIP.String(),
 			DstPort:    int(origDstPort),
+			Deadline:   deadline,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},
@@ -876,7 +883,7 @@ mitmLogger := func(format string, args ...interface{}) {
 			OnDstData: func(p []byte) {
 				bufDstTLS.Write(p) // cliente → honeypot = payload_src
 			},
-			ProxyTimeout: h.proxyTimeout,
+			Deadline: deadline,
 		}
 
 		// Classificação HTTP sobre TLS (HTTPS): inspeciona o primeiro chunk decriptado
@@ -994,8 +1001,9 @@ mitmLogger := func(format string, args ...interface{}) {
 		defer wg.Done()
 		log.Debug("goroutine src→dst iniciada")
 		src := io.TeeReader(h.conn, teeWriterSrc)
-		// Usa contexto com timeout para garantir que o pipe respeite o PROXY_TIMEOUT
-		ctx, cancel := context.WithTimeout(context.Background(), h.proxyTimeout)
+		// Usa o deadline absoluto da conexão para garantir que o pipe respeite o PROXY_TIMEOUT
+		// (WithDeadline evita que goroutines com atraso ganhem um proxyTimeout extra)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
 		// Cria pipe com cancelamento via contexto
 		done := make(chan bool, 1)
@@ -1028,8 +1036,7 @@ mitmLogger := func(format string, args ...interface{}) {
 		defer wg.Done()
 		log.Debug("goroutine dst→src iniciada")
 		src := io.TeeReader(honeypotConn, teeWriterDst)
-		// Usa contexto com timeout para garantir que o pipe respeite o PROXY_TIMEOUT
-		ctx, cancel := context.WithTimeout(context.Background(), h.proxyTimeout)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
 		defer cancel()
 		done := make(chan bool, 1)
 		go func() {

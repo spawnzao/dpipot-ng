@@ -26,6 +26,7 @@ type ServerFirstTLSConfig struct {
 	HoneypotAddr   string
 	NDPIProto      string
 	MaxPayloadSize int64
+	Deadline       time.Time
 	OnEvent        func(event *kafka.Event)
 	Logger         func(string, ...interface{})
 }
@@ -40,6 +41,10 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 		return fmt.Errorf("honeypot dial: %w", err)
 	}
 	config.Logger("SF-TLS: connected to honeypot")
+	if !config.Deadline.IsZero() {
+		config.ClientConn.SetDeadline(config.Deadline)
+		honeypotConn.SetDeadline(config.Deadline)
+	}
 
 	clientTLS := tls.Server(config.ClientConn, &tls.Config{
 		Certificates: []tls.Certificate{config.Cert},
