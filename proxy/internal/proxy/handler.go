@@ -989,35 +989,70 @@ mitmLogger := func(format string, args ...interface{}) {
 	// Não resetar startTime - queremos o tempo total da conexão
 	wg.Add(2)
 
-	// goroutine 1: atacante → honeypot
+	// goroutine 1: atacante → honeypot (com timeout de vida total)
 	go func() {
 		defer wg.Done()
 		log.Debug("goroutine src→dst iniciada")
 		src := io.TeeReader(h.conn, teeWriterSrc)
-		n, err := io.Copy(honeypotConn, src)
-		if err != nil {
-			log.Debug("pipe src→dst encerrado",
-				zap.Int("bytes_copied", int(n)),
-				zap.String("error_type", fmt.Sprintf("%T", err)),
-				zap.Error(err))
-		} else {
-			log.Debug("pipe src→dst concluído", zap.Int("bytes_copied", int(n)))
+		// Usa contexto com timeout para garantir que o pipe respeite o PROXY_TIMEOUT
+		ctx, cancel := context.WithTimeout(context.Background(), h.proxyTimeout)
+		defer cancel()
+		// Cria pipe com cancelamento via contexto
+		done := make(chan bool, 1)
+		go func() {
+			n, err := io.Copy(honeypotConn, src)
+			if err != nil {
+				log.Debug("pipe src→dst encerrado",
+					zap.Int("bytes_copied", int(n)),
+					zap.String("error_type", fmt.Sprintf("%T", err)),
+					zap.Error(err))
+			} else {
+				log.Debug("pipe src→dst concluído", zap.Int("bytes_copied", int(n)))
+			}
+			done <- true
+		}()
+		select {
+		case <-done:
+			// Pipe terminou normalmente
+		case <-ctx.Done():
+			// Timeout atingido - fecha conexões para interromper o io.Copy
+			h.conn.Close()
+			honeypotConn.Close()
+			log.Debug("pipe src→dst interrompido por timeout", zap.Duration("timeout", h.proxyTimeout))
+			<-done // Aguarda a goroutine terminar
 		}
 	}()
 
-	// goroutine 2: honeypot → atacante
+	// goroutine 2: honeypot → atacante (com timeout de vida total)
 	go func() {
 		defer wg.Done()
 		log.Debug("goroutine dst→src iniciada")
 		src := io.TeeReader(honeypotConn, teeWriterDst)
-		n, err := io.Copy(h.conn, src)
-		if err != nil {
-			log.Debug("pipe dst→src encerrado",
-				zap.Int("bytes_copied", int(n)),
-				zap.String("error_type", fmt.Sprintf("%T", err)),
-				zap.Error(err))
-		} else {
-			log.Debug("pipe dst→src concluído", zap.Int("bytes_copied", int(n)))
+		// Usa contexto com timeout para garantir que o pipe respeite o PROXY_TIMEOUT
+		ctx, cancel := context.WithTimeout(context.Background(), h.proxyTimeout)
+		defer cancel()
+		done := make(chan bool, 1)
+		go func() {
+			n, err := io.Copy(h.conn, src)
+			if err != nil {
+				log.Debug("pipe dst→src encerrado",
+					zap.Int("bytes_copied", int(n)),
+					zap.String("error_type", fmt.Sprintf("%T", err)),
+					zap.Error(err))
+			} else {
+				log.Debug("pipe dst→src concluído", zap.Int("bytes_copied", int(n)))
+			}
+			done <- true
+		}()
+		select {
+		case <-done:
+			// Pipe terminou normalmente
+		case <-ctx.Done():
+			// Timeout atingido - fecha conexões para interromper o io.Copy
+			h.conn.Close()
+			honeypotConn.Close()
+			log.Debug("pipe dst→src interrompido por timeout", zap.Duration("timeout", h.proxyTimeout))
+			<-done // Aguarda a goroutine terminar
 		}
 	}()
 
