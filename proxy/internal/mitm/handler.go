@@ -54,6 +54,7 @@ type SSHMITMConfig struct {
 	SrcPort        int
 	DstIP          string
 	DstPort        int
+	Deadline       time.Time
 }
 
 var (
@@ -388,6 +389,10 @@ func tryAuthOnHoneypot(targetAddr, user, pass string, logger func(string, ...int
 func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
 	logger("SSH MITM: iniciando handshake")
 
+	if !config.Deadline.IsZero() {
+		clientConn.SetDeadline(config.Deadline)
+	}
+
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:  false,
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
@@ -514,6 +519,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	}
 	logger("SSH MITM: conexão TCP com honeypot estabelecida")
 	defer targetConn.Close()
+	if !config.Deadline.IsZero() {
+		targetConn.SetDeadline(config.Deadline)
+	}
 
 	logger("SSH MITM: conectando SSH ao honeypot com credenciais ja verificadas: user=%s, pass=%s",
 		capturedUser, capturedPass)
@@ -643,12 +651,18 @@ type ServerFirstConfig struct {
 	HoneypotAddr string
 	NDPIProto    string
 	MaxPayloadSize int64
+	Deadline     time.Time
 	OnEvent      func(event *kafka.Event)
 	Logger      func(string, ...interface{})
 }
 
 func HandleServerFirst(config ServerFirstConfig) error {
 	config.Logger("ServerFirst: relay iniciado com conexão existente")
+
+	if !config.Deadline.IsZero() {
+		config.ClientConn.SetDeadline(config.Deadline)
+		config.HoneypotConn.SetDeadline(config.Deadline)
+	}
 
 	hasSentGreeting := false
 
@@ -805,8 +819,8 @@ type TLSMITMConfig struct {
 	// OnFirstDecrypted é chamado com o primeiro chunk decriptado do cliente.
 	// Retorna novo endereço de destino para redirecionar, ou "" para manter o atual.
 	OnFirstDecrypted func([]byte) string
-	// ProxyTimeout define o timeout de vida total da conexão
-	ProxyTimeout      time.Duration
+	// Deadline define o prazo absoluto de vida total da conexão (derivado de PROXY_TIMEOUT)
+	Deadline         time.Time
 }
 
 type bufferedConn struct {
@@ -865,11 +879,16 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 		var firstDecrypted []byte
 		if config.OnFirstDecrypted != nil {
 			buf := make([]byte, 4096)
-			tlsServer.SetReadDeadline(time.Now().Add(2 * time.Second))
+			shortDeadline := time.Now().Add(2 * time.Second)
+			// Não ultrapassa o deadline absoluto da conexão
+			if !config.Deadline.IsZero() && config.Deadline.Before(shortDeadline) {
+				shortDeadline = config.Deadline
+			}
+			tlsServer.SetReadDeadline(shortDeadline)
 			n, _ := tlsServer.Read(buf)
-			// Mantém o deadline de vida total da conexão
-			if config.ProxyTimeout > 0 {
-				tlsServer.SetDeadline(time.Now().Add(config.ProxyTimeout))
+			// Restaura o deadline absoluto da conexão após a leitura de classificação
+			if !config.Deadline.IsZero() {
+				tlsServer.SetDeadline(config.Deadline)
 			}
 			if n > 0 {
 			firstDecrypted = make([]byte, n)
@@ -886,6 +905,9 @@ func HandleTLS(clientConn net.Conn, config TLSMITMConfig, logger func(string, ..
 		return fmt.Errorf("falha ao conectar no honeypot: %w", err)
 	}
 	defer targetConn.Close()
+	if !config.Deadline.IsZero() {
+		targetConn.SetDeadline(config.Deadline)
+	}
 
 	logger("TLS MITM: conectado ao honeypot (plain)")
 
