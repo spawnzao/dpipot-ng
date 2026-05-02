@@ -108,36 +108,39 @@ func NewHandler(
 // getOriginalDst obtém o IP e porta originais de destino usando
 // getsockopt(IP_ORIGINAL_DST) no Linux.
 // Funciona com REDIRECT.
+//
+// Usa SyscallConn().Control() em vez de File() para evitar que o fd seja
+// removido do poller epoll do runtime Go, o que quebraria SetDeadline.
 func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return nil, 0, fmt.Errorf("não é uma conexão TCP")
 	}
 
-	file, err := tcpConn.File()
+	rawConn, err := tcpConn.SyscallConn()
 	if err != nil {
-		return nil, 0, fmt.Errorf("File(): %w", err)
+		return nil, 0, fmt.Errorf("SyscallConn: %w", err)
 	}
-	defer file.Close()
-
-	fd := int(file.Fd())
 
 	var addr syscall.RawSockaddrInet4
 	var addrLen uint32 = syscall.SizeofSockaddrInet4
+	var sysErr syscall.Errno
 
-	// IP_ORIGINAL_DST = 80, SOL_IP = 0
-	// syscall.Getsockoptbyte não funciona para structs, usar Syscall6 diretamente
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_GETSOCKOPT,
-		uintptr(fd),
-		uintptr(syscall.SOL_IP),
-		uintptr(80), // IP_ORIGINAL_DST
-		uintptr(unsafe.Pointer(&addr)),
-		uintptr(unsafe.Pointer(&addrLen)),
-		0,
-	)
-	if errno != 0 {
-		return nil, 0, fmt.Errorf("getsockopt IP_ORIGINAL_DST: %v", errno)
+	if ctrlErr := rawConn.Control(func(fd uintptr) {
+		_, _, sysErr = syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(80), // IP_ORIGINAL_DST
+			uintptr(unsafe.Pointer(&addr)),
+			uintptr(unsafe.Pointer(&addrLen)),
+			0,
+		)
+	}); ctrlErr != nil {
+		return nil, 0, fmt.Errorf("Control: %w", ctrlErr)
+	}
+	if sysErr != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_ORIGINAL_DST: %v", sysErr)
 	}
 
 	ip := net.IP(addr.Addr[:])
@@ -155,60 +158,64 @@ type inPktInfo struct {
 	addr    [4]byte
 }
 
+// getTproxyDst obtém o IP e porta originais quando o tráfego vem via TPROXY.
+//
+// Usa SyscallConn().Control() em vez de File() para evitar que o fd seja
+// removido do poller epoll do runtime Go, o que quebraria SetDeadline.
 func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 	tcpConn, ok := conn.(*net.TCPConn)
 	if !ok {
 		return nil, 0, fmt.Errorf("não é uma conexão TCP")
 	}
 
-	file, err := tcpConn.File()
+	rawConn, err := tcpConn.SyscallConn()
 	if err != nil {
-		return nil, 0, fmt.Errorf("File(): %w", err)
+		return nil, 0, fmt.Errorf("SyscallConn: %w", err)
 	}
-	defer file.Close()
 
-	fd := int(file.Fd())
-
-	// Tenta IP_PKTINFO primeiro
 	var pktInfo inPktInfo
 	var pktInfoLen uint32 = uint32(unsafe.Sizeof(pktInfo))
+	var pktSysErr syscall.Errno
 
-	_, _, errno := syscall.Syscall6(
-		syscall.SYS_GETSOCKOPT,
-		uintptr(fd),
-		uintptr(syscall.SOL_IP),
-		uintptr(25), // IP_PKTINFO
-		uintptr(unsafe.Pointer(&pktInfo)),
-		uintptr(unsafe.Pointer(&pktInfoLen)),
-		0,
-	)
-	if errno != 0 {
-		return nil, 0, fmt.Errorf("getsockopt IP_PKTINFO: %v", errno)
+	if ctrlErr := rawConn.Control(func(fd uintptr) {
+		_, _, pktSysErr = syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(25), // IP_PKTINFO
+			uintptr(unsafe.Pointer(&pktInfo)),
+			uintptr(unsafe.Pointer(&pktInfoLen)),
+			0,
+		)
+	}); ctrlErr != nil {
+		return nil, 0, fmt.Errorf("Control (IP_PKTINFO): %w", ctrlErr)
+	}
+	if pktSysErr != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_PKTINFO: %v", pktSysErr)
 	}
 
-	// specDst contém o IP de destino original antes do TPROXY
 	ip := net.IP(pktInfo.specDst[:])
-
-	// Se specDst for zero, usa o IP do conn local (addr do socket original)
 	if ip.Equal(net.IPv4zero) {
 		ip = net.IP(pktInfo.addr[:])
 	}
 
-	// Obtém a porta original usando IP_ORIGINAL_DSTADDR (20)
 	var origDstAddr [4]byte
 	var origDstLen uint32 = 4
-	syscall.Syscall6(
-		syscall.SYS_GETSOCKOPT,
-		uintptr(fd),
-		uintptr(syscall.SOL_IP),
-		uintptr(20), // IP_ORIGINAL_DSTADDR
-		uintptr(unsafe.Pointer(&origDstAddr)),
-		uintptr(unsafe.Pointer(&origDstLen)),
-		0,
-	)
-	origPort := uint16(origDstAddr[0])<<8 | uint16(origDstAddr[1])
 
-	// Se a porta for 0, usa a porta local (porta do socket que recebeu a conexão)
+	// IP_ORIGINAL_DSTADDR é best-effort; ignora erro
+	rawConn.Control(func(fd uintptr) { //nolint:errcheck
+		syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(20), // IP_ORIGINAL_DSTADDR
+			uintptr(unsafe.Pointer(&origDstAddr)),
+			uintptr(unsafe.Pointer(&origDstLen)),
+			0,
+		)
+	})
+
+	origPort := uint16(origDstAddr[0])<<8 | uint16(origDstAddr[1])
 	localAddr := conn.LocalAddr().(*net.TCPAddr)
 	if origPort == 0 {
 		origPort = uint16(localAddr.Port)
@@ -246,7 +253,7 @@ func (h *Handler) Handle() {
 
 	// Aplica timeout de vida total da conexão (PROXY_TIMEOUT)
 	deadline := time.Now().Add(h.proxyTimeout)
-	h.conn.SetDeadline(deadline) // re-aplicado após File() calls abaixo
+	h.conn.SetDeadline(deadline)
 
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
@@ -645,8 +652,6 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
-	// Re-aplica deadline: getTproxyDst/getOriginalDst chamam tcpConn.File() que
-	// duplica o fd via dup(2) e quebra o mecanismo de SetDeadline no Go.
 	h.conn.SetDeadline(deadline)
 
 	log.Debug("IP original via TPROXY/REDIRECT",
