@@ -139,20 +139,28 @@ func (a *AFPacket) readLoop() {
 	buf := make([]byte, MaxPacketSize)
 
 	for {
+		// Copia o fd sob read lock e libera antes de bloquear em Recvfrom,
+		// evitando deadlock com Close() que precisa do write lock.
 		a.mu.RLock()
 		if a.closed {
 			a.mu.RUnlock()
 			return
 		}
-
-		n, _, err := unix.Recvfrom(a.fd, buf, 0)
+		fd := a.fd
 		a.mu.RUnlock()
 
+		n, _, err := unix.Recvfrom(fd, buf, 0)
+
 		if err != nil {
+			a.mu.RLock()
+			closed := a.closed
+			a.mu.RUnlock()
+			if closed {
+				return
+			}
 			errno, ok := err.(unix.Errno)
 			if ok && (errno == unix.EAGAIN || errno == unix.EWOULDBLOCK) {
 				time.Sleep(time.Millisecond * 10)
-				continue
 			}
 			continue
 		}
@@ -185,24 +193,21 @@ func (a *AFPacket) Errors() <-chan error {
 
 func (a *AFPacket) Close() error {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-
 	if a.closed {
+		a.mu.Unlock()
 		return nil
 	}
-
+	a.closed = true
 	close(a.done)
-
 	if a.fd > 0 {
 		unix.Close(a.fd)
 		a.fd = -1
 	}
+	a.mu.Unlock() // libera antes de wg.Wait() para readLoop poder adquirir RLock e sair
 
 	a.wg.Wait()
 	close(a.packets)
 	close(a.errors)
-
-	a.closed = true
 	return nil
 }
 
