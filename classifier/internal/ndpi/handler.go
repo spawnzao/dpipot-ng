@@ -63,6 +63,8 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		portProtocolMap:  cfg.PortProtocolMap,
 	}
 
+	h.startNdpiFlowsCleanup(2 * time.Minute)
+
 	if h.logger != nil {
 		h.logger.Info("nDPI handler initialized")
 	}
@@ -290,10 +292,52 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 func (h *Handler) Close() {
 	h.cancel()
+	h.wg.Wait()
+	h.ndpiFlows.Range(func(key, value any) bool {
+		if ndpiFlow, ok := value.(*gondpi.NdpiFlow); ok {
+			ndpiFlow.Close()
+		}
+		h.ndpiFlows.Delete(key)
+		return true
+	})
 	if h.ndpiDM != nil {
 		h.ndpiDM.Close()
 	}
-	h.wg.Wait()
+}
+
+func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-h.ctx.Done():
+				return
+			case <-ticker.C:
+				h.cleanupNdpiFlows()
+			}
+		}
+	}()
+}
+
+func (h *Handler) cleanupNdpiFlows() {
+	freed := 0
+	h.ndpiFlows.Range(func(key, value any) bool {
+		flowID := key.(string)
+		if _, found := h.flowTable.Get(flowID); !found {
+			if ndpiFlow, ok := value.(*gondpi.NdpiFlow); ok {
+				ndpiFlow.Close()
+			}
+			h.ndpiFlows.Delete(flowID)
+			freed++
+		}
+		return true
+	})
+	if h.logger != nil && freed > 0 {
+		h.logger.Info("nDPI flows cleanup", zap.Int("freed", freed))
+	}
 }
 
 func (h *Handler) isServerFirstPort(port uint16) bool {
