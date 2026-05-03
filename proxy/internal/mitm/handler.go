@@ -192,10 +192,7 @@ func (s *SSHSession) HandleOutput(data []byte) {
 	}
 }
 
-func (s *SSHSession) Flush() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+func (s *SSHSession) flushLocked() {
 	if s.inputBuffer.Len() > 0 {
 		cmd := s.inputBuffer.String()
 		if len(cmd) > 1 {
@@ -221,11 +218,17 @@ func (s *SSHSession) Flush() {
 	}
 }
 
+func (s *SSHSession) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.flushLocked()
+}
+
 func (s *SSHSession) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
-	s.Flush()
+	s.flushLocked()
 }
 
 func (s *SSHSession) emitCommand() {
@@ -868,9 +871,10 @@ func (b *bufferedConn) Read(p []byte) (n int, err error) {
 	if b.pos < len(b.buffer) {
 		n = copy(p, b.buffer[b.pos:])
 		b.pos += n
-		if b.pos >= len(b.buffer) {
-			return n, io.EOF
-		}
+		// Retorna (n, nil) mesmo quando o buffer se esgota nesta leitura.
+		// Retornar (n>0, io.EOF) viola o contrato do io.Reader e quebra o
+		// handshake TLS no crypto/tls, que interpreta como fim prematuro do stream.
+		// Na próxima chamada b.pos == len(b.buffer) e cai no b.Conn.Read abaixo.
 		return n, nil
 	}
 	return b.Conn.Read(p)
