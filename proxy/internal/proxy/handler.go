@@ -47,8 +47,10 @@ type Handler struct {
 	certMgr *mitm.CertManager
 
 	// captura dos payloads para o Kafka
-	maxPayloadBytes int64
-	flowTracker     *flowtracker.Client
+	maxPayloadBytes  int64
+	sshInputBufSize  int
+	sshOutputBufSize int
+	flowTracker      *flowtracker.Client
 
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
 	serverFirstPorts map[uint16]string
@@ -76,6 +78,8 @@ func NewHandler(
 	r *router.Router,
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
+	sshInputBufSize int,
+	sshOutputBufSize int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -87,21 +91,23 @@ func NewHandler(
 	proxyTimeout time.Duration,
 ) *Handler {
 	return &Handler{
-		flowID:          flowID,
-		conn:            conn,
-		ndpi:            ndpiClient,
-		router:          r,
-		producer:        producer,
-		maxPayloadBytes: maxPayloadBytes,
-		log:             log,
-		flowTracker:     flowTracker,
-		certMgr:         certMgr,
-		serverFirstPorts: serverFirstPorts,
+		flowID:           flowID,
+		conn:             conn,
+		ndpi:             ndpiClient,
+		router:           r,
+		producer:         producer,
+		maxPayloadBytes:  maxPayloadBytes,
+		sshInputBufSize:  sshInputBufSize,
+		sshOutputBufSize: sshOutputBufSize,
+		log:              log,
+		flowTracker:      flowTracker,
+		certMgr:          certMgr,
+		serverFirstPorts:    serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
-		httpAuthPorts:      httpAuthPorts,
+		httpAuthPorts:       httpAuthPorts,
 		httpAuthPortsTLS:    httpAuthPortsTLS,
-		httpClassifier:     httpClassifier,
-		proxyTimeout:    proxyTimeout,
+		httpClassifier:      httpClassifier,
+		proxyTimeout:        proxyTimeout,
 	}
 }
 
@@ -808,15 +814,17 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		}
 		log.Debug("SSH MITM: passando conexão com preload", zap.Int("bytes", len(firstChunk)))
 		mitmConfig := mitm.SSHMITMConfig{
-			HostKey:    hostKey,
-			Banner:     string(firstChunk),
-			TargetAddr: honeypotAddr,
-			FlowID:     h.flowID,
-			SrcIP:      srcAddr.IP.String(),
-			SrcPort:    srcAddr.Port,
-			DstIP:      origDstIP.String(),
-			DstPort:    int(origDstPort),
-			Deadline:   deadline,
+			HostKey:          hostKey,
+			Banner:           string(firstChunk),
+			TargetAddr:       honeypotAddr,
+			FlowID:           h.flowID,
+			SrcIP:            srcAddr.IP.String(),
+			SrcPort:          srcAddr.Port,
+			DstIP:            origDstIP.String(),
+			DstPort:          int(origDstPort),
+			Deadline:         deadline,
+			SSHInputBufSize:  h.sshInputBufSize,
+			SSHOutputBufSize: h.sshOutputBufSize,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},

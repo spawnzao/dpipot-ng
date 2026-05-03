@@ -21,20 +21,22 @@ import (
 // Server aceita conexões TCP e cria um Handler por conexão.
 // Cada Handler roda em goroutine separada — o server nunca bloqueia.
 type Server struct {
-	listenAddr      string
-	ndpiClient      *ndpi.Client
-	router          *router.Router
-	producer        *kafka.Producer
-	maxPayloadBytes int64
-	log             *zap.Logger
-	flowTracker     *flowtracker.Client
-	certMgr         *mitm.CertManager
-	serverFirstPorts map[uint16]string
+	listenAddr          string
+	ndpiClient          *ndpi.Client
+	router              *router.Router
+	producer            *kafka.Producer
+	maxPayloadBytes     int64
+	sshInputBufSize     int
+	sshOutputBufSize    int
+	log                 *zap.Logger
+	flowTracker         *flowtracker.Client
+	certMgr             *mitm.CertManager
+	serverFirstPorts    map[uint16]string
 	serverFirstPortsTLS map[uint16]string
-	httpAuthPorts map[uint16]bool
-	httpAuthPortsTLS map[uint16]bool
-	httpClassifier *httpclassifier.Classifier
-	proxyTimeout    time.Duration
+	httpAuthPorts       map[uint16]bool
+	httpAuthPortsTLS    map[uint16]bool
+	httpClassifier      *httpclassifier.Classifier
+	proxyTimeout        time.Duration
 }
 
 func NewServer(
@@ -43,6 +45,8 @@ func NewServer(
 	r *router.Router,
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
+	sshInputBufSize int,
+	sshOutputBufSize int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -54,20 +58,22 @@ func NewServer(
 	proxyTimeout time.Duration,
 ) *Server {
 	return &Server{
-		listenAddr:      listenAddr,
-		ndpiClient:      ndpiClient,
-		router:          r,
-		producer:        producer,
-		maxPayloadBytes: maxPayloadBytes,
-		log:             log,
-		flowTracker:     flowTracker,
-		certMgr:         certMgr,
-		serverFirstPorts: serverFirstPorts,
+		listenAddr:          listenAddr,
+		ndpiClient:          ndpiClient,
+		router:              r,
+		producer:            producer,
+		maxPayloadBytes:     maxPayloadBytes,
+		sshInputBufSize:     sshInputBufSize,
+		sshOutputBufSize:    sshOutputBufSize,
+		log:                 log,
+		flowTracker:         flowTracker,
+		certMgr:             certMgr,
+		serverFirstPorts:    serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
-		httpAuthPorts:      httpAuthPorts,
+		httpAuthPorts:       httpAuthPorts,
 		httpAuthPortsTLS:    httpAuthPortsTLS,
-		httpClassifier:   httpClassifier,
-		proxyTimeout:    proxyTimeout,
+		httpClassifier:      httpClassifier,
+		proxyTimeout:        proxyTimeout,
 	}
 }
 
@@ -160,6 +166,8 @@ func (s *Server) handle(conn net.Conn) {
 		s.router,
 		s.producer,
 		s.maxPayloadBytes,
+		s.sshInputBufSize,
+		s.sshOutputBufSize,
 		log,
 		s.flowTracker,
 		s.certMgr,

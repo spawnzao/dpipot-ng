@@ -229,7 +229,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), time.Now().UnixMilli())
 
 	if h.logger != nil {
-		h.logger.Info("nDPI result",
+		h.logger.Debug("nDPI result",
 			zap.String("flow_id", flowID),
 			zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
 			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),

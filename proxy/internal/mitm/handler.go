@@ -43,19 +43,26 @@ func DetectProtocol(firstChunk []byte) string {
 }
 
 type SSHMITMConfig struct {
-	Banner         string
-	HostKey        ssh.Signer
-	TargetAddr     string
-	MaxPayloadSize int64
-	ServerConfig   *ssh.ServerConfig
-	OnEvent        func(event *kafka.Event)
-	FlowID         string
-	SrcIP          string
-	SrcPort        int
-	DstIP          string
-	DstPort        int
-	Deadline       time.Time
+	Banner              string
+	HostKey             ssh.Signer
+	TargetAddr          string
+	MaxPayloadSize      int64
+	SSHInputBufSize     int
+	SSHOutputBufSize    int
+	ServerConfig        *ssh.ServerConfig
+	OnEvent             func(event *kafka.Event)
+	FlowID              string
+	SrcIP               string
+	SrcPort             int
+	DstIP               string
+	DstPort             int
+	Deadline            time.Time
 }
+
+const (
+	defaultSSHInputBufSize  = 4096
+	defaultSSHOutputBufSize = 65536
+)
 
 var (
 	promptPatterns []*regexp.Regexp = []*regexp.Regexp{
@@ -72,34 +79,44 @@ var (
 )
 
 type SSHSession struct {
-	mu            sync.Mutex
-	inputBuffer   bytes.Buffer
-	outputBuffer bytes.Buffer
-	lastActivity time.Time
-	pendingCmd   string
-	pendingResp  string
-	flowID       string
-	srcIP        string
-	srcPort       int
-	dstIP         string
-	dstPort       int
-	honeypot     string
-	onEvent      func(event *kafka.Event)
-	logger       func(string, ...interface{})
-	closed       bool
+	mu               sync.Mutex
+	inputBuffer      bytes.Buffer
+	outputBuffer     bytes.Buffer
+	lastActivity     time.Time
+	pendingCmd       string
+	pendingResp      string
+	flowID           string
+	srcIP            string
+	srcPort          int
+	dstIP            string
+	dstPort          int
+	honeypot         string
+	onEvent          func(event *kafka.Event)
+	logger           func(string, ...interface{})
+	closed           bool
+	maxInputBufSize  int
+	maxOutputBufSize int
 }
 
-func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, honeypot string, onEvent func(event *kafka.Event), logger func(string, ...interface{})) *SSHSession {
+func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, honeypot string, onEvent func(event *kafka.Event), logger func(string, ...interface{}), maxInputBufSize, maxOutputBufSize int) *SSHSession {
+	if maxInputBufSize <= 0 {
+		maxInputBufSize = defaultSSHInputBufSize
+	}
+	if maxOutputBufSize <= 0 {
+		maxOutputBufSize = defaultSSHOutputBufSize
+	}
 	return &SSHSession{
-		flowID:       flowID,
-		srcIP:        srcIP,
-		srcPort:      srcPort,
-		honeypot:     honeypot,
-		dstIP:        dstIP,
-		dstPort:      dstPort,
-		onEvent:      onEvent,
-		logger:       logger,
-		lastActivity: time.Now(),
+		flowID:           flowID,
+		srcIP:            srcIP,
+		srcPort:          srcPort,
+		honeypot:         honeypot,
+		dstIP:            dstIP,
+		dstPort:          dstPort,
+		onEvent:          onEvent,
+		logger:           logger,
+		lastActivity:     time.Now(),
+		maxInputBufSize:  maxInputBufSize,
+		maxOutputBufSize: maxOutputBufSize,
 	}
 }
 
@@ -130,6 +147,13 @@ func (s *SSHSession) HandleInput(data []byte) {
 		default:
 			if b >= 0x20 && b < 0x7f {
 				s.inputBuffer.WriteByte(b)
+				if s.inputBuffer.Len() >= s.maxInputBufSize {
+					cmd := s.inputBuffer.String()
+					s.logger("SSH-MITM: comando truncado por limite de tamanho: %d bytes", len(cmd))
+					s.pendingCmd = cmd
+					s.inputBuffer.Reset()
+					s.emitCommand()
+				}
 			}
 		}
 	}
@@ -146,6 +170,15 @@ func (s *SSHSession) HandleOutput(data []byte) {
 
 	s.outputBuffer.Write(data)
 	s.lastActivity = time.Now()
+
+	if s.outputBuffer.Len() >= s.maxOutputBufSize {
+		output := s.outputBuffer.String()
+		s.logger("SSH-MITM: output truncado por limite de tamanho: %d bytes", len(output))
+		s.pendingResp = output
+		s.outputBuffer.Reset()
+		s.emitResponse()
+		return
+	}
 
 	output := s.outputBuffer.String()
 	for _, pattern := range promptPatterns {
@@ -581,6 +614,8 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 			config.TargetAddr,
 			config.OnEvent,
 			logger,
+			config.SSHInputBufSize,
+			config.SSHOutputBufSize,
 		)
 
 		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
