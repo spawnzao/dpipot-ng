@@ -105,6 +105,8 @@ func main() {
 		r,
 		producer,
 		cfg.MaxPayloadBytes,
+		cfg.SSHInputBufSize,
+		cfg.SSHOutputBufSize,
 		log,
 		flowTracker,
 		certMgr,

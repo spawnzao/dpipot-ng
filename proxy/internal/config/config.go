@@ -18,6 +18,8 @@ type Config struct {
 	KafkaBrokers        string
 	KafkaTopic         string
 	MaxPayloadBytes    int64
+	SSHInputBufSize    int
+	SSHOutputBufSize   int
 	LogLevel           string
 	ClassifierEnabled bool
 	ClassifierHost    string
@@ -37,6 +39,8 @@ func Load() (*Config, error) {
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
 		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
 		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 65536),
+		SSHInputBufSize:   getInt("SSH_INPUT_BUF_SIZE", 4096),
+		SSHOutputBufSize:  getInt("SSH_OUTPUT_BUF_SIZE", 65536),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",
 		ClassifierHost:    "127.0.0.1",
