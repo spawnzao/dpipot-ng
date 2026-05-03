@@ -36,7 +36,7 @@ func Load() (*Config, error) {
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
 		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
-		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 0),
+		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 65536),
 		LogLevel:          getEnv("LOG_LEVEL", "info"),
 		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",
 		ClassifierHost:    "127.0.0.1",
