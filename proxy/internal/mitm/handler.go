@@ -580,6 +580,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 	logger("SSH MITM: esperando por channels...")
 
+	var chanWg sync.WaitGroup
+
 	for newChannel := range chans {
 		logger("SSH MITM: novo channel recebido: %s", newChannel.ChannelType())
 
@@ -603,13 +605,6 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		}
 		logger("SSH MITM: channel aceito do cliente")
 
-// Encaminha requests do cliente → honeypot (pty-req, shell, exec, window-change…)
-		// e do honeypot → cliente (exit-status, exit-signal…)
-		// SEM isso o shell nunca abre.
-go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
-
-		go forwardRequests(clientChannel, targetReqs, logger, config.OnEvent, config)
-		// Nova estrutura SSHSession para TTY Stream Reconstruction
 		sshSession := NewSSHSession(
 			config.FlowID,
 			config.SrcIP, config.SrcPort,
@@ -621,9 +616,20 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 			config.SSHOutputBufSize,
 		)
 
-		// Copia dados brutos em ambas as direções (stdin/stdout do canal).
-		//.stderr é tratado separadamente pois é um sub-canal distinto.
+		chanWg.Add(6)
+
 		go func() {
+			defer chanWg.Done()
+			forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
+		}()
+
+		go func() {
+			defer chanWg.Done()
+			forwardRequests(clientChannel, targetReqs, logger, config.OnEvent, config)
+		}()
+
+		go func() {
+			defer chanWg.Done()
 			defer targetChannel.Close()
 			defer clientChannel.Close()
 			defer sshSession.Close()
@@ -631,10 +637,9 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 			for {
 				n, err := clientChannel.Read(buf)
 				if n > 0 {
-					data := bytes.Clone(buf[:n])
 					logger("SSH MITM: cliente→honeypot lendo %d bytes", n)
-					sshSession.HandleInput(data)
-					targetChannel.Write(data)
+					sshSession.HandleInput(buf[:n])
+					targetChannel.Write(buf[:n])
 				}
 				if err != nil {
 					logger("SSH MITM: cliente→honeypot erro: %v", err)
@@ -644,16 +649,16 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 		}()
 
 		go func() {
+			defer chanWg.Done()
 			defer targetChannel.Close()
 			defer clientChannel.Close()
 			buf := make([]byte, 4096)
 			for {
 				n, err := targetChannel.Read(buf)
 				if n > 0 {
-					data := bytes.Clone(buf[:n])
 					logger("SSH MITM: honeypot→cliente lendo %d bytes", n)
-					sshSession.HandleOutput(data)
-					clientChannel.Write(data)
+					sshSession.HandleOutput(buf[:n])
+					clientChannel.Write(buf[:n])
 				}
 				if err != nil {
 					logger("SSH MITM: honeypot→cliente erro: %v", err)
@@ -662,20 +667,22 @@ go forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config)
 			}
 		}()
 
-		// Stderr: honeypot → cliente (ex: mensagens de erro do shell remoto)
 		go func() {
-			defer func() { recover() }() // stderr pode não estar disponível
+			defer chanWg.Done()
+			defer func() { recover() }()
 			io.Copy(clientChannel.Stderr(), targetChannel.Stderr())
 		}()
 
 		go func() {
+			defer chanWg.Done()
 			defer func() { recover() }()
 			io.Copy(targetChannel.Stderr(), clientChannel.Stderr())
 		}()
 	}
 
+	chanWg.Wait()
 	logger("SSH MITM: HandleSSH retornando nil")
-return nil
+	return nil
 }
 
 type ServerFirstConfig struct {
