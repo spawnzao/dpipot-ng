@@ -40,6 +40,7 @@ type Producer struct {
 	done         chan struct{}
 	deliveryDone chan struct{}
 	healthy      atomic.Bool
+	closed       atomic.Bool
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
@@ -82,6 +83,9 @@ func (p *Producer) IsHealthy() bool {
 }
 
 func (p *Producer) Publish(event *Event) {
+	if p.closed.Load() {
+		return
+	}
 	select {
 	case p.events <- event:
 	default:
@@ -92,6 +96,7 @@ func (p *Producer) Publish(event *Event) {
 }
 
 func (p *Producer) Close() {
+	p.closed.Store(true)
 	close(p.events)
 	<-p.done
 	p.producer.Flush(5000)
