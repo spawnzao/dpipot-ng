@@ -142,9 +142,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	server.Stop()
+
 	if err := healthServer.Shutdown(ctx); err != nil {
 		log.Error("health server shutdown", zap.Error(err))
 	}
+
+	ndpiClient.Close()
 
 	log.Info("proxy encerrado")
 }

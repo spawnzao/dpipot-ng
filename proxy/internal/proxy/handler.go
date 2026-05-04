@@ -205,8 +205,9 @@ func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 		ip = net.IP(pktInfo.addr[:])
 	}
 
-	var origDstAddr [4]byte
-	var origDstLen uint32 = 4
+	// sockaddr_in: 2-byte family + 2-byte port (BE) + 4-byte addr + 8-byte pad = 16 bytes
+	var origDstAddr [16]byte
+	var origDstLen uint32 = 16
 
 	// IP_ORIGINAL_DSTADDR é best-effort; ignora erro
 	rawConn.Control(func(fd uintptr) { //nolint:errcheck
@@ -221,7 +222,7 @@ func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
 		)
 	})
 
-	origPort := uint16(origDstAddr[0])<<8 | uint16(origDstAddr[1])
+	origPort := uint16(origDstAddr[2])<<8 | uint16(origDstAddr[3])
 	localAddr := conn.LocalAddr().(*net.TCPAddr)
 	if origPort == 0 {
 		origPort = uint16(localAddr.Port)
@@ -389,7 +390,7 @@ func (h *Handler) Handle() {
 			goto publish
 		}
 
-		honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
 		if err != nil {
 			log.Error("falha conectando ao honeypot (server-first)",
 				zap.String("honeypot", honeypotAddr),
@@ -544,8 +545,6 @@ greetingBuf = greetingBuf[:n]
 					log.Warn("falha conectando ao honeypot por porta", zap.Error(err))
 					goto publish
 				}
-				defer honeypotGreetingConn.Close()
-
 				// Agora espera o greeting do servidor (com timeout)
 				greetingBuf := make([]byte, classifyBufferSize)
 				// Mantém o deadline de vida total da conexão (não usar timeout curto)
@@ -553,6 +552,7 @@ greetingBuf = greetingBuf[:n]
 
 				if err != nil {
 					log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
+					honeypotGreetingConn.Close()
 				} else {
 					greetingBuf = greetingBuf[:n]
 					log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))

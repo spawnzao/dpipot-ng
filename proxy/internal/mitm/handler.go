@@ -1,7 +1,6 @@
 package mitm
 
 import (
-	"bufio"
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
@@ -720,8 +719,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		for {
 			n, err := config.ClientConn.Read(buf)
 			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
+				chunk := buf[:n]
 
 				if !hasSentGreeting {
 					hasSentGreeting = true
@@ -729,8 +727,10 @@ func HandleServerFirst(config ServerFirstConfig) error {
 				}
 
 				if config.OnEvent != nil {
-					events := parser.ParseClientData(data, config.Logger)
+					events := parser.ParseClientData(chunk, config.Logger)
 					for _, ev := range events {
+						data := make([]byte, n)
+						copy(data, chunk)
 						config.OnEvent(&kafka.Event{
 							FlowID:      config.FlowID,
 							Timestamp:   time.Now(),
@@ -748,7 +748,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 					}
 				}
 
-				_, wErr := config.HoneypotConn.Write(data)
+				_, wErr := config.HoneypotConn.Write(chunk)
 				if wErr != nil {
 					errChan <- wErr
 					return
@@ -766,12 +766,13 @@ func HandleServerFirst(config ServerFirstConfig) error {
 		for {
 			n, err := config.HoneypotConn.Read(buf)
 			if n > 0 {
-				data := make([]byte, n)
-				copy(data, buf[:n])
+				chunk := buf[:n]
 
 				if config.OnEvent != nil {
-					events := parser.ParseServerData(data, config.Logger)
+					events := parser.ParseServerData(chunk, config.Logger)
 					for _, ev := range events {
+						data := make([]byte, n)
+						copy(data, chunk)
 						config.OnEvent(&kafka.Event{
 							FlowID:       config.FlowID,
 							Timestamp:    time.Now(),
@@ -789,7 +790,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 					}
 				}
 
-				_, wErr := config.ClientConn.Write(data)
+				_, wErr := config.ClientConn.Write(chunk)
 				if wErr != nil {
 					errChan <- wErr
 					return
@@ -1052,14 +1053,7 @@ func GenerateSelfSignedTLS() (tls.Certificate, error) {
 }
 
 func PeekFirstChunk(conn net.Conn, size int) ([]byte, error) {
-	reader := bufio.NewReader(conn)
-	peek, err := reader.Peek(size)
-	if err != nil {
-		return nil, err
-	}
-	return peek, nil
-}
-
-func NewBufioReader(conn net.Conn) *bufio.Reader {
-	return bufio.NewReader(conn)
+	buf := make([]byte, size)
+	n, err := io.ReadAtLeast(conn, buf, 1)
+	return buf[:n], err
 }

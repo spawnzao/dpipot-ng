@@ -161,6 +161,11 @@ func (a *AFPacket) readLoop() {
 			errno, ok := err.(unix.Errno)
 			if ok && (errno == unix.EAGAIN || errno == unix.EWOULDBLOCK) {
 				time.Sleep(time.Millisecond * 10)
+				continue
+			}
+			select {
+			case a.errors <- err:
+			default:
 			}
 			continue
 		}
