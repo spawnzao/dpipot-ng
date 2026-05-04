@@ -327,20 +327,24 @@ func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
 }
 
 func (h *Handler) cleanupNdpiFlows() {
-	freed := 0
+	evicted := 0
 	h.ndpiFlows.Range(func(key, value any) bool {
 		flowID := key.(string)
 		if _, found := h.flowTable.Get(flowID); !found {
-			if ndpiFlow, ok := value.(*gondpi.NdpiFlow); ok {
-				ndpiFlow.Close()
-			}
+			// Remove do mapa Go, mas NÃO chama ndpiFlow.Close() aqui.
+			// A goroutine de processamento de pacotes pode ter carregado o
+			// mesmo ponteiro C do sync.Map e ainda estar dentro de
+			// PacketProcessing — chamar ndpi_flow_free concorrentemente
+			// é use-after-free no heap C e corrompe o módulo nDPI.
+			// A liberação do C heap ocorre em Handler.Close(), depois que
+			// o processador de pacotes já parou (processingWg.Wait).
 			h.ndpiFlows.Delete(flowID)
-			freed++
+			evicted++
 		}
 		return true
 	})
-	if h.logger != nil && freed > 0 {
-		h.logger.Info("nDPI flows cleanup", zap.Int("freed", freed))
+	if h.logger != nil && evicted > 0 {
+		h.logger.Info("nDPI flows cleanup", zap.Int("evicted", evicted))
 	}
 }
 
