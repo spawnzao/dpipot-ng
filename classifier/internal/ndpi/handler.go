@@ -293,20 +293,11 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 func (h *Handler) Close() {
 	h.cancel()
 	h.wg.Wait()
-	// Fecha o módulo nDPI ANTES de liberar os flow structs individuais.
-	// ndpi_detection_module_exit limpa as referências internas do módulo para
-	// os flows; só então é seguro chamar ndpi_flow_free em cada struct.
-	// Inverter essa ordem corrompe o heap C e gera double free no module exit.
-	if h.ndpiDM != nil {
-		h.ndpiDM.Close()
-	}
-	h.ndpiFlows.Range(func(key, value any) bool {
-		if ndpiFlow, ok := value.(*gondpi.NdpiFlow); ok {
-			ndpiFlow.Close()
-		}
-		h.ndpiFlows.Delete(key)
-		return true
-	})
+	// Intencionalmente não chamamos ndpi_exit_detection_module nem ndpi_flow_free.
+	// O tráfego de honeypot (pacotes malformados, port scanners, exploits) corrompe
+	// o estado interno do módulo nDPI, fazendo ndpi_exit_detection_module crashar com
+	// "free(): double free detected in tcache 2". O processo roda em container;
+	// o OS recupera todo o heap C no restart do pod — o leak é inofensivo.
 }
 
 func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
