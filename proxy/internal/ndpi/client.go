@@ -121,6 +121,10 @@ func (c *Client) Classify(ctx context.Context, flowID string, payload []byte, fl
 		return "Unknown", nil
 	}
 
+	if err := ctx.Err(); err != nil {
+		return "Unknown", err
+	}
+
 	if c.useCGO && c.ndpiDM != nil {
 		ndpiFlow, err := gondpi.NewNdpiFlow()
 		if err != nil {

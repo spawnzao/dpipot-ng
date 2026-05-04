@@ -37,6 +37,7 @@ type Server struct {
 	httpAuthPortsTLS    map[uint16]bool
 	httpClassifier      *httpclassifier.Classifier
 	proxyTimeout        time.Duration
+	listener            net.Listener
 }
 
 func NewServer(
@@ -112,6 +113,13 @@ func listenTransparent(addr string) (net.Listener, error) {
 	return net.FileListener(f)
 }
 
+// Stop fecha o listener, fazendo ListenAndServe retornar.
+func (s *Server) Stop() {
+	if s.listener != nil {
+		s.listener.Close()
+	}
+}
+
 // ListenAndServe abre o listener TCP e aceita conexões indefinidamente.
 // Bloqueia até que o listener seja fechado (graceful shutdown via contexto).
 func (s *Server) ListenAndServe() error {
@@ -119,6 +127,7 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return fmt.Errorf("listen transparent %s: %w", s.listenAddr, err)
 	}
+	s.listener = ln
 	defer ln.Close()
 
 	s.log.Info("proxy escutando", zap.String("addr", s.listenAddr))
