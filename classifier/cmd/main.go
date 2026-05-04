@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -106,7 +107,10 @@ func main() {
 
 	af.Start()
 
+	var processingWg sync.WaitGroup
+	processingWg.Add(1)
 	go func() {
+		defer processingWg.Done()
 		for {
 			select {
 			case packet, ok := <-af.Packets():
@@ -152,6 +156,7 @@ func main() {
 
 	ftServer.Stop()
 	af.Close()
+	processingWg.Wait() // garante que a goroutine saiu antes de fechar o módulo nDPI
 	ndpiHandler.Close()
 	flowTable.Close()
 
