@@ -26,6 +26,7 @@ type Table struct {
 	ttl         time.Duration
 	cleanup     time.Duration
 	lastCleanup time.Time
+	stopCh      chan struct{}
 }
 
 type TableConfig struct {
@@ -46,6 +47,7 @@ func NewTable(cfg TableConfig) *Table {
 		ttl:         cfg.TTL,
 		cleanup:     cfg.CleanupEvery,
 		lastCleanup: time.Now(),
+		stopCh:      make(chan struct{}),
 	}
 
 	go t.cleanupLoop()
@@ -107,10 +109,15 @@ func (t *Table) cleanupLoop() {
 	ticker := time.NewTicker(t.cleanup)
 	defer ticker.Stop()
 
-	for range ticker.C {
-		t.mu.Lock()
-		t.cleanupLocked()
-		t.mu.Unlock()
+	for {
+		select {
+		case <-ticker.C:
+			t.mu.Lock()
+			t.cleanupLocked()
+			t.mu.Unlock()
+		case <-t.stopCh:
+			return
+		}
 	}
 }
 
@@ -130,5 +137,6 @@ func (t *Table) Size() int {
 }
 
 func (t *Table) Close() error {
+	close(t.stopCh)
 	return nil
 }

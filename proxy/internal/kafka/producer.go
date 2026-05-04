@@ -32,13 +32,14 @@ type Event struct {
 }
 
 type Producer struct {
-	producer   *kafka.Producer
-	topicDebug string
-	topicApp   string
-	log        *zap.Logger
-	events     chan *Event
-	done       chan struct{}
-	healthy    atomic.Bool
+	producer     *kafka.Producer
+	topicDebug   string
+	topicApp     string
+	log          *zap.Logger
+	events       chan *Event
+	done         chan struct{}
+	deliveryDone chan struct{}
+	healthy      atomic.Bool
 }
 
 func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
@@ -60,12 +61,13 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 	topicApp := topic + "-application"
 
 	prod := &Producer{
-		producer:   p,
-		topicDebug: topicDebug,
-		topicApp:   topicApp,
-		log:        log,
-		events:     make(chan *Event, 10000),
-		done:       make(chan struct{}),
+		producer:     p,
+		topicDebug:   topicDebug,
+		topicApp:     topicApp,
+		log:          log,
+		events:       make(chan *Event, 10000),
+		done:         make(chan struct{}),
+		deliveryDone: make(chan struct{}),
 	}
 	prod.healthy.Store(true)
 
@@ -93,7 +95,8 @@ func (p *Producer) Close() {
 	close(p.events)
 	<-p.done
 	p.producer.Flush(5000)
-	p.producer.Close()
+	p.producer.Close() // fecha Events() → handleDelivery sai do range
+	<-p.deliveryDone
 }
 
 func (p *Producer) drain() {
@@ -132,6 +135,7 @@ func (p *Producer) drain() {
 }
 
 func (p *Producer) handleDelivery() {
+	defer close(p.deliveryDone)
 	for e := range p.producer.Events() {
 		switch ev := e.(type) {
 		case *kafka.Message:
