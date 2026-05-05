@@ -270,7 +270,7 @@ func (h *Handler) Handle() {
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		if appProto, _, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
+		if appProto, _, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
 			appProtoFlow = appProto
 		}
 	}
@@ -692,7 +692,7 @@ greetingBuf = greetingBuf[:n]
 	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
 if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		appProtoFromTracker, masterProtoFromTracker, _, found, err := h.flowTracker.QueryFlow(context.Background(), flowIDForTracker)
+		appProtoFromTracker, masterProtoFromTracker, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker)
 		masterProtoFlow = appProtoFromTracker
 		appProtoFlow = masterProtoFromTracker
 		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
@@ -1017,71 +1017,39 @@ mitmLogger := func(format string, args ...interface{}) {
 	// Não resetar startTime - queremos o tempo total da conexão
 	wg.Add(2)
 
-	// goroutine 1: atacante → honeypot (com timeout de vida total)
+	// goroutine 1: atacante → honeypot
+	// SetDeadline(deadline) já foi aplicado em ambas as conexões; io.Copy retorna
+	// automaticamente quando o prazo expira. Fechar a outra conexão sinaliza ao
+	// io.Copy da goroutine 2 que deve encerrar também.
 	go func() {
 		defer wg.Done()
 		log.Debug("goroutine src→dst iniciada")
 		src := io.TeeReader(h.conn, teeWriterSrc)
-		// Usa o deadline absoluto da conexão para garantir que o pipe respeite o PROXY_TIMEOUT
-		// (WithDeadline evita que goroutines com atraso ganhem um proxyTimeout extra)
-		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
-		// Cria pipe com cancelamento via contexto
-		done := make(chan bool, 1)
-		go func() {
-			n, err := io.Copy(honeypotConn, src)
-			if err != nil {
-				log.Debug("pipe src→dst encerrado",
-					zap.Int("bytes_copied", int(n)),
-					zap.String("error_type", fmt.Sprintf("%T", err)),
-					zap.Error(err))
-			} else {
-				log.Debug("pipe src→dst concluído", zap.Int("bytes_copied", int(n)))
-			}
-			done <- true
-		}()
-		select {
-		case <-done:
-			// Pipe terminou normalmente
-		case <-ctx.Done():
-			// Timeout atingido - fecha conexões para interromper o io.Copy
-			h.conn.Close()
-			honeypotConn.Close()
-			log.Debug("pipe src→dst interrompido por timeout", zap.Duration("timeout", h.proxyTimeout))
-			<-done // Aguarda a goroutine terminar
+		n, err := io.Copy(honeypotConn, src)
+		if err != nil {
+			log.Debug("pipe src→dst encerrado",
+				zap.Int64("bytes_copied", n),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe src→dst concluído", zap.Int64("bytes_copied", n))
 		}
+		honeypotConn.Close()
 	}()
 
-	// goroutine 2: honeypot → atacante (com timeout de vida total)
+	// goroutine 2: honeypot → atacante
 	go func() {
 		defer wg.Done()
 		log.Debug("goroutine dst→src iniciada")
 		src := io.TeeReader(honeypotConn, teeWriterDst)
-		ctx, cancel := context.WithDeadline(context.Background(), deadline)
-		defer cancel()
-		done := make(chan bool, 1)
-		go func() {
-			n, err := io.Copy(h.conn, src)
-			if err != nil {
-				log.Debug("pipe dst→src encerrado",
-					zap.Int("bytes_copied", int(n)),
-					zap.String("error_type", fmt.Sprintf("%T", err)),
-					zap.Error(err))
-			} else {
-				log.Debug("pipe dst→src concluído", zap.Int("bytes_copied", int(n)))
-			}
-			done <- true
-		}()
-		select {
-		case <-done:
-			// Pipe terminou normalmente
-		case <-ctx.Done():
-			// Timeout atingido - fecha conexões para interromper o io.Copy
-			h.conn.Close()
-			honeypotConn.Close()
-			log.Debug("pipe dst→src interrompido por timeout", zap.Duration("timeout", h.proxyTimeout))
-			<-done // Aguarda a goroutine terminar
+		n, err := io.Copy(h.conn, src)
+		if err != nil {
+			log.Debug("pipe dst→src encerrado",
+				zap.Int64("bytes_copied", n),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe dst→src concluído", zap.Int64("bytes_copied", n))
 		}
+		h.conn.Close()
 	}()
 
 	wg.Wait()
@@ -1162,8 +1130,8 @@ publish:
 		NDPIApp:       appProtoFlow,
 		Honeypot:      honeypotAddr,
 		HoneypotError: honeypotError,
-		PayloadSrc:    bufSrc.Bytes(),
-		PayloadDst:    bufDst.Bytes(),
+		PayloadSrc:    append([]byte(nil), bufSrc.Bytes()...),
+		PayloadDst:    append([]byte(nil), bufDst.Bytes()...),
 		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
 		DurationMs:    durationMs,
 		Instance:      "proxy",
