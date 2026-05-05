@@ -28,6 +28,8 @@ type Config struct {
 	ServerFirstPortsTLS map[uint16]string
 	HttpAuthPorts        map[uint16]bool
 	HttpAuthPortsTLS     map[uint16]bool
+	MaxConnections     int
+	SSHMaxAuthAttempts int
 }
 
 func Load() (*Config, error) {
@@ -41,10 +43,12 @@ func Load() (*Config, error) {
 		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 65536),
 		SSHInputBufSize:   getInt("SSH_INPUT_BUF_SIZE", 4096),
 		SSHOutputBufSize:  getInt("SSH_OUTPUT_BUF_SIZE", 65536),
-		LogLevel:          getEnv("LOG_LEVEL", "info"),
-		ClassifierEnabled: getEnv("CLASSIFIER_ENABLED", "false") == "true",
-		ClassifierHost:    "127.0.0.1",
-		ClassifierPort:    getInt("FLOWTRACKER_PORT", 9090),
+		LogLevel:           getEnv("LOG_LEVEL", "info"),
+		ClassifierEnabled:  getEnv("CLASSIFIER_ENABLED", "false") == "true",
+		ClassifierHost:     "127.0.0.1",
+		ClassifierPort:     getInt("FLOWTRACKER_PORT", 9090),
+		MaxConnections:     getInt("MAX_CONNECTIONS", 10000),
+		SSHMaxAuthAttempts: getInt("SSH_MAX_AUTH_ATTEMPTS", 5),
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",

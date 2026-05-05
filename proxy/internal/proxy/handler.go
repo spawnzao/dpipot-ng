@@ -69,6 +69,9 @@ type Handler struct {
 
 	// proxyTimeout define o timeout de vida total da conexão
 	proxyTimeout time.Duration
+
+	// sshMaxAuthAttempts limita tentativas de senha SSH por sessão
+	sshMaxAuthAttempts int
 }
 
 func NewHandler(
@@ -80,6 +83,7 @@ func NewHandler(
 	maxPayloadBytes int64,
 	sshInputBufSize int,
 	sshOutputBufSize int,
+	sshMaxAuthAttempts int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -91,17 +95,18 @@ func NewHandler(
 	proxyTimeout time.Duration,
 ) *Handler {
 	return &Handler{
-		flowID:           flowID,
-		conn:             conn,
-		ndpi:             ndpiClient,
-		router:           r,
-		producer:         producer,
-		maxPayloadBytes:  maxPayloadBytes,
-		sshInputBufSize:  sshInputBufSize,
-		sshOutputBufSize: sshOutputBufSize,
-		log:              log,
-		flowTracker:      flowTracker,
-		certMgr:          certMgr,
+		flowID:             flowID,
+		conn:               conn,
+		ndpi:               ndpiClient,
+		router:             r,
+		producer:           producer,
+		maxPayloadBytes:    maxPayloadBytes,
+		sshInputBufSize:    sshInputBufSize,
+		sshOutputBufSize:   sshOutputBufSize,
+		sshMaxAuthAttempts: sshMaxAuthAttempts,
+		log:                log,
+		flowTracker:        flowTracker,
+		certMgr:            certMgr,
 		serverFirstPorts:    serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
 		httpAuthPorts:       httpAuthPorts,
@@ -702,8 +707,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		} else {
 			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.Error(err))
 			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
 			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+			cancel()
 			if err != nil {
 				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
 				ndpiLabel = "Unknown"
@@ -716,8 +721,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		}
 	} else {
 		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
 		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+		cancel()
 		if err != nil {
 			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
 			ndpiLabel = "Unknown"
@@ -825,6 +830,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			Deadline:         deadline,
 			SSHInputBufSize:  h.sshInputBufSize,
 			SSHOutputBufSize: h.sshOutputBufSize,
+			MaxAuthAttempts:  h.sshMaxAuthAttempts,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},
@@ -884,6 +890,8 @@ mitmLogger := func(format string, args ...interface{}) {
 		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
 
 		var bufSrcTLS, bufDstTLS bytes.Buffer
+		limSrcTLS := newLimitedTeeWriter(&bufSrcTLS, h.maxPayloadBytes)
+		limDstTLS := newLimitedTeeWriter(&bufDstTLS, h.maxPayloadBytes)
 
 		cert := h.certMgr.Cert()
 		mitmConfig := mitm.TLSMITMConfig{
@@ -891,10 +899,10 @@ mitmLogger := func(format string, args ...interface{}) {
 			TargetAddr:   honeypotAddr,
 			FirstData:    firstChunk,
 			OnSrcData: func(p []byte) {
-				bufSrcTLS.Write(p) // honeypot → cliente = payload_dst
+				limSrcTLS.Write(p) // honeypot → cliente = payload_dst
 			},
 			OnDstData: func(p []byte) {
-				bufDstTLS.Write(p) // cliente → honeypot = payload_src
+				limDstTLS.Write(p) // cliente → honeypot = payload_src
 			},
 			Deadline: deadline,
 		}

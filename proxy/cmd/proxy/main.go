@@ -40,6 +40,9 @@ func main() {
 		zap.String("listen", cfg.ListenAddr),
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 		zap.Any("routes", cfg.Routes),
+		zap.Int("max_connections", cfg.MaxConnections),
+		zap.Int("ssh_max_auth_attempts", cfg.SSHMaxAuthAttempts),
+		zap.Int64("max_payload_bytes", cfg.MaxPayloadBytes),
 	)
 
 	log.Info("inicializando nDPI...")
@@ -107,6 +110,8 @@ func main() {
 		cfg.MaxPayloadBytes,
 		cfg.SSHInputBufSize,
 		cfg.SSHOutputBufSize,
+		cfg.SSHMaxAuthAttempts,
+		cfg.MaxConnections,
 		log,
 		flowTracker,
 		certMgr,
