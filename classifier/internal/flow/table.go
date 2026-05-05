@@ -18,6 +18,7 @@ type Entry struct {
 	DstPort        uint16
 	ProtocolNum    uint8
 	LastSeen       time.Time
+	FlowUUID       string // UUID único por conexão TCP; gerado no primeiro pacote
 }
 
 type Table struct {

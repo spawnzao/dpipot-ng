@@ -32,6 +32,7 @@ type QueryResponse struct {
 	Protocol       string `json:"protocol"`
 	MasterProtocol string `json:"master_protocol"`
 	Category       uint32 `json:"category"`
+	FlowUUID       string `json:"flow_uuid,omitempty"`
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -123,6 +124,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			Protocol:       entry.Protocol,
 			MasterProtocol: entry.MasterProtocol,
 			Category:       entry.Category,
+			FlowUUID:       entry.FlowUUID,
 		}
 		data, _ := json.Marshal(resp)
 		conn.Write(data)

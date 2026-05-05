@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 
 	"github.com/spawnzao/dpipot-ng/classifier/internal/flow"
@@ -23,6 +24,7 @@ type Handler struct {
 	ndpiDM          *gondpi.NdpiDetectionModule
 	flowTable       *flow.Table
 	ndpiFlows       *sync.Map
+	flowUUIDs       sync.Map // tuple_id → UUID; um UUID por conexão TCP
 	logger          *zap.Logger
 	producer        *kafka.Producer
 	wg              sync.WaitGroup
@@ -181,14 +183,19 @@ func (h *Handler) processIPv6(data []byte) {
 }
 
 func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string) {
-	flowID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
+	tupleID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
+
+	// UUID único por conexão: gerado na primeira vez que o tupleID aparece.
+	uuidVal, _ := h.flowUUIDs.LoadOrStore(tupleID, uuid.New().String())
+	flowUUID := uuidVal.(string)
 
 	// Verifica se é porta server-first - classifica direto sem nDPI
 	if h.isServerFirstPort(dstPort) {
 		proto := h.portToProtocol(dstPort)
 		if h.logger != nil {
 			h.logger.Info("server-first classified by port",
-				zap.String("flow_id", flowID),
+				zap.String("tuple_id", tupleID),
+				zap.String("flow_id", flowUUID),
 				zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
 				zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
 				zap.String("protocol", proto),
@@ -196,7 +203,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			)
 		}
 
-		h.flowTable.Update(flowID, &flow.Entry{
+		h.flowTable.Update(tupleID, &flow.Entry{
 			Protocol:       proto,
 			MasterProtocol: "TCP",
 			Category:       0,
@@ -206,19 +213,20 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			DstPort:        dstPort,
 			ProtocolNum:    protocol,
 			LastSeen:       time.Now(),
+			FlowUUID:       flowUUID,
 		})
 		return
 	}
 
 	// Fluxo normal com nDPI
-	ndpiFlowI, loaded := h.ndpiFlows.Load(flowID)
+	ndpiFlowI, loaded := h.ndpiFlows.Load(tupleID)
 	if !loaded {
 		newFlow, err := gondpi.NewNdpiFlow()
 		if err != nil {
 			return
 		}
 		newFlow.SetupFlow(srcIP, dstIP, protocol, srcPort, dstPort)
-		ndpiFlowI, _ = h.ndpiFlows.LoadOrStore(flowID, newFlow)
+		ndpiFlowI, _ = h.ndpiFlows.LoadOrStore(tupleID, newFlow)
 	}
 
 	ndpiFlow, ok := ndpiFlowI.(*gondpi.NdpiFlow)
@@ -230,7 +238,8 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 	if h.logger != nil {
 		h.logger.Debug("nDPI result",
-			zap.String("flow_id", flowID),
+			zap.String("flow_id", flowUUID),
+			zap.String("tuple_id", tupleID),
 			zap.String("ethertype", fmt.Sprintf("0x%04x", ethertype)),
 			zap.String("src", fmt.Sprintf("%s:%d", srcIP, srcPort)),
 			zap.String("dst", fmt.Sprintf("%s:%d", dstIP, dstPort)),
@@ -257,7 +266,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		ndpiApp = ""
 	}
 
-	h.flowTable.Update(flowID, &flow.Entry{
+	h.flowTable.Update(tupleID, &flow.Entry{
 		Protocol:       appProto,
 		MasterProtocol: masterProto,
 		Category:       category,
@@ -267,25 +276,27 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		DstPort:        dstPort,
 		ProtocolNum:    protocol,
 		LastSeen:       time.Now(),
+		FlowUUID:       flowUUID,
 	})
 
 	if h.producer != nil {
 		h.producer.Publish(&kafka.Event{
-			FlowID:      flowID,
-			Timestamp:   time.Now(),
-			SrcIP:       srcIP.String(),
-			SrcPort:     int(srcPort),
-			DstIP:       dstIP.String(),
-			DstPort:     int(dstPort),
-			NDPIProto:   ndpiProto,
-			NDPIApp:     ndpiApp,
-			Category:    category,
-			TCPFlags:    tcpFlags,
-			PayloadLen:  len(payload),
-			EtherType: fmt.Sprintf("0x%04x", ethertype),
-			IPProto:   protocol,
-			Transport: ipProtoName(protocol),
-			Instance:  "classifier",
+			FlowID:     flowUUID,
+			TupleID:    tupleID,
+			Timestamp:  time.Now(),
+			SrcIP:      srcIP.String(),
+			SrcPort:    int(srcPort),
+			DstIP:      dstIP.String(),
+			DstPort:    int(dstPort),
+			NDPIProto:  ndpiProto,
+			NDPIApp:    ndpiApp,
+			Category:   category,
+			TCPFlags:   tcpFlags,
+			PayloadLen: len(payload),
+			EtherType:  fmt.Sprintf("0x%04x", ethertype),
+			IPProto:    protocol,
+			Transport:  ipProtoName(protocol),
+			Instance:   "classifier",
 		})
 	}
 }
@@ -320,8 +331,8 @@ func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
 func (h *Handler) cleanupNdpiFlows() {
 	evicted := 0
 	h.ndpiFlows.Range(func(key, value any) bool {
-		flowID := key.(string)
-		if _, found := h.flowTable.Get(flowID); !found {
+		tupleID := key.(string)
+		if _, found := h.flowTable.Get(tupleID); !found {
 			// Remove do mapa Go, mas NÃO chama ndpiFlow.Close() aqui.
 			// A goroutine de processamento de pacotes pode ter carregado o
 			// mesmo ponteiro C do sync.Map e ainda estar dentro de
@@ -329,7 +340,8 @@ func (h *Handler) cleanupNdpiFlows() {
 			// é use-after-free no heap C e corrompe o módulo nDPI.
 			// A liberação do C heap ocorre em Handler.Close(), depois que
 			// o processador de pacotes já parou (processingWg.Wait).
-			h.ndpiFlows.Delete(flowID)
+			h.ndpiFlows.Delete(tupleID)
+			h.flowUUIDs.Delete(tupleID)
 			evicted++
 		}
 		return true

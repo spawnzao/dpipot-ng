@@ -10,7 +10,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/flowtracker"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
@@ -206,8 +205,7 @@ func (s *Server) handle(conn net.Conn) {
 		conn.Close()
 	}()
 
-	flowID := uuid.New().String()
-	log := s.log.With(zap.String("flow_id", flowID))
+	log := s.log
 
 	log.Debug("🔌 Handler started!",
 		zap.String("local_addr", conn.LocalAddr().String()),
@@ -215,7 +213,6 @@ func (s *Server) handle(conn net.Conn) {
 	)
 
 	h := NewHandler(
-		flowID,
 		conn,
 		s.ndpiClient,
 		s.router,

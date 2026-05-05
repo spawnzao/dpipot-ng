@@ -11,7 +11,8 @@ import (
 )
 
 type Event struct {
-	FlowID        string    `json:"flow_id"`
+	FlowID        string    `json:"flow_id,omitempty"`  // UUID do classifier; ausente se FlowTracker não respondeu
+	TupleID       string    `json:"tuple_id,omitempty"` // 5-tupla normalizada; correlaciona com classifier
 	Timestamp     time.Time `json:"timestamp"`
 	SrcIP         string    `json:"src_ip"`
 	SrcPort       int       `json:"src_port"`

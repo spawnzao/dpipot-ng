@@ -12,6 +12,7 @@ import (
 
 type Event struct {
 	FlowID       string    `json:"flow_id"`
+	TupleID      string    `json:"tuple_id,omitempty"`
 	Timestamp    time.Time `json:"timestamp"`
 	SrcIP        string    `json:"src_ip"`
 	SrcPort      int       `json:"src_port"`
