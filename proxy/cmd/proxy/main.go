@@ -41,7 +41,7 @@ func main() {
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 		zap.Any("routes", cfg.Routes),
 		zap.Int("max_connections", cfg.MaxConnections),
-		zap.Int("ssh_max_auth_attempts", cfg.SSHMaxAuthAttempts),
+		zap.Int("max_per_ip_conns", cfg.MaxPerIPConns),
 		zap.Int64("max_payload_bytes", cfg.MaxPayloadBytes),
 	)
 
@@ -110,8 +110,8 @@ func main() {
 		cfg.MaxPayloadBytes,
 		cfg.SSHInputBufSize,
 		cfg.SSHOutputBufSize,
-		cfg.SSHMaxAuthAttempts,
 		cfg.MaxConnections,
+		cfg.MaxPerIPConns,
 		log,
 		flowTracker,
 		certMgr,

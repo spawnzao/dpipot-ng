@@ -28,8 +28,8 @@ type Config struct {
 	ServerFirstPortsTLS map[uint16]string
 	HttpAuthPorts        map[uint16]bool
 	HttpAuthPortsTLS     map[uint16]bool
-	MaxConnections     int
-	SSHMaxAuthAttempts int
+	MaxConnections  int
+	MaxPerIPConns   int
 }
 
 func Load() (*Config, error) {
@@ -47,8 +47,8 @@ func Load() (*Config, error) {
 		ClassifierEnabled:  getEnv("CLASSIFIER_ENABLED", "false") == "true",
 		ClassifierHost:     "127.0.0.1",
 		ClassifierPort:     getInt("FLOWTRACKER_PORT", 9090),
-		MaxConnections:     getInt("MAX_CONNECTIONS", 10000),
-		SSHMaxAuthAttempts: getInt("SSH_MAX_AUTH_ATTEMPTS", 5),
+		MaxConnections: getInt("MAX_CONNECTIONS", 10000),
+		MaxPerIPConns:  getInt("MAX_CONNECTIONS_PER_IP", 50),
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",

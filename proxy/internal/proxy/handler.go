@@ -69,9 +69,6 @@ type Handler struct {
 
 	// proxyTimeout define o timeout de vida total da conexão
 	proxyTimeout time.Duration
-
-	// sshMaxAuthAttempts limita tentativas de senha SSH por sessão
-	sshMaxAuthAttempts int
 }
 
 func NewHandler(
@@ -83,7 +80,6 @@ func NewHandler(
 	maxPayloadBytes int64,
 	sshInputBufSize int,
 	sshOutputBufSize int,
-	sshMaxAuthAttempts int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -101,10 +97,9 @@ func NewHandler(
 		router:             r,
 		producer:           producer,
 		maxPayloadBytes:    maxPayloadBytes,
-		sshInputBufSize:    sshInputBufSize,
-		sshOutputBufSize:   sshOutputBufSize,
-		sshMaxAuthAttempts: sshMaxAuthAttempts,
-		log:                log,
+		sshInputBufSize:  sshInputBufSize,
+		sshOutputBufSize: sshOutputBufSize,
+		log:              log,
 		flowTracker:        flowTracker,
 		certMgr:            certMgr,
 		serverFirstPorts:    serverFirstPorts,
@@ -830,7 +825,6 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			Deadline:         deadline,
 			SSHInputBufSize:  h.sshInputBufSize,
 			SSHOutputBufSize: h.sshOutputBufSize,
-			MaxAuthAttempts:  h.sshMaxAuthAttempts,
 			OnEvent: func(event *kafka.Event) {
 				h.producer.Publish(event)
 			},
