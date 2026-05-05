@@ -5,6 +5,8 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -28,7 +30,6 @@ type Server struct {
 	maxPayloadBytes     int64
 	sshInputBufSize     int
 	sshOutputBufSize    int
-	sshMaxAuthAttempts  int
 	log                 *zap.Logger
 	flowTracker         *flowtracker.Client
 	certMgr             *mitm.CertManager
@@ -40,6 +41,8 @@ type Server struct {
 	proxyTimeout        time.Duration
 	listener            net.Listener
 	sem                 chan struct{}
+	perIPConns          sync.Map // map[string]*atomic.Int64 — contador por IP de origem
+	maxPerIPConns       int
 }
 
 func NewServer(
@@ -50,8 +53,8 @@ func NewServer(
 	maxPayloadBytes int64,
 	sshInputBufSize int,
 	sshOutputBufSize int,
-	sshMaxAuthAttempts int,
 	maxConnections int,
+	maxPerIPConns int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -65,6 +68,9 @@ func NewServer(
 	if maxConnections <= 0 {
 		maxConnections = 10000
 	}
+	if maxPerIPConns <= 0 {
+		maxPerIPConns = 50
+	}
 	return &Server{
 		listenAddr:          listenAddr,
 		ndpiClient:          ndpiClient,
@@ -73,7 +79,6 @@ func NewServer(
 		maxPayloadBytes:     maxPayloadBytes,
 		sshInputBufSize:     sshInputBufSize,
 		sshOutputBufSize:    sshOutputBufSize,
-		sshMaxAuthAttempts:  sshMaxAuthAttempts,
 		log:                 log,
 		flowTracker:         flowTracker,
 		certMgr:             certMgr,
@@ -84,6 +89,7 @@ func NewServer(
 		httpClassifier:      httpClassifier,
 		proxyTimeout:        proxyTimeout,
 		sem:                 make(chan struct{}, maxConnections),
+		maxPerIPConns:       maxPerIPConns,
 	}
 }
 
@@ -151,6 +157,21 @@ func (s *Server) ListenAndServe() error {
 			continue
 		}
 
+		srcIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+
+		// Verifica limite por IP antes do semáforo global.
+		val, _ := s.perIPConns.LoadOrStore(srcIP, new(atomic.Int64))
+		ipCounter := val.(*atomic.Int64)
+		if ipCounter.Add(1) > int64(s.maxPerIPConns) {
+			ipCounter.Add(-1)
+			s.log.Warn("conexão rejeitada: limite por IP atingido",
+				zap.String("src_ip", srcIP),
+				zap.Int("max_per_ip", s.maxPerIPConns),
+			)
+			conn.Close()
+			continue
+		}
+
 		select {
 		case s.sem <- struct{}{}:
 			s.log.Info("🎯 Conexão aceita",
@@ -160,10 +181,14 @@ func (s *Server) ListenAndServe() error {
 				zap.Int("slots_max", cap(s.sem)),
 			)
 			go func() {
-				defer func() { <-s.sem }()
+				defer func() {
+					<-s.sem
+					ipCounter.Add(-1)
+				}()
 				s.handle(conn)
 			}()
 		default:
+			ipCounter.Add(-1)
 			s.log.Warn("conexão rejeitada: limite máximo de conexões simultâneas atingido",
 				zap.String("remote_addr", conn.RemoteAddr().String()),
 				zap.Int("max_connections", cap(s.sem)),
@@ -198,7 +223,6 @@ func (s *Server) handle(conn net.Conn) {
 		s.maxPayloadBytes,
 		s.sshInputBufSize,
 		s.sshOutputBufSize,
-		s.sshMaxAuthAttempts,
 		log,
 		s.flowTracker,
 		s.certMgr,

