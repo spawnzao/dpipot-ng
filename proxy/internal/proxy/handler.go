@@ -261,11 +261,22 @@ func (h *Handler) Handle() {
 	deadline := time.Now().Add(h.proxyTimeout)
 	h.conn.SetDeadline(deadline)
 
+	// tuple_id preliminar usando dstAddr (em TPROXY mode == origDst real)
+	// Pode ser refinado em STEP 2 se REDIRECT retornar IP diferente.
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
+	h.tupleID = flowIDForTracker
+	log = log.With(zap.String("tuple_id", h.tupleID))
+
 	appProtoFlow := "Unknown"
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		if appProto, _, _, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
-			appProtoFlow = appProto
+		if appProto, _, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found {
+			if appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
+				appProtoFlow = appProto
+			}
+			if flowUUID != "" {
+				h.classifierFlowID = flowUUID
+				log = log.With(zap.String("flow_id", h.classifierFlowID))
+			}
 		}
 	}
 
@@ -662,9 +673,12 @@ greetingBuf = greetingBuf[:n]
 
 	h.conn.SetDeadline(deadline)
 
-	// tuple_id disponível a partir daqui (origDst resolvido)
-	h.tupleID = normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
-	log = log.With(zap.String("tuple_id", h.tupleID))
+	// Refina tuple_id com origDst real (pode diferir de dstAddr em modo REDIRECT)
+	refined := normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
+	if refined != h.tupleID {
+		h.tupleID = refined
+		log = log.With(zap.String("tuple_id", h.tupleID))
+	}
 
 	log.Debug("IP original via TPROXY/REDIRECT",
 		zap.Stringer("origDstIP", origDstIP),
