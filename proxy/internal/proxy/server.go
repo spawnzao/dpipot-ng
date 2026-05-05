@@ -28,6 +28,7 @@ type Server struct {
 	maxPayloadBytes     int64
 	sshInputBufSize     int
 	sshOutputBufSize    int
+	sshMaxAuthAttempts  int
 	log                 *zap.Logger
 	flowTracker         *flowtracker.Client
 	certMgr             *mitm.CertManager
@@ -38,6 +39,7 @@ type Server struct {
 	httpClassifier      *httpclassifier.Classifier
 	proxyTimeout        time.Duration
 	listener            net.Listener
+	sem                 chan struct{}
 }
 
 func NewServer(
@@ -48,6 +50,8 @@ func NewServer(
 	maxPayloadBytes int64,
 	sshInputBufSize int,
 	sshOutputBufSize int,
+	sshMaxAuthAttempts int,
+	maxConnections int,
 	log *zap.Logger,
 	flowTracker *flowtracker.Client,
 	certMgr *mitm.CertManager,
@@ -58,6 +62,9 @@ func NewServer(
 	httpClassifier *httpclassifier.Classifier,
 	proxyTimeout time.Duration,
 ) *Server {
+	if maxConnections <= 0 {
+		maxConnections = 10000
+	}
 	return &Server{
 		listenAddr:          listenAddr,
 		ndpiClient:          ndpiClient,
@@ -66,6 +73,7 @@ func NewServer(
 		maxPayloadBytes:     maxPayloadBytes,
 		sshInputBufSize:     sshInputBufSize,
 		sshOutputBufSize:    sshOutputBufSize,
+		sshMaxAuthAttempts:  sshMaxAuthAttempts,
 		log:                 log,
 		flowTracker:         flowTracker,
 		certMgr:             certMgr,
@@ -75,6 +83,7 @@ func NewServer(
 		httpAuthPortsTLS:    httpAuthPortsTLS,
 		httpClassifier:      httpClassifier,
 		proxyTimeout:        proxyTimeout,
+		sem:                 make(chan struct{}, maxConnections),
 	}
 }
 
@@ -142,13 +151,25 @@ func (s *Server) ListenAndServe() error {
 			continue
 		}
 
-		remoteAddr := conn.RemoteAddr().String()
-		s.log.Info("🎯 Conexão aceita",
-			zap.String("local_addr", conn.LocalAddr().String()),
-			zap.String("remote_addr", remoteAddr),
-		)
-
-		go s.handle(conn)
+		select {
+		case s.sem <- struct{}{}:
+			s.log.Info("🎯 Conexão aceita",
+				zap.String("local_addr", conn.LocalAddr().String()),
+				zap.String("remote_addr", conn.RemoteAddr().String()),
+				zap.Int("slots_used", len(s.sem)),
+				zap.Int("slots_max", cap(s.sem)),
+			)
+			go func() {
+				defer func() { <-s.sem }()
+				s.handle(conn)
+			}()
+		default:
+			s.log.Warn("conexão rejeitada: limite máximo de conexões simultâneas atingido",
+				zap.String("remote_addr", conn.RemoteAddr().String()),
+				zap.Int("max_connections", cap(s.sem)),
+			)
+			conn.Close()
+		}
 	}
 }
 
@@ -177,6 +198,7 @@ func (s *Server) handle(conn net.Conn) {
 		s.maxPayloadBytes,
 		s.sshInputBufSize,
 		s.sshOutputBufSize,
+		s.sshMaxAuthAttempts,
 		log,
 		s.flowTracker,
 		s.certMgr,

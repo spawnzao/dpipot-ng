@@ -48,6 +48,7 @@ type SSHMITMConfig struct {
 	MaxPayloadSize      int64
 	SSHInputBufSize     int
 	SSHOutputBufSize    int
+	MaxAuthAttempts     int
 	ServerConfig        *ssh.ServerConfig
 	OnEvent             func(event *kafka.Event)
 	FlowID              string
@@ -433,17 +434,34 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
 	}
 
+	maxAttempts := config.MaxAuthAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 5
+	}
+
+	var authMu sync.Mutex
 	var authSuccess bool
 	var capturedUser, capturedPass string
+	var authAttempts int
 
 	serverConfig.PasswordCallback = func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
-		capturedUser = conn.User()
-		capturedPass = string(password)
+		authMu.Lock()
+		authAttempts++
+		attempts := authAttempts
+		authMu.Unlock()
 
-		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: %s", capturedUser, capturedPass)
+		if attempts > maxAttempts {
+			logger("SSH MITM: limite de tentativas atingido (%d/%d), rejeitando", attempts, maxAttempts)
+			return nil, fmt.Errorf("permission denied")
+		}
+
+		user := conn.User()
+		pass := string(password)
+
+		logger("🔐 CREDENCIAIS CAPTURADAS - Usuário: %s, Senha: [REDACTED] (tentativa %d/%d)", user, attempts, maxAttempts)
 
 		if config.OnEvent != nil {
-			event := &kafka.Event{
+			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
@@ -451,14 +469,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				NDPIApp:    "username",
-				AttackType: capturedUser,
-				Honeypot:   config.TargetAddr,
-				Instance:      "proxy",
-			}
-			config.OnEvent(event)
-
-			event = &kafka.Event{
+				NDPIApp:     "username",
+				AttackType:  user,
+				Honeypot:    config.TargetAddr,
+				Instance:    "proxy",
+			})
+			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
@@ -466,26 +482,29 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				NDPIApp:    "password",
-				AttackType: capturedPass,
-				Honeypot:   config.TargetAddr,
-				Instance:      "proxy",
-			}
-			config.OnEvent(event)
+				NDPIApp:     "password",
+				AttackType:  pass,
+				Honeypot:    config.TargetAddr,
+				Instance:    "proxy",
+			})
 		}
 
 		logger("SSH MITM: tentando autenticar no honeypot...")
 
-		if tryAuthOnHoneypot(config.TargetAddr, capturedUser, capturedPass, logger) {
+		if tryAuthOnHoneypot(config.TargetAddr, user, pass, logger) {
 			logger("SSH MITM: autenticação aceita pelo honeypot")
+			authMu.Lock()
+			capturedUser = user
+			capturedPass = pass
 			authSuccess = true
+			authMu.Unlock()
 			return &ssh.Permissions{}, nil
 		}
 
 		logger("SSH MITM: autenticação rejeitada pelo honeypot")
 
 		if config.OnEvent != nil {
-			event := &kafka.Event{
+			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
@@ -493,15 +512,13 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:       config.DstIP,
 				DstPort:     config.DstPort,
 				NDPIProto:   "SSH",
-				NDPIApp:    "auth_failed",
-				AttackType: "Authentication failed — rejected by honeypot.",
-				Honeypot:   config.TargetAddr,
-				Instance:      "proxy",
-			}
-			config.OnEvent(event)
+				NDPIApp:     "auth_failed",
+				AttackType:  "Authentication failed — rejected by honeypot.",
+				Honeypot:    config.TargetAddr,
+				Instance:    "proxy",
+			})
 		}
 
-		authSuccess = false
 		return nil, fmt.Errorf("permission denied")
 	}
 
@@ -541,7 +558,13 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	defer conn.Close()
 	logger("SSH MITM: NewServerConn OK")
 
-	if !authSuccess {
+	authMu.Lock()
+	success := authSuccess
+	user := capturedUser
+	pass := capturedPass
+	authMu.Unlock()
+
+	if !success {
 		logger("SSH MITM: autenticação falhou, conexao sera encerrada")
 		return nil
 	}
@@ -558,13 +581,12 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		targetConn.SetDeadline(config.Deadline)
 	}
 
-	logger("SSH MITM: conectando SSH ao honeypot com credenciais ja verificadas: user=%s, pass=%s",
-		capturedUser, capturedPass)
+	logger("SSH MITM: conectando SSH ao honeypot com credenciais verificadas: user=%s", user)
 
 	targetSSHConn, _, targetGlobalReqs, err := ssh.NewClientConn(targetConn, config.TargetAddr, &ssh.ClientConfig{
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Auth:            []ssh.AuthMethod{ssh.Password(capturedPass)},
-		User:            capturedUser,
+		Auth:            []ssh.AuthMethod{ssh.Password(pass)},
+		User:            user,
 	})
 	if err != nil {
 		logger("SSH MITM: erro ao conectar SSH no honeypot: %s", err.Error())
