@@ -51,6 +51,7 @@ type SSHMITMConfig struct {
 	ServerConfig        *ssh.ServerConfig
 	OnEvent             func(event *kafka.Event)
 	FlowID              string
+	TupleID             string
 	SrcIP               string
 	SrcPort             int
 	DstIP               string
@@ -369,6 +370,7 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 			logger("SSH MITM: conexão SSH encerrada, tipo=%s", req.Type)
 			event := &kafka.Event{
 				FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
 				SrcPort:     config.SrcPort,
@@ -446,6 +448,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		if config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
 				SrcPort:     config.SrcPort,
@@ -459,6 +462,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			})
 			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
 				SrcPort:     config.SrcPort,
@@ -489,6 +493,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		if config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
 				FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
 				SrcPort:     config.SrcPort,
@@ -519,6 +524,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			logger("SSH MITM: cliente fechou a conexão antes do handshake")
 			event := &kafka.Event{
 				FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       config.SrcIP,
 				SrcPort:     config.SrcPort,
@@ -693,6 +699,7 @@ type ServerFirstConfig struct {
 	ClientConn    net.Conn
 	HoneypotConn net.Conn
 	FlowID       string
+	TupleID      string
 	SrcIP        string
 	SrcPort      int
 	DstIP        string
@@ -738,6 +745,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 						copy(data, chunk)
 						config.OnEvent(&kafka.Event{
 							FlowID:      config.FlowID,
+					TupleID:     config.TupleID,
 							Timestamp:   time.Now(),
 							SrcIP:       config.SrcIP,
 							SrcPort:     config.SrcPort,
@@ -780,6 +788,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 						copy(data, chunk)
 						config.OnEvent(&kafka.Event{
 							FlowID:       config.FlowID,
+							TupleID:      config.TupleID,
 							Timestamp:    time.Now(),
 							SrcIP:        config.SrcIP,
 							SrcPort:      config.SrcPort,

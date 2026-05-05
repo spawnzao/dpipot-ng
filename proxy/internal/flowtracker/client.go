@@ -56,6 +56,7 @@ type QueryResponse struct {
 	Protocol       string `json:"protocol"`
 	MasterProtocol string `json:"master_protocol"`
 	Category       uint32 `json:"category"`
+	FlowUUID       string `json:"flow_uuid,omitempty"`
 }
 
 func (c *Client) getConn() (net.Conn, error) {
@@ -76,16 +77,16 @@ func (c *Client) putConn(conn net.Conn) {
 	}
 }
 
-func (c *Client) doQuery(conn net.Conn, flowID string) (proto, masterProto string, category uint32, found bool, err error) {
+func (c *Client) doQuery(conn net.Conn, flowID string) (proto, masterProto string, category uint32, flowUUID string, found bool, err error) {
 	req := QueryRequest{FlowID: flowID}
 	data, err := json.Marshal(req)
 	if err != nil {
-		return "", "", 0, false, fmt.Errorf("marshal failed: %w", err)
+		return "", "", 0, "", false, fmt.Errorf("marshal failed: %w", err)
 	}
 
 	conn.SetWriteDeadline(time.Now().Add(c.timeout))
 	if _, err := conn.Write(data); err != nil {
-		return "", "", 0, false, fmt.Errorf("write failed: %w", err)
+		return "", "", 0, "", false, fmt.Errorf("write failed: %w", err)
 	}
 
 	conn.SetReadDeadline(time.Now().Add(c.timeout))
@@ -93,46 +94,46 @@ func (c *Client) doQuery(conn net.Conn, flowID string) (proto, masterProto strin
 	n, err := conn.Read(respBuf)
 	if err != nil {
 		if err == io.EOF {
-			return "", "", 0, false, fmt.Errorf("connection closed")
+			return "", "", 0, "", false, fmt.Errorf("connection closed")
 		}
-		return "", "", 0, false, fmt.Errorf("read failed: %w", err)
+		return "", "", 0, "", false, fmt.Errorf("read failed: %w", err)
 	}
 
 	var resp QueryResponse
 	if err := json.Unmarshal(respBuf[:n], &resp); err != nil {
-		return "", "", 0, false, fmt.Errorf("unmarshal failed: %w", err)
+		return "", "", 0, "", false, fmt.Errorf("unmarshal failed: %w", err)
 	}
 
-	return resp.Protocol, resp.MasterProtocol, resp.Category, resp.Found, nil
+	return resp.Protocol, resp.MasterProtocol, resp.Category, resp.FlowUUID, resp.Found, nil
 }
 
-func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category uint32, found bool, err error) {
+func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category uint32, flowUUID string, found bool, err error) {
 	if !c.enabled {
-		return "", "", 0, false, fmt.Errorf("FlowTracker not available")
+		return "", "", 0, "", false, fmt.Errorf("FlowTracker not available")
 	}
 
 	// Tenta reusar conexão do pool; se estiver stale, abre uma nova.
 	for attempt := 0; attempt < 2; attempt++ {
 		conn, dialErr := c.getConn()
 		if dialErr != nil {
-			return "", "", 0, false, fmt.Errorf("dial failed: %w", dialErr)
+			return "", "", 0, "", false, fmt.Errorf("dial failed: %w", dialErr)
 		}
 
-		proto, masterProto, category, found, err = c.doQuery(conn, flowID)
+		proto, masterProto, category, flowUUID, found, err = c.doQuery(conn, flowID)
 		if err != nil {
 			conn.Close()
 			if attempt == 0 {
 				// Conexão stale do pool; tenta com uma nova.
 				continue
 			}
-			return "", "", 0, false, err
+			return "", "", 0, "", false, err
 		}
 
 		c.putConn(conn)
-		return proto, masterProto, category, found, nil
+		return proto, masterProto, category, flowUUID, found, nil
 	}
 
-	return "", "", 0, false, fmt.Errorf("query failed after retries")
+	return "", "", 0, "", false, fmt.Errorf("query failed after retries")
 }
 
 func (c *Client) IsEnabled() bool {

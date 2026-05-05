@@ -31,7 +31,8 @@ const (
 // Handler processa uma única conexão TCP de um atacante.
 // É criado um Handler por conexão, rodando em goroutine separada.
 type Handler struct {
-	flowID   string
+	tupleID          string // 5-tupla normalizada; calculado após resolução do origDst
+	classifierFlowID string // UUID gerado pelo classifier; obtido via FlowTracker
 	conn    net.Conn
 	ndpi    *ndpi.Client
 	router  *router.Router
@@ -72,7 +73,6 @@ type Handler struct {
 }
 
 func NewHandler(
-	flowID string,
 	conn net.Conn,
 	ndpiClient *ndpi.Client,
 	r *router.Router,
@@ -91,17 +91,16 @@ func NewHandler(
 	proxyTimeout time.Duration,
 ) *Handler {
 	return &Handler{
-		flowID:             flowID,
-		conn:               conn,
-		ndpi:               ndpiClient,
-		router:             r,
-		producer:           producer,
-		maxPayloadBytes:    maxPayloadBytes,
-		sshInputBufSize:  sshInputBufSize,
-		sshOutputBufSize: sshOutputBufSize,
-		log:              log,
-		flowTracker:        flowTracker,
-		certMgr:            certMgr,
+		conn:                conn,
+		ndpi:                ndpiClient,
+		router:              r,
+		producer:            producer,
+		maxPayloadBytes:     maxPayloadBytes,
+		sshInputBufSize:     sshInputBufSize,
+		sshOutputBufSize:    sshOutputBufSize,
+		log:                 log,
+		flowTracker:         flowTracker,
+		certMgr:             certMgr,
 		serverFirstPorts:    serverFirstPorts,
 		serverFirstPortsTLS: serverFirstPortsTLS,
 		httpAuthPorts:       httpAuthPorts,
@@ -265,7 +264,7 @@ func (h *Handler) Handle() {
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 	appProtoFlow := "Unknown"
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		if appProto, _, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
+		if appProto, _, _, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found && appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
 			appProtoFlow = appProto
 		}
 	}
@@ -354,7 +353,8 @@ func (h *Handler) Handle() {
 			ClientConn:   h.conn,
 			HoneypotConn: nil,
 			Cert:        cert,
-			FlowID:      h.flowID,
+			FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 			SrcIP:       h.srcIP,
 			SrcPort:     h.srcPort,
 			DstIP:       h.dstIP,
@@ -423,7 +423,8 @@ greetingBuf = greetingBuf[:n]
 			if ev.EventType == mitm.EventBanner || ev.Banner != "" {
 				if h.producer != nil {
 					h.producer.Publish(&kafka.Event{
-						FlowID:      h.flowID,
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
 						SrcIP:       h.srcIP,
 						SrcPort:     h.srcPort,
@@ -464,7 +465,8 @@ greetingBuf = greetingBuf[:n]
 		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
 			ClientConn:     h.conn,
 			HoneypotConn: honeypotConn,
-			FlowID:       h.flowID,
+			FlowID:       h.classifierFlowID,
+			TupleID:      h.tupleID,
 			SrcIP:        h.srcIP,
 			SrcPort:      h.srcPort,
 			DstIP:        h.dstIP,
@@ -565,7 +567,7 @@ greetingBuf = greetingBuf[:n]
 						DstPort: uint16(dstAddr.Port),
 					}
 
-					ndpiLabel, err = h.ndpi.Classify(context.Background(), h.flowID, greetingBuf, flowInfo)
+					ndpiLabel, err = h.ndpi.Classify(context.Background(), h.tupleID, greetingBuf, flowInfo)
 					if err != nil {
 						log.Warn("nDPI classify falhou no greeting", zap.Error(err))
 						ndpiLabel = "Unknown"
@@ -660,6 +662,10 @@ greetingBuf = greetingBuf[:n]
 
 	h.conn.SetDeadline(deadline)
 
+	// tuple_id disponível a partir daqui (origDst resolvido)
+	h.tupleID = normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
+	log = log.With(zap.String("tuple_id", h.tupleID))
+
 	log.Debug("IP original via TPROXY/REDIRECT",
 		zap.Stringer("origDstIP", origDstIP),
 		zap.Uint16("origDstPort", origDstPort),
@@ -686,10 +692,14 @@ greetingBuf = greetingBuf[:n]
 	// --- STEP 3: classifica com nDPI (via FlowTracker ou local) ---
 	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
 
-if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		appProtoFromTracker, masterProtoFromTracker, _, found, err := h.flowTracker.QueryFlow(flowIDForTracker)
+	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
+		appProtoFromTracker, masterProtoFromTracker, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker)
 		masterProtoFlow = appProtoFromTracker
 		appProtoFlow = masterProtoFromTracker
+		if flowUUID != "" && h.classifierFlowID == "" {
+			h.classifierFlowID = flowUUID
+			log = log.With(zap.String("flow_id", h.classifierFlowID))
+		}
 		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
 			ndpiLabel = masterProtoFlow
 			if ndpiLabel == "" {
@@ -702,7 +712,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		} else {
 			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.Error(err))
 			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-			ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+			ndpiLabel, err = h.ndpi.Classify(ctx, h.tupleID, firstChunk, flowInfo)
 			cancel()
 			if err != nil {
 				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
@@ -716,7 +726,7 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		}
 	} else {
 		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-		ndpiLabel, err = h.ndpi.Classify(ctx, h.flowID, firstChunk, flowInfo)
+		ndpiLabel, err = h.ndpi.Classify(ctx, h.tupleID, firstChunk, flowInfo)
 		cancel()
 		if err != nil {
 			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
@@ -817,7 +827,8 @@ if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 			HostKey:          hostKey,
 			Banner:           string(firstChunk),
 			TargetAddr:       honeypotAddr,
-			FlowID:           h.flowID,
+			FlowID:           h.classifierFlowID,
+			TupleID:          h.tupleID,
 			SrcIP:            srcAddr.IP.String(),
 			SrcPort:          srcAddr.Port,
 			DstIP:            origDstIP.String(),
@@ -841,7 +852,8 @@ mitmLogger := func(format string, args ...interface{}) {
 				if strings.Contains(errStr, "permission denied, permission denied, permission denied") {
 					log.Info("MITM SSH: cliente esgotou tentativas de senha (comportamento esperado)", zap.Error(err))
 					event := &kafka.Event{
-						FlowID:      h.flowID,
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
 						SrcIP:       srcAddr.IP.String(),
 						SrcPort:     srcAddr.Port,
@@ -955,7 +967,8 @@ mitmLogger := func(format string, args ...interface{}) {
 
 		if h.producer != nil && (len(payloadSrcTLS) > 0 || len(payloadDstTLS) > 0) {
 			event := &kafka.Event{
-				FlowID:      h.flowID,
+				FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 				Timestamp:   time.Now(),
 				SrcIP:       h.srcIP,
 				SrcPort:     h.srcPort,
@@ -1072,7 +1085,8 @@ mitmLogger := func(format string, args ...interface{}) {
 						attackType = ev.Password
 					}
 					h.producer.Publish(&kafka.Event{
-						FlowID:      h.flowID,
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
 						SrcIP:       srcAddr.IP.String(),
 						SrcPort:     srcAddr.Port,
@@ -1092,7 +1106,8 @@ mitmLogger := func(format string, args ...interface{}) {
 			for _, ev := range respEvents {
 				if ev.Response != "" {
 					h.producer.Publish(&kafka.Event{
-						FlowID:      h.flowID,
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
 						SrcIP:       srcAddr.IP.String(),
 						SrcPort:     srcAddr.Port,
@@ -1114,7 +1129,8 @@ publish:
 	duration := time.Since(startTime)
 	durationMs := float64(duration.Nanoseconds()) / 1e6
 	event := &kafka.Event{
-		FlowID:        h.flowID,
+		FlowID:        h.classifierFlowID,
+		TupleID:       h.tupleID,
 		Timestamp:     time.Now(),
 		SrcIP:         srcAddr.IP.String(),
 		SrcPort:       srcAddr.Port,

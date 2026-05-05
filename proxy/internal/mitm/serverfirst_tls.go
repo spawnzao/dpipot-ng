@@ -19,6 +19,7 @@ type ServerFirstTLSConfig struct {
 	HoneypotConn   net.Conn
 	Cert           tls.Certificate
 	FlowID         string
+	TupleID        string
 	SrcIP          string
 	SrcPort        int
 	DstIP          string
@@ -76,6 +77,7 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 						if ev.Command != "" || ev.Username != "" || ev.Password != "" {
 							config.OnEvent(&kafka.Event{
 								FlowID:     config.FlowID,
+								TupleID:    config.TupleID,
 								Timestamp:  time.Now(),
 								SrcIP:      config.SrcIP,
 								SrcPort:    config.SrcPort,
@@ -119,6 +121,7 @@ func HandleServerFirstTLS(config ServerFirstTLSConfig) error {
 						if ev.Response != "" || ev.Banner != "" {
 							config.OnEvent(&kafka.Event{
 								FlowID:     config.FlowID,
+								TupleID:    config.TupleID,
 								Timestamp:  time.Now(),
 								SrcIP:      config.SrcIP,
 								SrcPort:    config.SrcPort,
