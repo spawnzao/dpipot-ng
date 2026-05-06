@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -17,7 +16,6 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
-	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
 )
@@ -34,7 +32,6 @@ type Handler struct {
 	tupleID          string // 5-tupla normalizada; calculado após resolução do origDst
 	classifierFlowID string // UUID gerado pelo classifier; obtido via FlowTracker
 	conn    net.Conn
-	ndpi    *ndpi.Client
 	router  *router.Router
 	producer *kafka.Producer
 	log     *zap.Logger
@@ -74,7 +71,6 @@ type Handler struct {
 
 func NewHandler(
 	conn net.Conn,
-	ndpiClient *ndpi.Client,
 	r *router.Router,
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
@@ -92,7 +88,6 @@ func NewHandler(
 ) *Handler {
 	return &Handler{
 		conn:                conn,
-		ndpi:                ndpiClient,
 		router:              r,
 		producer:            producer,
 		maxPayloadBytes:     maxPayloadBytes,
@@ -310,11 +305,8 @@ func (h *Handler) Handle() {
 		err              error
 		n                int
 		firstChunk       []byte
-		ctx              context.Context
-		cancel           context.CancelFunc
 		origDstIP        = dstAddr.IP
 		origDstPort      = uint16(dstAddr.Port)
-		flowInfo         *ndpi.FlowInfo
 		isZeroIP        bool
 		isSSH          bool
 		isTLS          bool
@@ -593,22 +585,6 @@ greetingBuf = greetingBuf[:n]
 					greetingBuf = greetingBuf[:n]
 					log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
 
-					// Classifica o greeting do servidor (não do cliente!)
-					flowInfo = &ndpi.FlowInfo{
-						SrcIP:   srcAddr.IP,
-						SrcPort: uint16(srcAddr.Port),
-						DstIP:   dstAddr.IP,
-						DstPort: uint16(dstAddr.Port),
-					}
-
-					ndpiLabel, err = h.ndpi.Classify(context.Background(), h.tupleID, greetingBuf, flowInfo)
-					if err != nil {
-						log.Warn("nDPI classify falhou no greeting", zap.Error(err))
-						ndpiLabel = "Unknown"
-					} else {
-						log.Info("fluxo classificado via greeting do servidor", zap.String("app_proto", ndpiLabel))
-					}
-
 					// Envia greeting para o cliente
 					_, err = h.conn.Write(greetingBuf)
 					if err != nil {
@@ -709,25 +685,17 @@ greetingBuf = greetingBuf[:n]
 		zap.Stringer("localAddr", dstAddr),
 	)
 
-	// Para nDPI, usa dstAddr diretamente (o IP/porta que o cliente tentou alcançar)
-	flowInfo = &ndpi.FlowInfo{
-		SrcIP:   srcAddr.IP,
-		SrcPort: uint16(srcAddr.Port),
-		DstIP:   dstAddr.IP,
-		DstPort: uint16(dstAddr.Port),
-	}
-
 	log.Debug("informações do fluxo",
-		zap.String("src_ip", flowInfo.SrcIP.String()),
-		zap.Uint16("src_port", flowInfo.SrcPort),
-		zap.String("dst_ip", flowInfo.DstIP.String()),
-		zap.Uint16("dst_port", flowInfo.DstPort),
+		zap.String("src_ip", srcAddr.IP.String()),
+		zap.Uint16("src_port", uint16(srcAddr.Port)),
+		zap.String("dst_ip", dstAddr.IP.String()),
+		zap.Uint16("dst_port", uint16(dstAddr.Port)),
 		zap.Stringer("origDstIP", origDstIP),
 		zap.Uint16("origDstPort", origDstPort),
 	)
 
-	// --- STEP 3: classifica com nDPI (via FlowTracker ou local) ---
-	flowIDForTracker = normalizeFlowID(flowInfo.SrcIP, flowInfo.DstIP, flowInfo.SrcPort, flowInfo.DstPort, 6)
+	// --- STEP 3: classifica via FlowTracker (classificação real via nDPI no classifier) ---
+	flowIDForTracker = normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
 		appProtoFromTracker, masterProtoFromTracker, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker)
@@ -747,33 +715,21 @@ greetingBuf = greetingBuf[:n]
 				zap.String("ndpi_app", appProtoFlow),
 			)
 		} else {
-			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando nDPI local", zap.Error(err))
-			ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-			ndpiLabel, err = h.ndpi.Classify(ctx, h.tupleID, firstChunk, flowInfo)
-			cancel()
-			if err != nil {
-				log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
+			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando fallback", zap.Error(err))
+			if fallbackProto != "" {
+				ndpiLabel = fallbackProto
+				masterProtoFlow = fallbackProto
+				appProtoFlow = ""
+			} else {
 				ndpiLabel = "Unknown"
 				masterProtoFlow = "Unknown"
 				appProtoFlow = "Unknown"
-			} else {
-				masterProtoFlow = ndpiLabel
-				appProtoFlow = ""
 			}
 		}
 	} else {
-		ctx, cancel = context.WithTimeout(context.Background(), 500*time.Millisecond)
-		ndpiLabel, err = h.ndpi.Classify(ctx, h.tupleID, firstChunk, flowInfo)
-		cancel()
-		if err != nil {
-			log.Warn("nDPI classify falhou, usando Unknown", zap.Error(err))
-			ndpiLabel = "Unknown"
-			masterProtoFlow = "Unknown"
-			appProtoFlow = "Unknown"
-		} else {
-			masterProtoFlow = ndpiLabel
-			appProtoFlow = ""
-		}
+		// FlowTracker desabilitado: ndpiLabel já foi definido por earlyTrackerFound+fallbackProto
+		masterProtoFlow = ndpiLabel
+		appProtoFlow = ""
 	}
 
 	log.Info("fluxo classificado", zap.String("app_proto", ndpiLabel))
