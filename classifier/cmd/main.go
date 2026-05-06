@@ -92,8 +92,6 @@ func main() {
 			zap.Error(err),
 		)
 	}
-	defer ndpiHandler.Close()
-
 	logger.Info("nDPI handler initialized")
 
 	ftServer := flowtracker.NewServer(flowtracker.ServerConfig{

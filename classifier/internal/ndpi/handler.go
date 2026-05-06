@@ -316,6 +316,7 @@ func (h *Handler) Close() {
 	for _, f := range h.pendingFree {
 		f.Close()
 	}
+	h.pendingFree = nil
 }
 
 func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
