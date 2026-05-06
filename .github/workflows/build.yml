@@ -7,6 +7,7 @@ on:
     paths:
       - 'proxy/**'
       - 'classifier/**'
+      - 'k8s/**'
       - '.github/workflows/build.yml'
   pull_request:
     branches:
