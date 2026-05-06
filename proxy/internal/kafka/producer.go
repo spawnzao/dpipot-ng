@@ -80,11 +80,14 @@ func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
 }
 
 func (p *Producer) IsHealthy() bool {
+	if p == nil {
+		return true // desabilitado = não é falha de saúde
+	}
 	return p.healthy.Load()
 }
 
 func (p *Producer) Publish(event *Event) {
-	if p.closed.Load() {
+	if p == nil || p.closed.Load() {
 		return
 	}
 	select {
@@ -97,6 +100,9 @@ func (p *Producer) Publish(event *Event) {
 }
 
 func (p *Producer) Close() {
+	if p == nil {
+		return
+	}
 	p.closed.Store(true)
 	close(p.events)
 	<-p.done

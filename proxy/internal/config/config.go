@@ -15,6 +15,7 @@ type Config struct {
 	ProxyTimeout       time.Duration
 	Routes             map[string]string
 	DefaultRoute       string
+	KafkaEnabled       bool
 	KafkaBrokers        string
 	KafkaTopic         string
 	MaxPayloadBytes    int64
@@ -38,6 +39,7 @@ func Load() (*Config, error) {
 		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
 		ProxyTimeout:      getDuration("PROXY_TIMEOUT", 10*time.Second),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
+		KafkaEnabled:      parseBoolEnv("KAFKA", true),
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
 		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
 		MaxPayloadBytes:   getInt64("MAX_PAYLOAD_BYTES", 65536),
@@ -93,6 +95,17 @@ func parseRoutes(raw string) (map[string]string, error) {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "true", "1", "enable", "enabled", "yes":
+		return true
+	case "false", "0", "disable", "disabled", "no":
+		return false
 	}
 	return fallback
 }
