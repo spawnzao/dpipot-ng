@@ -234,6 +234,17 @@ func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...inter
 }
 
 func (p *TelnetParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	// Ecos de caractere chegam sem \r ou \n — ignorar.
+	hasNewline := false
+	for _, b := range data {
+		if b == '\r' || b == '\n' {
+			hasNewline = true
+			break
+		}
+	}
+	if !hasNewline {
+		return nil
+	}
 	text := stripTelnetControl(data)
 	if text == "" {
 		return nil
@@ -330,56 +341,56 @@ func (p *POP3Parser) ParseServerData(data []byte, logger func(string, ...interfa
 type IMAPParser struct{}
 
 func (p *IMAPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	var events []CaptureEvent
 	text := strings.TrimSpace(string(data))
-
-	if strings.HasPrefix(text, "A") || strings.HasPrefix(text, "a") {
-		cmd := text
-		upper := strings.ToUpper(cmd)
-
-		if strings.HasPrefix(upper, "LOGIN ") {
-			parts := strings.SplitN(cmd[6:], " ", 2)
-			if len(parts) >= 1 {
-				events = append(events, CaptureEvent{
-					EventType: EventCredential,
-					Direction: "client->honeypot",
-					Username:  strings.Trim(parts[0], "\""),
-				})
-			}
-			if len(parts) >= 2 {
-				events = append(events, CaptureEvent{
-					EventType: EventCredential,
-					Direction: "client->honeypot",
-					Password:  strings.Trim(parts[1], "\""),
-				})
-			}
-			return events
-		}
-
-		events = append(events, CaptureEvent{
-			EventType: EventCommand,
-			Direction: "client->honeypot",
-			Command:   cmd,
-		})
+	if text == "" {
+		return nil
 	}
-	return events
+
+	// Formato IMAP: "tag command [args]"
+	parts := strings.SplitN(text, " ", 3)
+	if len(parts) < 2 {
+		return []CaptureEvent{{EventType: EventCommand, Direction: "client->honeypot", Command: text}}
+	}
+
+	cmd := strings.ToUpper(parts[1])
+
+	if cmd == "LOGIN" && len(parts) == 3 {
+		argParts := strings.SplitN(parts[2], " ", 2)
+		var events []CaptureEvent
+		events = append(events, CaptureEvent{
+			EventType: EventCredential,
+			Direction: "client->honeypot",
+			Username:  strings.Trim(argParts[0], "\""),
+		})
+		if len(argParts) == 2 {
+			events = append(events, CaptureEvent{
+				EventType: EventCredential,
+				Direction: "client->honeypot",
+				Password:  strings.Trim(argParts[1], "\""),
+			})
+		}
+		return events
+	}
+
+	return []CaptureEvent{{EventType: EventCommand, Direction: "client->honeypot", Command: text}}
 }
 
 func (p *IMAPParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
 	text := strings.TrimSpace(string(data))
-	if strings.HasPrefix(text, "* OK") || strings.HasPrefix(text, "* NO") || strings.HasPrefix(text, "* BAD") {
-		return []CaptureEvent{{
-			EventType: EventResponse,
-			Direction: "honeypot->client",
-			Response:  text,
-		}}
+	if text == "" {
+		return nil
 	}
-	if strings.HasPrefix(text, "A") && (strings.HasPrefix(text[1:], " OK") || strings.HasPrefix(text[1:], " NO") || strings.HasPrefix(text[1:], " BAD")) {
-		return []CaptureEvent{{
-			EventType: EventResponse,
-			Direction: "honeypot->client",
-			Response:  text,
-		}}
+	// Untagged: "* OK ...", "* NO ...", "* BAD ..."
+	if strings.HasPrefix(text, "* ") {
+		return []CaptureEvent{{EventType: EventResponse, Direction: "honeypot->client", Response: text}}
+	}
+	// Tagged: "tag OK ...", "tag NO ...", "tag BAD ..."
+	parts := strings.SplitN(text, " ", 3)
+	if len(parts) >= 2 {
+		status := strings.ToUpper(parts[1])
+		if status == "OK" || status == "NO" || status == "BAD" {
+			return []CaptureEvent{{EventType: EventResponse, Direction: "honeypot->client", Response: text}}
+		}
 	}
 	return nil
 }
@@ -390,7 +401,7 @@ func NewParser(protocol string, port int) ProtocolParser {
 		return &FTPParser{}
 	case "MYSQL":
 		return &MySQLParser{}
-	case "SMTP", "MAIL":
+	case "SMTP", "MAIL", "MAIL_SMTP":
 		return &SMTPParser{}
 	case "TELNET":
 		return &TelnetParser{}
