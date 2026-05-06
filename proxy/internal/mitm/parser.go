@@ -157,18 +157,29 @@ func (p *FTPParser) ParseServerData(data []byte, logger func(string, ...interfac
 
 type SMTPParser struct{}
 
+var smtpCommandPrefixes = []string{
+	"EHLO", "HELO", "MAIL", "RCPT", "DATA", "QUIT", "RSET",
+	"NOOP", "VRFY", "EXPN", "HELP", "STARTTLS", "AUTH",
+}
+
 func (p *SMTPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
 	text := strings.TrimSpace(string(data))
 	upper := strings.ToUpper(text)
 
-	if strings.HasPrefix(upper, "AUTH LOGIN") || strings.HasPrefix(upper, "AUTH PLAIN") {
-		return []CaptureEvent{{
-			EventType: EventCommand,
-			Direction: "client->honeypot",
-			Command:   text,
-		}}
+	// Comandos SMTP têm prioridade — evita que "QUIT" e outros sejam
+	// decodificados como base64 por coincidência.
+	for _, prefix := range smtpCommandPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return []CaptureEvent{{
+				EventType: EventCommand,
+				Direction: "client->honeypot",
+				Command:   text,
+			}}
+		}
 	}
-	if decoded, err := base64.StdEncoding.DecodeString(text); err == nil && len(decoded) > 0 {
+
+	// Linhas de credencial base64 (respostas ao AUTH LOGIN/PLAIN challenge)
+	if decoded, err := base64.StdEncoding.DecodeString(text); err == nil && len(decoded) > 0 && isPrintableOrControlASCII(decoded) {
 		return []CaptureEvent{{
 			EventType: EventCredential,
 			Direction: "client->honeypot",
@@ -405,6 +416,18 @@ func NewParser(protocol string, port int) ProtocolParser {
 			return &RawParser{}
 		}
 	}
+}
+
+// isPrintableOrControlASCII retorna true se o slice contiver apenas bytes ASCII imprimíveis
+// ou caracteres de controle legítimos (null byte como separador AUTH PLAIN, tab, CR, LF).
+// Garante que base64 decodificado para credenciais SMTP seja texto legível, não lixo binário.
+func isPrintableOrControlASCII(b []byte) bool {
+	for _, c := range b {
+		if c != 0x00 && c != '\t' && c != '\r' && c != '\n' && (c < 0x20 || c > 0x7e) {
+			return false
+		}
+	}
+	return true
 }
 
 func extractMySQLVersion(data []byte) string {
