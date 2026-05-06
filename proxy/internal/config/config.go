@@ -11,7 +11,6 @@ import (
 // Config contém todas as configurações do proxy lidas de variáveis de ambiente.
 type Config struct {
 	ListenAddr         string
-	NDPITimeout        time.Duration
 	ProxyTimeout       time.Duration
 	Routes             map[string]string
 	DefaultRoute       string
@@ -36,7 +35,6 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:        getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
-		NDPITimeout:       getDuration("NDPI_TIMEOUT", 500*time.Millisecond),
 		ProxyTimeout:      getDuration("PROXY_TIMEOUT", 10*time.Second),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
 		KafkaEnabled:      parseBoolEnv("KAFKA", true),

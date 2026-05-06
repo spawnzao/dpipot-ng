@@ -14,7 +14,6 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
-	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
 )
@@ -23,7 +22,6 @@ import (
 // Cada Handler roda em goroutine separada — o server nunca bloqueia.
 type Server struct {
 	listenAddr          string
-	ndpiClient          *ndpi.Client
 	router              *router.Router
 	producer            *kafka.Producer
 	maxPayloadBytes     int64
@@ -46,7 +44,6 @@ type Server struct {
 
 func NewServer(
 	listenAddr string,
-	ndpiClient *ndpi.Client,
 	r *router.Router,
 	producer *kafka.Producer,
 	maxPayloadBytes int64,
@@ -72,7 +69,6 @@ func NewServer(
 	}
 	return &Server{
 		listenAddr:          listenAddr,
-		ndpiClient:          ndpiClient,
 		router:              r,
 		producer:            producer,
 		maxPayloadBytes:     maxPayloadBytes,
@@ -214,7 +210,6 @@ func (s *Server) handle(conn net.Conn) {
 
 	h := NewHandler(
 		conn,
-		s.ndpiClient,
 		s.router,
 		s.producer,
 		s.maxPayloadBytes,

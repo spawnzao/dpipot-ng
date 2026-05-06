@@ -13,7 +13,6 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/httpclassifier"
 	kafkapkg "github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/mitm"
-	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	proxypkg "github.com/spawnzao/dpipot-ng/proxy/internal/proxy"
 	"github.com/spawnzao/dpipot-ng/proxy/internal/router"
 	"go.uber.org/zap"
@@ -44,13 +43,6 @@ func main() {
 		zap.Int("max_per_ip_conns", cfg.MaxPerIPConns),
 		zap.Int64("max_payload_bytes", cfg.MaxPayloadBytes),
 	)
-
-	log.Info("inicializando nDPI...")
-	ndpiClient, err := ndpi.NewClient(cfg.NDPITimeout, log)
-	if err != nil {
-		log.Fatal("nDPI init failed", zap.Error(err))
-	}
-	log.Info("nDPI inicializado via CGO integrado")
 
 	// inicializa Kafka producer (opcional: KAFKA=false desabilita)
 	var producer *kafkapkg.Producer
@@ -91,7 +83,6 @@ func main() {
 	// inicializa health server (HTTP na porta 8081)
 	healthServer := proxypkg.NewHealthServer(
 		"0.0.0.0:8081",
-		ndpiClient,
 		producer,
 		log,
 	)
@@ -110,7 +101,6 @@ func main() {
 	// inicializa servidor TCP
 	server := proxypkg.NewServer(
 		cfg.ListenAddr,
-		ndpiClient,
 		r,
 		producer,
 		cfg.MaxPayloadBytes,
@@ -159,23 +149,7 @@ func main() {
 		log.Error("health server shutdown", zap.Error(err))
 	}
 
-	ndpiClient.Close()
-
 	log.Info("proxy encerrado")
-}
-
-// waitForNDPI tenta conectar no socket do nDPI até o timeout.
-// Necessário porque no Kubernetes os containers do Pod sobem em paralelo.
-func waitForNDPI(client *ndpi.Client, timeout time.Duration, log *zap.Logger) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if err := client.Ping(); err == nil {
-			return nil
-		}
-		log.Debug("nDPI ainda não disponível, aguardando...")
-		time.Sleep(500 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout aguardando nDPI após %s", timeout)
 }
 
 func newLogger(level string) (*zap.Logger, error) {

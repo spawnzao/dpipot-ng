@@ -7,13 +7,11 @@ import (
 	"time"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
-	"github.com/spawnzao/dpipot-ng/proxy/internal/ndpi"
 	"go.uber.org/zap"
 )
 
 type HealthServer struct {
 	httpServer *http.Server
-	ndpiClient *ndpi.Client
 	producer   *kafka.Producer
 	log        *zap.Logger
 }
@@ -24,12 +22,11 @@ type HealthResponse struct {
 	Checks    map[string]string `json:"checks,omitempty"`
 }
 
-func NewHealthServer(addr string, ndpiClient *ndpi.Client, producer *kafka.Producer, log *zap.Logger) *HealthServer {
+func NewHealthServer(addr string, producer *kafka.Producer, log *zap.Logger) *HealthServer {
 	mux := http.NewServeMux()
 	hs := &HealthServer{
-		ndpiClient: ndpiClient,
-		producer:   producer,
-		log:        log,
+		producer: producer,
+		log:      log,
 	}
 
 	mux.HandleFunc("/healthz", hs.handleHealth)
@@ -63,13 +60,6 @@ func (h *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		Checks:    make(map[string]string),
 	}
 
-	if err := h.ndpiClient.Ping(); err != nil {
-		resp.Checks["ndpi"] = "unhealthy: " + err.Error()
-		resp.Status = "degraded"
-	} else {
-		resp.Checks["ndpi"] = "healthy"
-	}
-
 	if h.producer == nil {
 		resp.Checks["kafka"] = "disabled"
 	} else if h.producer.IsHealthy() {
@@ -89,11 +79,6 @@ func (h *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
-	if err := h.ndpiClient.Ping(); err != nil {
-		http.Error(w, "nDPI not ready: "+err.Error(), http.StatusServiceUnavailable)
-		return
-	}
-
 	if h.producer != nil && !h.producer.IsHealthy() {
 		http.Error(w, "Kafka not ready", http.StatusServiceUnavailable)
 		return
