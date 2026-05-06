@@ -65,14 +65,19 @@ func main() {
 
 	logger.Info("AF_PACKET capturer initialized", zap.String("interface", cfg.ClassifierInterface))
 
-	kafkaProducer, err := kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, logger)
-	if err != nil {
-		logger.Warn("failed to create kafka producer for nDPI, continuing without it",
-			zap.Error(err),
-		)
+	var kafkaProducer *kafkapkg.Producer
+	if cfg.KafkaEnabled {
+		kafkaProducer, err = kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, logger)
+		if err != nil {
+			logger.Warn("failed to create kafka producer for nDPI, continuing without it",
+				zap.Error(err),
+			)
+		} else {
+			defer kafkaProducer.Close()
+			logger.Info("Kafka producer initialized for nDPI", zap.String("topic", cfg.KafkaTopic+"-ndpi"))
+		}
 	} else {
-		defer kafkaProducer.Close()
-		logger.Info("Kafka producer initialized for nDPI", zap.String("topic", cfg.KafkaTopic+"-ndpi"))
+		logger.Info("Kafka desabilitado (KAFKA=false)")
 	}
 
 	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{

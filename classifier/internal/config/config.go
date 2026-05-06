@@ -12,6 +12,7 @@ type Config struct {
 	FlowTrackerPort     string
 	FlowTrackerTTL      int
 	LogLevel           string
+	KafkaEnabled       bool
 	KafkaBrokers       string
 	KafkaTopic         string
 	ServerFirstPorts   []uint16
@@ -24,6 +25,7 @@ func Load() (*Config, error) {
 		FlowTrackerPort:   getEnv("FLOWTRACKER_PORT", "9090"),
 		FlowTrackerTTL:    getInt("FLOWTRACKER_TTL", 5),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
+		KafkaEnabled:     parseBoolEnv("KAFKA", true),
 		KafkaBrokers:     getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
 		KafkaTopic:       getEnv("KAFKA_TOPIC", "dpipot.events"),
 	}
@@ -40,6 +42,17 @@ func Load() (*Config, error) {
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+	return fallback
+}
+
+func parseBoolEnv(key string, fallback bool) bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
+	switch v {
+	case "true", "1", "enable", "enabled", "yes":
+		return true
+	case "false", "0", "disable", "disabled", "no":
+		return false
 	}
 	return fallback
 }

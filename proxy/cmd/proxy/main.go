@@ -52,12 +52,18 @@ func main() {
 	}
 	log.Info("nDPI inicializado via CGO integrado")
 
-	// inicializa Kafka producer
-	producer, err := kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, log)
-	if err != nil {
-		log.Fatal("kafka producer", zap.Error(err))
+	// inicializa Kafka producer (opcional: KAFKA=false desabilita)
+	var producer *kafkapkg.Producer
+	if cfg.KafkaEnabled {
+		producer, err = kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, log)
+		if err != nil {
+			log.Fatal("kafka producer", zap.Error(err))
+		}
+		defer producer.Close()
+		log.Info("Kafka habilitado", zap.String("brokers", cfg.KafkaBrokers))
+	} else {
+		log.Info("Kafka desabilitado (KAFKA=false)")
 	}
-	defer producer.Close()
 
 	// inicializa router
 	r := router.New(cfg.Routes, cfg.DefaultRoute, log)

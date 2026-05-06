@@ -70,7 +70,9 @@ func (h *HealthServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		resp.Checks["ndpi"] = "healthy"
 	}
 
-	if h.producer.IsHealthy() {
+	if h.producer == nil {
+		resp.Checks["kafka"] = "disabled"
+	} else if h.producer.IsHealthy() {
 		resp.Checks["kafka"] = "healthy"
 	} else {
 		resp.Checks["kafka"] = "unhealthy"
@@ -92,7 +94,7 @@ func (h *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !h.producer.IsHealthy() {
+	if h.producer != nil && !h.producer.IsHealthy() {
 		http.Error(w, "Kafka not ready", http.StatusServiceUnavailable)
 		return
 	}
