@@ -314,6 +314,7 @@ func (h *Handler) Handle() {
 		isClientTimeout   bool
 		isProbe          bool
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
+		refined          string
 	)
 
 	// --- STEP 1: verifica se é porta server-first ---
@@ -674,7 +675,7 @@ greetingBuf = greetingBuf[:n]
 	h.conn.SetDeadline(deadline)
 
 	// Refina tuple_id com origDst real (pode diferir de dstAddr em modo REDIRECT)
-	refined := normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
+	refined = normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
 	if refined != h.tupleID {
 		h.tupleID = refined
 		log = log.With(zap.String("tuple_id", h.tupleID))
