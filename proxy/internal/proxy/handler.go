@@ -268,11 +268,15 @@ func (h *Handler) Handle() {
 	log = log.With(zap.String("tuple_id", h.tupleID))
 
 	appProtoFlow := "Unknown"
+	var (
+		earlyProto, earlyMasterProto string
+		earlyTrackerFound            bool
+	)
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		if appProto, _, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found {
-			if appProto != "" && strings.ToUpper(appProto) != "UNKNOWN" {
-				appProtoFlow = appProto
-			}
+		if p, m, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found {
+			earlyTrackerFound = true
+			earlyProto = p
+			earlyMasterProto = m
 			if flowUUID != "" {
 				h.classifierFlowID = flowUUID
 				log = log.With(zap.String("flow_id", h.classifierFlowID))
@@ -280,8 +284,8 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	// Fallback via SERVER_FIRST_PORTS (same as PORT_PROTOCOL_MAP now)
-	if appProtoFlow == "Unknown" {
+	// Fallback via SERVER_FIRST_PORTS: apenas quando FlowTracker não encontrou o fluxo
+	if !earlyTrackerFound {
 		if proto := h.serverFirstPorts[uint16(dstAddr.Port)]; proto != "" {
 			appProtoFlow = proto
 			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("app_proto", proto))
@@ -316,6 +320,17 @@ func (h *Handler) Handle() {
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
 	)
+
+	// Aplica swap intencional do FlowTracker antecipado (mesmo swap do STEP 3).
+	// Garante que ndpiLabel/masterProtoFlow/appProtoFlow ficam corretos no caminho server-first,
+	// que faz goto publish antes de chegar no STEP 3.
+	if earlyTrackerFound {
+		masterProtoFlow = earlyProto      // swap intencional: proto → masterProtoFlow
+		appProtoFlow = earlyMasterProto   // swap intencional: masterProto → appProtoFlow
+		if masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+			ndpiLabel = masterProtoFlow
+		}
+	}
 
 	// --- STEP 1: verifica se é porta server-first ---
 	dstPort := uint16(dstAddr.Port)
@@ -428,7 +443,7 @@ greetingBuf = greetingBuf[:n]
 			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
 			zap.Uint16("port", dstPort))
 
-		parser := mitm.NewParser(appProtoFlow, int(dstPort))
+		parser := mitm.NewParser(ndpiLabel, int(dstPort))
 		bannerEvents := parser.ParseServerData(greetingBuf, func(format string, args ...interface{}) {})
 
 		for _, ev := range bannerEvents {
@@ -442,7 +457,7 @@ greetingBuf = greetingBuf[:n]
 						SrcPort:     h.srcPort,
 						DstIP:       h.dstIP,
 						DstPort:     int(dstPort),
-						NDPIProto:   appProtoFlow,
+						NDPIProto:   ndpiLabel,
 						NDPIApp:    string(ev.EventType),
 						AttackType: ev.Banner,
 						Honeypot:    honeypotAddr,
@@ -484,7 +499,7 @@ greetingBuf = greetingBuf[:n]
 			DstIP:        h.dstIP,
 			DstPort:      h.dstPort,
 			HoneypotAddr: honeypotAddr,
-			NDPIProto:    appProtoFlow,
+			NDPIProto:    ndpiLabel,
 			MaxPayloadSize: h.maxPayloadBytes,
 			Deadline:     deadline,
 			OnEvent: func(event *kafka.Event) {

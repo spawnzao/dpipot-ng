@@ -205,7 +205,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 		h.flowTable.Update(tupleID, &flow.Entry{
 			Protocol:       proto,
-			MasterProtocol: "TCP",
+			MasterProtocol: "Unknown",
 			Category:       0,
 			SrcIP:          srcIP.String(),
 			SrcPort:        srcPort,
