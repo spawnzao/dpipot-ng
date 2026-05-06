@@ -284,10 +284,12 @@ func (h *Handler) Handle() {
 		}
 	}
 
-	// Fallback via SERVER_FIRST_PORTS: apenas quando FlowTracker não encontrou o fluxo
+	// Fallback via SERVER_FIRST_PORTS: apenas quando FlowTracker não encontrou o fluxo.
+	// Salvo em variável separada; aplicado ao ndpiLabel após o var() abaixo.
+	var fallbackProto string
 	if !earlyTrackerFound {
 		if proto := h.serverFirstPorts[uint16(dstAddr.Port)]; proto != "" {
-			appProtoFlow = proto
+			fallbackProto = proto
 			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("app_proto", proto))
 		}
 	}
@@ -321,8 +323,8 @@ func (h *Handler) Handle() {
 		refined          string
 	)
 
-	// Aplica swap intencional do FlowTracker antecipado (mesmo swap do STEP 3).
-	// Garante que ndpiLabel/masterProtoFlow/appProtoFlow ficam corretos no caminho server-first,
+	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
+	// ou usa fallback do SERVER_FIRST_PORTS — garante ndpiLabel correto no caminho server-first
 	// que faz goto publish antes de chegar no STEP 3.
 	if earlyTrackerFound {
 		masterProtoFlow = earlyProto      // swap intencional: proto → masterProtoFlow
@@ -330,6 +332,9 @@ func (h *Handler) Handle() {
 		if masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
 			ndpiLabel = masterProtoFlow
 		}
+	} else if fallbackProto != "" {
+		ndpiLabel = fallbackProto
+		// appProtoFlow fica "Unknown" — consistente com o caminho FlowTracker
 	}
 
 	// --- STEP 1: verifica se é porta server-first ---
