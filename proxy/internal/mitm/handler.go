@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/pem"
 	"fmt"
 	"io"
@@ -379,7 +380,7 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 				NDPIProto:   "SSH",
 				NDPIApp:    "exit",
 				Honeypot:   config.TargetAddr,
-				AttackType: string(req.Payload),
+				AttackType: decodeSSHExitPayload(req.Type, req.Payload),
 				Instance:      "proxy",
 			}
 			onEvent(event)
@@ -856,7 +857,7 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 	for i := offset; i < len(data); i++ {
 		if data[i] == 0x00 {
 			user := string(data[offset:i])
-			if len(user) > 0 && len(user) < 32 && !strings.Contains(user, "\ufffd") && !strings.Contains(user, "\u001d") {
+			if len(user) > 0 && len(user) < 64 && isPrintableASCII(user) {
 				logger("extractMySQLUsername: found user at offset %d: %q", offset, user)
 				return user
 			}
@@ -868,6 +869,33 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 
 func extractMySQLPassword(data []byte, logger func(string, ...interface{})) string {
 	return ""
+}
+
+func isPrintableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 32 || s[i] > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+func decodeSSHExitPayload(reqType string, payload []byte) string {
+	switch reqType {
+	case "exit-status":
+		if len(payload) == 4 {
+			return fmt.Sprintf("exit_code:%d", binary.BigEndian.Uint32(payload))
+		}
+	case "exit-signal":
+		// SSH wire format: uint32 name_len + signal_name + ...
+		if len(payload) >= 4 {
+			nameLen := binary.BigEndian.Uint32(payload)
+			if nameLen <= uint32(len(payload)-4) {
+				return fmt.Sprintf("signal:%s", payload[4:4+nameLen])
+			}
+		}
+	}
+	return fmt.Sprintf("%s:hex:%x", reqType, payload)
 }
 
 type TLSMITMConfig struct {
