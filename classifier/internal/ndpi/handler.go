@@ -32,6 +32,10 @@ type Handler struct {
 	cancel          context.CancelFunc
 	serverFirstPorts []uint16
 	portProtocolMap  map[uint16]string
+	// pendingFree armazena flows removidos do ndpiFlows no ciclo anterior de
+	// cleanup. São liberados no próximo ciclo (2 min depois), garantindo que
+	// nenhum PacketProcessing em curso ainda segure o ponteiro C.
+	pendingFree []*gondpi.NdpiFlow
 }
 
 type HandlerConfig struct {
@@ -304,11 +308,14 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 func (h *Handler) Close() {
 	h.cancel()
 	h.wg.Wait()
-	// Intencionalmente não chamamos ndpi_exit_detection_module nem ndpi_flow_free.
-	// O tráfego de honeypot (pacotes malformados, port scanners, exploits) corrompe
-	// o estado interno do módulo nDPI, fazendo ndpi_exit_detection_module crashar com
-	// "free(): double free detected in tcache 2". O processo roda em container;
-	// o OS recupera todo o heap C no restart do pod — o leak é inofensivo.
+	// Não chamamos ndpi_exit_detection_module (NdpiDetectionModule.Close()): o tráfego
+	// de honeypot corrompe o estado interno do nDPI e causa "double free detected in
+	// tcache 2" no shutdown. O OS recupera o heap C ao matar o container.
+	// ndpi_flow_struct_free individual é seguro porque o goroutine de processamento
+	// já parou (wg.Wait acima); liberamos os flows pendentes antes de sair.
+	for _, f := range h.pendingFree {
+		f.Close()
+	}
 }
 
 func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
@@ -329,25 +336,30 @@ func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
 }
 
 func (h *Handler) cleanupNdpiFlows() {
+	// Fase 2: libera C heap dos flows removidos no ciclo ANTERIOR.
+	// Garantia de segurança: 2 minutos já passaram desde a remoção do sync.Map,
+	// tempo muito superior ao de qualquer PacketProcessing em curso (µs).
+	freed := len(h.pendingFree)
+	for _, f := range h.pendingFree {
+		f.Close()
+	}
+	h.pendingFree = h.pendingFree[:0]
+
+	// Fase 1: evicta flows que saíram da flowTable e os enfileira para free.
 	evicted := 0
 	h.ndpiFlows.Range(func(key, value any) bool {
 		tupleID := key.(string)
 		if _, found := h.flowTable.Get(tupleID); !found {
-			// Remove do mapa Go, mas NÃO chama ndpiFlow.Close() aqui.
-			// A goroutine de processamento de pacotes pode ter carregado o
-			// mesmo ponteiro C do sync.Map e ainda estar dentro de
-			// PacketProcessing — chamar ndpi_flow_free concorrentemente
-			// é use-after-free no heap C e corrompe o módulo nDPI.
-			// A liberação do C heap ocorre em Handler.Close(), depois que
-			// o processador de pacotes já parou (processingWg.Wait).
 			h.ndpiFlows.Delete(tupleID)
 			h.flowUUIDs.Delete(tupleID)
+			h.pendingFree = append(h.pendingFree, value.(*gondpi.NdpiFlow))
 			evicted++
 		}
 		return true
 	})
-	if h.logger != nil && evicted > 0 {
-		h.logger.Info("nDPI flows cleanup", zap.Int("evicted", evicted))
+
+	if h.logger != nil && (evicted > 0 || freed > 0) {
+		h.logger.Info("nDPI flows cleanup", zap.Int("evicted", evicted), zap.Int("freed", freed))
 	}
 }
 
