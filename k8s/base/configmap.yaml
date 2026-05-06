@@ -29,6 +29,7 @@ data:
     PostgreSQL=heralding:5432,
     VNC=heralding:5900
   DEFAULT_ROUTE: "heralding:80"
+  KAFKA: "true"
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "65536"
