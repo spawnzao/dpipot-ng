@@ -21,9 +21,10 @@ type Config struct {
 	SSHInputBufSize    int
 	SSHOutputBufSize   int
 	LogLevel           string
-	ClassifierEnabled bool
-	ClassifierHost    string
-	ClassifierPort    int
+	ClassifierEnabled  bool
+	ClassifierHost     string
+	ClassifierPort     int
+	FlowTrackerTTL     time.Duration
 	ServerFirstPorts      map[uint16]string
 	ServerFirstPortsTLS map[uint16]string
 	HttpAuthPorts        map[uint16]bool
@@ -35,7 +36,7 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:        getEnv("PROXY_LISTEN_ADDR", "0.0.0.0:8080"),
-		ProxyTimeout:      getDuration("PROXY_TIMEOUT", 10*time.Second),
+		ProxyTimeout:      getDuration("PROXY_TIMEOUT", 15*time.Second),
 		DefaultRoute:      getEnv("DEFAULT_ROUTE", "dionaea-svc:4444"),
 		KafkaEnabled:      parseBoolEnv("KAFKA", true),
 		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
@@ -47,6 +48,7 @@ func Load() (*Config, error) {
 		ClassifierEnabled:  getEnv("CLASSIFIER_ENABLED", "false") == "true",
 		ClassifierHost:     "127.0.0.1",
 		ClassifierPort:     getInt("FLOWTRACKER_PORT", 9090),
+		FlowTrackerTTL:     getDuration("FLOWTRACKER_TTL", 15*time.Second),
 		MaxConnections: getInt("MAX_CONNECTIONS", 10000),
 		MaxPerIPConns:  getInt("MAX_CONNECTIONS_PER_IP", 50),
 	}

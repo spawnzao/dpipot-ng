@@ -36,7 +36,7 @@ func main() {
 	logger.Info("starting classifier",
 		zap.String("interface", cfg.ClassifierInterface),
 		zap.String("listen", cfg.FlowTrackerListenAddr()),
-		zap.Int("ttl_minutes", cfg.FlowTrackerTTL),
+		zap.Duration("flowtracker_ttl", cfg.FlowTrackerTTL),
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 	)
 

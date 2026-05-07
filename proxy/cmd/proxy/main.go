@@ -44,6 +44,13 @@ func main() {
 		zap.Int64("max_payload_bytes", cfg.MaxPayloadBytes),
 	)
 
+	if cfg.FlowTrackerTTL > cfg.ProxyTimeout {
+		log.Warn("FLOWTRACKER_TTL maior que PROXY_TIMEOUT: a tabela mantém entradas por mais tempo que a duração da conexão!",
+			zap.Duration("flowtracker_ttl", cfg.FlowTrackerTTL),
+			zap.Duration("proxy_timeout", cfg.ProxyTimeout),
+		)
+	}
+
 	// inicializa Kafka producer (opcional: KAFKA=false desabilita)
 	var producer *kafkapkg.Producer
 	if cfg.KafkaEnabled {
