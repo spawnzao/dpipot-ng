@@ -821,7 +821,11 @@ greetingBuf = greetingBuf[:n]
 				log.Info(fmt.Sprintf("RDP: "+format, args...))
 			},
 		}); err != nil {
-			log.Error("RDP handler falhou", zap.Error(err))
+			if strings.Contains(err.Error(), "with client") {
+				log.Warn("RDP client TLS falhou (scanner/probe)", zap.Error(err))
+			} else {
+				log.Error("RDP handler falhou", zap.Error(err))
+			}
 		}
 
 		goto publish
