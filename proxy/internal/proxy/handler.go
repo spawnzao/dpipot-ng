@@ -806,6 +806,7 @@ greetingBuf = greetingBuf[:n]
 			HoneypotConn: honeypotConn,
 			FirstChunk:   firstChunk,
 			HoneypotAddr: honeypotAddr,
+			TLSCert:      h.certMgr.Cert(),
 			FlowID:       h.classifierFlowID,
 			SrcIP:        h.srcIP,
 			SrcPort:      h.srcPort,
