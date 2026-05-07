@@ -10,16 +10,20 @@ import (
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
 )
 
-const (
-	rdpProtocolSSL      = 0x00000001
-	rdpProtocolHybrid   = 0x00000002
-	rdpProtocolHybridEx = 0x00000008
-)
-
-// syntheticX224CC is a standard X.224 Connection Confirm with PROTOCOL_SSL selected.
-// Sent to the client immediately — no honeypot connection needed at this stage.
-// mstsc.exe / rdesktop use the first TCP connection only to present the TLS certificate;
-// the real session comes on a second TCP connection after the user accepts the cert.
+// syntheticX224CC announces PROTOCOL_HYBRID (NLA) to the client.
+//
+// Why PROTOCOL_HYBRID instead of PROTOCOL_SSL:
+//   - PROTOCOL_SSL causes mstsc.exe to use TWO TCP connections: the first only
+//     for the certificate warning, the second for the actual session. The second
+//     connection goes through the same synthetic-CC path and never reaches the
+//     honeypot for credential collection.
+//   - PROTOCOL_HYBRID (NLA) keeps everything on ONE TCP connection: TLS
+//     handshake (cert warning, if any), CredSSP/NTLM auth, and session — all
+//     on the same socket. No reconnect.
+//   - NTLM credentials sent over CredSSP are visible to the proxy (after TLS
+//     decryption) and can be relayed raw to the honeypot, which captures them.
+//     RDP Classic Security Exchange (used by PROTOCOL_SSL) encrypts the password
+//     with the server's RSA key, making capture impossible without the exact cert.
 var syntheticX224CC = []byte{
 	0x03, 0x00, 0x00, 0x13, // TPKT header, total length = 19
 	0x0E,                   // LI = 14
@@ -30,44 +34,14 @@ var syntheticX224CC = []byte{
 	0x02,                   // TYPE_RDP_NEG_RSP
 	0x00,                   // flags
 	0x08, 0x00,             // length = 8
-	0x01, 0x00, 0x00, 0x00, // selectedProtocol = PROTOCOL_SSL
-}
-
-// honeypotTLSConfig is a TLS client config for connecting to the honeypot.
-// Go 1.22+ removed RSA key exchange cipher suites from its defaults. Explicitly
-// listing them here re-enables negotiation with Python-based honeypots (heralding)
-// that do not support ECDHE. MaxVersion=TLS12 avoids sending a TLS 1.3 ClientHello
-// that old Python ssl / OpenSSL versions may not handle.
-var honeypotTLSConfig = &tls.Config{
-	InsecureSkipVerify: true, //nolint:gosec
-	MinVersion:         tls.VersionTLS10,
-	MaxVersion:         tls.VersionTLS12,
-	CipherSuites: []uint16{
-		// ECDHE — forward-secrecy suites
-		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-		tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-		tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-		// RSA key exchange — disabled by default in Go 1.22+; heralding (Python ssl)
-		// typically falls back to these when ECDHE is unavailable.
-		tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-		tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-		tls.TLS_RSA_WITH_AES_128_CBC_SHA,
-		tls.TLS_RSA_WITH_AES_256_CBC_SHA,
-	},
+	0x02, 0x00, 0x00, 0x00, // selectedProtocol = PROTOCOL_HYBRID (NLA)
 }
 
 // RDPConfig holds configuration for the RDP MITM handler.
 type RDPConfig struct {
-	// ClientConn is the accepted TCP connection from the external client.
-	ClientConn net.Conn
-	// HoneypotAddr is "host:port" for the RDP honeypot. HandleRDP dials this
-	// itself — AFTER client TLS succeeds — so the first (cert-probe) connection
-	// never touches the honeypot.
-	HoneypotAddr string
-	FirstChunk   []byte // X.224 Connection Request read from the client
+	ClientConn   net.Conn
+	HoneypotAddr string  // HandleRDP dials the honeypot itself, after client TLS succeeds
+	FirstChunk   []byte  // X.224 Connection Request read from the client
 	TLSCert      tls.Certificate
 	FlowID       string
 	SrcIP        string
@@ -80,35 +54,33 @@ type RDPConfig struct {
 	Logger       func(string, ...interface{})
 }
 
-// HandleRDP performs RDP MITM with deferred honeypot connection.
+// HandleRDP performs RDP MITM with half-TLS and deferred honeypot connection.
 //
 // Flow:
-//  1. Send synthetic X.224 CC (PROTOCOL_SSL) to client — no honeypot dial yet.
-//  2. TLS handshake with client (proxy = TLS server, presents proxy cert).
-//     If this fails the connection was a scanner or a certificate-probe; return quickly.
-//  3. Dial honeypot, replay X.224 CR, read X.224 CC to put honeypot into TLS mode.
-//  4. TLS handshake with honeypot (proxy = TLS client) using legacy-compatible config.
-//  5. Bidirectional relay with CredSSP/NLA detection.
+//  1. Send synthetic X.224 CC (PROTOCOL_HYBRID) to client — no honeypot dial yet.
+//  2. TLS handshake with client (proxy = TLS server).  Certificate warning is shown
+//     here; if the client rejects or is a scanner, we return quickly.
+//  3. Dial honeypot, replay X.224 CR, read (and discard) X.224 CC from honeypot.
+//  4. Half-TLS relay: decrypt client data (CredSSP/NTLM) and relay raw to honeypot;
+//     relay raw honeypot responses back to client over TLS.
 //
-// Why defer the honeypot dial:
-//   - mstsc.exe opens a first TCP connection purely to display the proxy TLS certificate.
-//     That connection is closed as soon as the user accepts (or rejects) the cert.
-//     Connecting to the honeypot for that probe wastes a session and causes a 30 s
-//     timeout while Go's TLS client and heralding's Python ssl negotiate ciphers.
-//   - On the second TCP connection (the real session) the cert is already trusted,
-//     TLS with the client completes in <1 s, and the honeypot sees only real traffic.
+// Why skip TLS with the honeypot:
+//   Go 1.22+ TLS client is incompatible with heralding's Python SSL server —
+//   the handshake consistently fails with EOF after 30 s regardless of cipher suite
+//   or version settings. After X.224 CC heralding falls back to reading raw data;
+//   sending decrypted CredSSP bytes directly allows it to capture credentials.
 func HandleRDP(config RDPConfig) error {
 	if len(config.FirstChunk) > 0 {
 		config.Logger("received %d bytes (X.224 CR) from client", len(config.FirstChunk))
 	}
 
-	// 1. Reply with synthetic X.224 CC — no honeypot involved yet.
+	// 1. Synthetic X.224 CC with PROTOCOL_HYBRID → no reconnect, no second connection.
 	if _, err := config.ClientConn.Write(syntheticX224CC); err != nil {
 		return fmt.Errorf("rdp: failed sending X.224 CC to client: %w", err)
 	}
-	config.Logger("sent synthetic X.224 CC (PROTOCOL_SSL) to client")
+	config.Logger("sent synthetic X.224 CC (PROTOCOL_HYBRID/NLA) to client")
 
-	// 2. TLS with client.
+	// 2. TLS with client. Scanner probes and cert rejections fail here quickly.
 	clientTLS := tls.Server(config.ClientConn, &tls.Config{
 		Certificates: []tls.Certificate{config.TLSCert},
 	})
@@ -117,7 +89,7 @@ func HandleRDP(config RDPConfig) error {
 	}
 	config.Logger("TLS with client established")
 
-	// 3. Dial honeypot and replay X.224 exchange.
+	// 3. Dial honeypot only after client TLS succeeds.
 	dialTimeout := time.Until(config.Deadline)
 	if dialTimeout <= 0 {
 		return fmt.Errorf("rdp: deadline exceeded before honeypot dial")
@@ -129,39 +101,32 @@ func HandleRDP(config RDPConfig) error {
 	defer honeypotConn.Close()
 	honeypotConn.SetDeadline(config.Deadline) //nolint:errcheck
 
+	// Replay X.224 CR so the honeypot enters its TLS-or-raw read loop.
 	if len(config.FirstChunk) > 0 {
 		if _, err := honeypotConn.Write(config.FirstChunk); err != nil {
 			return fmt.Errorf("rdp: failed forwarding X.224 CR to honeypot: %w", err)
 		}
 	}
-
 	serverBuf := make([]byte, 4096)
 	n, err := honeypotConn.Read(serverBuf)
 	if err != nil || n == 0 {
 		return fmt.Errorf("rdp: failed reading X.224 CC from honeypot: %w", err)
 	}
-	config.Logger("received %d bytes (X.224 CC) from honeypot, selectedProtocol=0x%08x",
-		n, parseX224CCProtocol(serverBuf[:n]))
-	// X.224 CC from honeypot is intentionally NOT forwarded to the client — the
-	// client already received the synthetic CC at step 1.
+	config.Logger("received X.224 CC from honeypot, selectedProtocol=0x%08x",
+		parseX224CCProtocol(serverBuf[:n]))
+	// Honeypot CC is intentionally not forwarded — the client already has the synthetic one.
+	// We also skip TLS with the honeypot (see package-level comment above).
 
-	// 4. TLS with honeypot.
-	honeypotTLS := tls.Client(honeypotConn, honeypotTLSConfig)
-	if err := honeypotTLS.Handshake(); err != nil {
-		return fmt.Errorf("rdp: TLS handshake with honeypot failed: %w", err)
-	}
-	defer honeypotTLS.Close()
-	config.Logger("TLS with honeypot established")
-
-	// 5. Bidirectional relay with CredSSP/NLA detection.
+	// 4. Half-TLS relay: clientTLS (decrypted) ↔ honeypotConn (raw TCP).
 	done := make(chan error, 2)
 
+	// client → honeypot: decrypt TLS, detect CredSSP/NTLM, forward raw
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := clientTLS.Read(buf)
-			if n > 0 {
-				if isCredSSP(buf[:n]) && config.OnEvent != nil {
+			nr, err := clientTLS.Read(buf)
+			if nr > 0 {
+				if isCredSSP(buf[:nr]) && config.OnEvent != nil {
 					config.OnEvent(&kafka.Event{
 						FlowID:     config.FlowID,
 						TupleID:    config.TupleID,
@@ -172,12 +137,12 @@ func HandleRDP(config RDPConfig) error {
 						DstPort:    config.DstPort,
 						NDPIProto:  "RDP",
 						NDPIApp:    "ntlmssp_auth",
-						AttackType: fmt.Sprintf("ntlmssp:%x", buf[:min(n, 32)]),
+						AttackType: fmt.Sprintf("ntlmssp:%x", buf[:min(nr, 32)]),
 						Honeypot:   config.HoneypotAddr,
 						Instance:   "proxy",
 					})
 				}
-				if _, werr := honeypotTLS.Write(buf[:n]); werr != nil {
+				if _, werr := honeypotConn.Write(buf[:nr]); werr != nil {
 					done <- werr
 					return
 				}
@@ -189,12 +154,13 @@ func HandleRDP(config RDPConfig) error {
 		}
 	}()
 
+	// honeypot → client: forward raw honeypot responses encrypted over TLS
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := honeypotTLS.Read(buf)
-			if n > 0 {
-				if _, werr := clientTLS.Write(buf[:n]); werr != nil {
+			nr, err := honeypotConn.Read(buf)
+			if nr > 0 {
+				if _, werr := clientTLS.Write(buf[:nr]); werr != nil {
 					done <- werr
 					return
 				}
