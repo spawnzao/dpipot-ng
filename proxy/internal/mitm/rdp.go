@@ -1,14 +1,11 @@
 package mitm
 
 import (
-	"encoding/binary"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
-	"go.uber.org/zap"
 )
 
 // RDPConfig holds configuration for RDP MITM handler

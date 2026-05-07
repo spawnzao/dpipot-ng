@@ -804,7 +804,7 @@ greetingBuf = greetingBuf[:n]
 		if err := mitm.HandleRDP(mitm.RDPConfig{
 			ClientConn:   h.conn,
 			HoneypotConn: honeypotConn,
-			FlowID:       h.flowID,
+			FlowID:       h.classifierFlowID,
 			SrcIP:        h.srcIP,
 			SrcPort:      h.srcPort,
 			DstIP:        origDstIP.String(),
