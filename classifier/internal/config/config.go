@@ -10,7 +10,7 @@ import (
 type Config struct {
 	ClassifierInterface string
 	FlowTrackerPort     string
-	FlowTrackerTTL      int
+	FlowTrackerTTL      time.Duration
 	LogLevel           string
 	KafkaEnabled       bool
 	KafkaBrokers       string
@@ -23,7 +23,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ClassifierInterface: getEnv("CLASSIFIER_INTERFACE", "ens192"),
 		FlowTrackerPort:   getEnv("FLOWTRACKER_PORT", "9090"),
-		FlowTrackerTTL:    getInt("FLOWTRACKER_TTL", 5),
+		FlowTrackerTTL:    getDuration("FLOWTRACKER_TTL", 60*time.Second),
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		KafkaEnabled:     parseBoolEnv("KAFKA", true),
 		KafkaBrokers:     getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
@@ -64,6 +64,18 @@ func getInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func getDuration(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return fallback
+	}
+	return d
 }
 
 func parseServerFirstPorts(raw string) []uint16 {
@@ -113,5 +125,5 @@ func (c *Config) FlowTrackerListenAddr() string {
 }
 
 func (c *Config) TTL() time.Duration {
-	return time.Duration(c.FlowTrackerTTL) * time.Minute
+	return c.FlowTrackerTTL
 }
