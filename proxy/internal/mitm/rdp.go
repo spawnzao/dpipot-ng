@@ -1,6 +1,7 @@
 package mitm
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"time"
@@ -14,6 +15,7 @@ type RDPConfig struct {
 	HoneypotConn net.Conn
 	FirstChunk   []byte // X.224 Connection Request already read from client
 	HoneypotAddr string
+	TLSCert      tls.Certificate // proxy certificate — used as TLS server toward client
 	FlowID       string
 	SrcIP        string
 	SrcPort      int
@@ -25,39 +27,64 @@ type RDPConfig struct {
 	Logger       func(string, ...interface{})
 }
 
-// HandleRDP performs RDP MITM relay with CredSSP/NLA detection.
-// RDP is client-first: client sends X.224 Connection Request, server responds
-// with X.224 Connection Confirm, then TLS or NLA negotiation follows.
+// HandleRDP performs RDP MITM relay with TLS termination on both sides.
+//
+// RDP with TLS (PROTOCOL_SSL) negotiation flow:
+//  1. Client  → Proxy  → Honeypot : X.224 Connection Request (plaintext)
+//  2. Honeypot → Proxy  → Client  : X.224 Connection Confirm  (plaintext, PROTOCOL_SSL selected)
+//  3. Proxy does TLS as server with client, TLS as client with honeypot
+//  4. Bidirectional relay over the two TLS sessions (CredSSP/NLA detection)
 func HandleRDP(config RDPConfig) error {
 	// 1. Forward client's X.224 Connection Request to honeypot
 	if len(config.FirstChunk) > 0 {
 		if _, err := config.HoneypotConn.Write(config.FirstChunk); err != nil {
-			return fmt.Errorf("rdp: failed forwarding client request to honeypot: %w", err)
+			return fmt.Errorf("rdp: failed forwarding X.224 CR to honeypot: %w", err)
 		}
-		config.Logger("RDP: forwarded %d bytes from client to honeypot (X.224 CR)", len(config.FirstChunk))
+		config.Logger("RDP: forwarded %d bytes (X.224 CR) to honeypot", len(config.FirstChunk))
 	}
 
-	// 2. Read honeypot's X.224 Connection Confirm response
+	// 2. Read honeypot's X.224 Connection Confirm
 	serverBuf := make([]byte, 4096)
 	n, err := config.HoneypotConn.Read(serverBuf)
 	if err != nil || n == 0 {
 		return fmt.Errorf("rdp: failed reading X.224 CC from honeypot: %w", err)
 	}
-	config.Logger("RDP: received %d bytes from honeypot (X.224 CC)", n)
+	config.Logger("RDP: received %d bytes (X.224 CC) from honeypot", n)
 
-	// 3. Forward honeypot response to client
+	// 3. Forward X.224 CC to client
 	if _, err := config.ClientConn.Write(serverBuf[:n]); err != nil {
-		return fmt.Errorf("rdp: failed writing to client: %w", err)
+		return fmt.Errorf("rdp: failed writing X.224 CC to client: %w", err)
 	}
 
-	// 4. Bidirectional relay — buffers separados por goroutine para evitar data race
+	// 4. TLS MITM: proxy acts as TLS server toward client, TLS client toward honeypot.
+	//    Ambos os lados precisam de canais TLS independentes — relay transparente de bytes
+	//    não funciona porque o honeypot chama do_handshake() na própria conexão TCP.
+
+	// 4a. TLS com o cliente (proxy = servidor TLS)
+	clientTLSCfg := &tls.Config{
+		Certificates: []tls.Certificate{config.TLSCert},
+	}
+	clientTLS := tls.Server(config.ClientConn, clientTLSCfg)
+	if err := clientTLS.Handshake(); err != nil {
+		return fmt.Errorf("rdp: TLS handshake with client failed: %w", err)
+	}
+	config.Logger("RDP: TLS handshake with client OK")
+
+	// 4b. TLS com o honeypot (proxy = cliente TLS, skipa verificação de cert)
+	honeypotTLS := tls.Client(config.HoneypotConn, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec
+	if err := honeypotTLS.Handshake(); err != nil {
+		return fmt.Errorf("rdp: TLS handshake with honeypot failed: %w", err)
+	}
+	config.Logger("RDP: TLS handshake with honeypot OK")
+
+	// 5. Bidirectional relay — buffers separados por goroutine
 	done := make(chan error, 2)
 
-	// client → honeypot
+	// client → honeypot (com detecção de CredSSP/NLA)
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := config.ClientConn.Read(buf)
+			n, err := clientTLS.Read(buf)
 			if n > 0 {
 				if isCredSSP(buf[:n]) && config.OnEvent != nil {
 					config.OnEvent(&kafka.Event{
@@ -75,8 +102,8 @@ func HandleRDP(config RDPConfig) error {
 						Instance:   "proxy",
 					})
 				}
-				if _, err := config.HoneypotConn.Write(buf[:n]); err != nil {
-					done <- err
+				if _, werr := honeypotTLS.Write(buf[:n]); werr != nil {
+					done <- werr
 					return
 				}
 			}
@@ -91,10 +118,10 @@ func HandleRDP(config RDPConfig) error {
 	go func() {
 		buf := make([]byte, 4096)
 		for {
-			n, err := config.HoneypotConn.Read(buf)
+			n, err := honeypotTLS.Read(buf)
 			if n > 0 {
-				if _, err := config.ClientConn.Write(buf[:n]); err != nil {
-					done <- err
+				if _, werr := clientTLS.Write(buf[:n]); werr != nil {
+					done <- werr
 					return
 				}
 			}
