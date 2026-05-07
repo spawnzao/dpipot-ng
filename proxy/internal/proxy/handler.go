@@ -792,20 +792,14 @@ greetingBuf = greetingBuf[:n]
 	if ndpiLabel == "RDP" {
 		log.Info("RDP detectado, usando handler dedicado")
 
-		honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
-		if err != nil {
-			log.Error("falha conectando ao honeypot RDP", zap.Error(err))
-			goto publish
-		}
-		defer honeypotConn.Close()
-		honeypotConn.SetDeadline(deadline)
-
-		// Chama handler RDP dedicado
+		// HandleRDP faz o dial do honeypot ele mesmo, após o TLS com o cliente
+		// ser estabelecido. A primeira conexão do mstsc.exe serve apenas para
+		// exibir o certificado do proxy; conectar ao honeypot nesse momento é
+		// desnecessário e causa timeout de 30 s.
 		if err := mitm.HandleRDP(mitm.RDPConfig{
 			ClientConn:   h.conn,
-			HoneypotConn: honeypotConn,
-			FirstChunk:   firstChunk,
 			HoneypotAddr: honeypotAddr,
+			FirstChunk:   firstChunk,
 			TLSCert:      h.certMgr.Cert(),
 			FlowID:       h.classifierFlowID,
 			SrcIP:        h.srcIP,
