@@ -788,11 +788,47 @@ greetingBuf = greetingBuf[:n]
 		ndpiLabel = "HTTP_AUTH"
 	}
 
+	// --- NOVO: Tratamento especial para RDP ---
+	if ndpiLabel == "RDP" {
+		log.Info("RDP detectado, usando handler dedicado")
+
+		honeypotConn, err := net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		if err != nil {
+			log.Error("falha conectando ao honeypot RDP", zap.Error(err))
+			goto publish
+		}
+		defer honeypotConn.Close()
+		honeypotConn.SetDeadline(deadline)
+
+		// Chama handler RDP dedicado
+		if err := mitm.HandleRDP(mitm.RDPConfig{
+			ClientConn:   h.conn,
+			HoneypotConn: honeypotConn,
+			FlowID:       h.flowID,
+			SrcIP:        h.srcIP,
+			SrcPort:      h.srcPort,
+			DstIP:        origDstIP.String(),
+			DstPort:      int(origDstPort),
+			TupleID:      h.tupleID,
+			Deadline:     deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.producer.Publish(event)
+			},
+			Logger: func(format string, args ...interface{}) {
+				log.Info(fmt.Sprintf("RDP: "+format, args...))
+			},
+		}); err != nil {
+			log.Error("RDP handler falhou", zap.Error(err))
+		}
+
+		goto publish
+	}
+
 	// --- STEP 4.5: verifica se precisa de MITM ---
 	isSSH = mitm.IsSSH(firstChunk)
 	isTLS = mitm.IsTLS(firstChunk)
 	log.Debug("🔍 verificando MITM",
-		zap.ByteString("firstChunk", firstChunk),
+		zap.ByteString("firstChunk", firstChunk[:min(20, len(firstChunk))]),
 		zap.Bool("isSSH", isSSH),
 		zap.Bool("isTLS", isTLS),
 		zap.Bool("isProbe", isProbe),

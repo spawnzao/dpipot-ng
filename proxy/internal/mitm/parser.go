@@ -395,6 +395,31 @@ func (p *IMAPParser) ParseServerData(data []byte, logger func(string, ...interfa
 	return nil
 }
 
+// RDPParser handles RDP protocol (basic hex capture)
+type RDPParser struct{}
+
+func (p *RDPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	if len(data) == 0 {
+		return nil
+	}
+	return []CaptureEvent{{
+		EventType: EventCommand,
+		Direction: "client->honeypot",
+		Command:   fmt.Sprintf("rdp_client:%d_bytes", len(data)),
+	}}
+}
+
+func (p *RDPParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	if len(data) == 0 {
+		return nil
+	}
+	return []CaptureEvent{{
+		EventType: EventResponse,
+		Direction: "honeypot->client",
+		Response: fmt.Sprintf("rdp_server:%d_bytes", len(data)),
+	}}
+}
+
 func NewParser(protocol string, port int) ProtocolParser {
 	switch strings.ToUpper(protocol) {
 	case "FTP":
@@ -409,6 +434,8 @@ func NewParser(protocol string, port int) ProtocolParser {
 		return &POP3Parser{}
 	case "IMAP", "IMAP4":
 		return &IMAPParser{}
+	case "RDP":
+		return &RDPParser{}
 	default:
 		switch port {
 		case 21:
