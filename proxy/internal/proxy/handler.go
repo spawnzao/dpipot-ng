@@ -824,7 +824,7 @@ greetingBuf = greetingBuf[:n]
 			if strings.Contains(err.Error(), "with client") {
 				log.Warn("RDP client TLS falhou (scanner/probe)", zap.Error(err))
 			} else {
-				log.Error("RDP handler falhou", zap.Error(err))
+				log.Warn("RDP relay encerrado", zap.Error(err))
 			}
 		}
 
