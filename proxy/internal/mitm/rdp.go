@@ -10,8 +10,10 @@ import (
 
 // RDPConfig holds configuration for RDP MITM handler
 type RDPConfig struct {
-	ClientConn net.Conn
+	ClientConn   net.Conn
 	HoneypotConn net.Conn
+	FirstChunk   []byte // X.224 Connection Request already read from client
+	HoneypotAddr string
 	FlowID       string
 	SrcIP        string
 	SrcPort      int
@@ -23,50 +25,57 @@ type RDPConfig struct {
 	Logger       func(string, ...interface{})
 }
 
-// HandleRDP performs RDP MITM with NLA/CredSSP detection
-// RDP is server-first: honeypot sends X.224 + TLS ServerHello first
+// HandleRDP performs RDP MITM relay with CredSSP/NLA detection.
+// RDP is client-first: client sends X.224 Connection Request, server responds
+// with X.224 Connection Confirm, then TLS or NLA negotiation follows.
 func HandleRDP(config RDPConfig) error {
-	serverBuf := make([]byte, 4096)
+	// 1. Forward client's X.224 Connection Request to honeypot
+	if len(config.FirstChunk) > 0 {
+		if _, err := config.HoneypotConn.Write(config.FirstChunk); err != nil {
+			return fmt.Errorf("rdp: failed forwarding client request to honeypot: %w", err)
+		}
+		config.Logger("RDP: forwarded %d bytes from client to honeypot (X.224 CR)", len(config.FirstChunk))
+	}
 
-	// 1. Read first packet from honeypot (X.224 Connection Confirm + TLS)
+	// 2. Read honeypot's X.224 Connection Confirm response
+	serverBuf := make([]byte, 4096)
 	n, err := config.HoneypotConn.Read(serverBuf)
 	if err != nil || n == 0 {
-		return fmt.Errorf("rdp: failed reading from honeypot: %w", err)
+		return fmt.Errorf("rdp: failed reading X.224 CC from honeypot: %w", err)
 	}
-	config.Logger("RDP: received %d bytes from honeypot (X.224+TLS)", n)
+	config.Logger("RDP: received %d bytes from honeypot (X.224 CC)", n)
 
-	// 2. Forward honeypot greeting to client
+	// 3. Forward honeypot response to client
 	if _, err := config.ClientConn.Write(serverBuf[:n]); err != nil {
 		return fmt.Errorf("rdp: failed writing to client: %w", err)
 	}
 
-	// 3. Main bidirectional loop with CredSSP/NLA detection
-	clientBuf := make([]byte, 4096)
+	// 4. Bidirectional relay — buffers separados por goroutine para evitar data race
 	done := make(chan error, 2)
 
-	// Goroutine: client → honeypot
+	// client → honeypot
 	go func() {
+		buf := make([]byte, 4096)
 		for {
-			n, err := config.ClientConn.Read(clientBuf)
+			n, err := config.ClientConn.Read(buf)
 			if n > 0 {
-				// Detect CredSSP/NLA (starts with ASN.1 SEQUENCE 0x30)
-				if isCredSSP(clientBuf[:n]) {
+				if isCredSSP(buf[:n]) && config.OnEvent != nil {
 					config.OnEvent(&kafka.Event{
-						FlowID:      config.FlowID,
-						Timestamp:   time.Now(),
-						SrcIP:       config.SrcIP,
-						SrcPort:     config.SrcPort,
-						DstIP:       config.DstIP,
-						DstPort:     config.DstPort,
-						NDPIProto:   "RDP",
+						FlowID:     config.FlowID,
+						TupleID:    config.TupleID,
+						Timestamp:  time.Now(),
+						SrcIP:      config.SrcIP,
+						SrcPort:    config.SrcPort,
+						DstIP:      config.DstIP,
+						DstPort:    config.DstPort,
+						NDPIProto:  "RDP",
 						NDPIApp:    "ntlmssp_auth",
-						AttackType:  fmt.Sprintf("ntlmssp:%x", clientBuf[:min(n, 32)]),
-						Honeypot:   "heralding:3389",
-						Instance:    "proxy",
+						AttackType: fmt.Sprintf("ntlmssp:%x", buf[:min(n, 32)]),
+						Honeypot:   config.HoneypotAddr,
+						Instance:   "proxy",
 					})
 				}
-				// Forward to honeypot
-				if _, err := config.HoneypotConn.Write(clientBuf[:n]); err != nil {
+				if _, err := config.HoneypotConn.Write(buf[:n]); err != nil {
 					done <- err
 					return
 				}
@@ -78,12 +87,13 @@ func HandleRDP(config RDPConfig) error {
 		}
 	}()
 
-	// Goroutine: honeypot → client
+	// honeypot → client
 	go func() {
+		buf := make([]byte, 4096)
 		for {
-			n, err := config.HoneypotConn.Read(clientBuf)
+			n, err := config.HoneypotConn.Read(buf)
 			if n > 0 {
-				if _, err := config.ClientConn.Write(clientBuf[:n]); err != nil {
+				if _, err := config.ClientConn.Write(buf[:n]); err != nil {
 					done <- err
 					return
 				}
@@ -98,31 +108,16 @@ func HandleRDP(config RDPConfig) error {
 	return <-done
 }
 
-// isCredSSP detects NLA CredSSP in client data
-// CredSSP starts with ASN.1 SEQUENCE (0x30) containing SPNEGO/NTLM
+// isCredSSP detects NLA/CredSSP traffic: NTLMSSP marker ou SPNEGO ASN.1 SEQUENCE.
 func isCredSSP(data []byte) bool {
-	if len(data) < 2 {
-		return false
-	}
-	// Look for ASN.1 SEQUENCE tag (0x30) followed by length
-	// CredSSP/NTLM typically starts with SPNEGO OID or NTLMSSP marker
-	for i := 0; i < len(data)-5; i++ {
-		// Check for "NTLMSSP" marker in CredSSP
-		if data[i] == 'N' && data[i+1] == 'T' && data[i+2] == 'L' && 
+	for i := 0; i+6 < len(data); i++ {
+		if data[i] == 'N' && data[i+1] == 'T' && data[i+2] == 'L' &&
 			data[i+3] == 'M' && data[i+4] == 'S' && data[i+5] == 'S' && data[i+6] == 'P' {
 			return true
 		}
-		// Check for ASN.1 SEQUENCE (SPNEGO negotiation)
 		if data[i] == 0x30 {
 			return true
 		}
 	}
 	return false
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
