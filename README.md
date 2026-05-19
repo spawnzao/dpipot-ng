@@ -12,19 +12,19 @@ DPIot-NG intercepts all TCP connections arriving at a node — without touching 
                         ┌────────────────────────────────────────────────┐
                         │             Kubernetes Node (DaemonSet)        │
                         │                                                │
-  Internet              │  ┌───────────────┐     ┌──────────────────┐    │
-  TCP :22 / :80         │  │ init-container│     │   Classifier     │    │
-  :443 / :3389 / ...    │  │  iptables     │     │  (AF_PACKET +    │    │
-         │              │  │   TPROXY      │     │    nDPI 4.12)    │    │
-         │              │  └──────┬────────┘     └────────┬─────────┘    │
+  Internet              │  ┌───────────────┐     ┌─────────────────┐     │
+  TCP :22 / :80         │  │ init-container│     │   Classifier    │     │
+  :443 / :3389 / ...    │  │  iptables     │     │  (AF_PACKET +   │     │
+         │              │  │   TPROXY      │     │    nDPI 4.12)   │     │
+         │              │  └──────┬────────┘     └────────┬────────┘     │
          │              │         │ marks pkts 0x1        │ flow labels  │
          ▼              │         ▼                       │              │
  ┌──────────────┐       │  ┌──────────────┐ ◄─────────────┘              │
  │  iptables    │       │  │    Proxy     │                              │
  │  TPROXY rule │─────▶│  │  :8080       │                              │
- │  (mangle)    │       │  │              │                             │
- └──────────────┘       │  └──────┬───────┘                             │
-                        │         │ route by protocol                   │
+ │  (mangle)    │       │  │              │                              │
+ └──────────────┘       │  └──────┬───────┘                              │
+                        │         │ route by protocol                    │
                         │         ├──── SSH  ──────▶ cowrie-svc:22      │
                         │         ├──── HTTP ──────▶ wordpot-svc:80     │
                         │         ├──── FTP/SMTP ──▶ heralding:21/25    │
