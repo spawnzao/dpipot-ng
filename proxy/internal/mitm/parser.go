@@ -226,11 +226,32 @@ func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...inter
 	if text == "" {
 		return nil
 	}
-	return []CaptureEvent{{
-		EventType: EventCommand,
-		Direction: "client->honeypot",
-		Command:   text,
-	}}
+	// Telnet envia cada Enter como \r ou \r\n; split por linha para separar
+	// username (1ª linha) de password (2ª linha) e comandos subsequentes.
+	lines := strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' })
+	var events []CaptureEvent
+	credIdx := 0
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if credIdx == 0 {
+			events = append(events, CaptureEvent{
+				EventType: EventCredential,
+				Direction: "client->honeypot",
+				Username:  line,
+			})
+		} else {
+			events = append(events, CaptureEvent{
+				EventType: EventCredential,
+				Direction: "client->honeypot",
+				Password:  line,
+			})
+		}
+		credIdx++
+	}
+	return events
 }
 
 func (p *TelnetParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
@@ -275,11 +296,15 @@ func stripTelnetControl(data []byte) string {
 				i++
 				continue
 			}
-			if opt >= telnetDONT && opt <= telnetSE {
-				i += 2
+			// WILL/WONT/DO/DONT: sequência de 3 bytes (IAC + verb + option).
+			// Condição correta: telnetWILL(0xFB) ≤ opt ≤ telnetDONT(0xFE).
+			// i aponta no IAC; i+3 pula os 3 bytes completos.
+			if opt >= telnetWILL && opt <= telnetDONT {
+				i += 3
 				continue
 			}
-			i++
+			// Outros comandos IAC de 2 bytes (SE, NOP, etc.)
+			i += 2
 			continue
 		}
 		if data[i] >= 32 && data[i] < 127 {

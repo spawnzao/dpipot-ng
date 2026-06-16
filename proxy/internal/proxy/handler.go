@@ -1149,10 +1149,10 @@ mitmLogger := func(format string, args ...interface{}) {
 					eventType := "command"
 					attackType := ev.Command
 					if ev.Username != "" {
-						eventType = "credential"
+						eventType = "username"
 						attackType = ev.Username
 					} else if ev.Password != "" {
-						eventType = "credential"
+						eventType = "password"
 						attackType = ev.Password
 					}
 					h.producer.Publish(&kafka.Event{
