@@ -48,6 +48,8 @@ spec:
               value: "168"
             - name: KAFKA_LOG_RETENTION_BYTES
               value: "10737418240"
+            - name: KAFKA_LOG_DIRS
+              value: "/var/lib/kafka/data"
           lifecycle:
             postStart:
               exec:
@@ -59,7 +61,7 @@ spec:
                       sleep 3
                     done
                     sleep 5
-                    for topic in dpipot.events dpipot.events-application dpipot.events-ndpi; do
+                    for topic in dpipot.events-application dpipot.events-ndpi; do
                       /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
                         --create --if-not-exists --topic "$topic" \
                         --partitions 1 --replication-factor 1
@@ -76,4 +78,5 @@ spec:
               mountPath: /var/lib/kafka/data
       volumes:
         - name: kafka-data
-          emptyDir: {}   # em dev usa emptyDir — prod usa PersistentVolume
+          persistentVolumeClaim:
+            claimName: kafka-pvc
