@@ -25,6 +25,37 @@ data:
         codec => "json"
       }
     }
+    filter {
+      if [timestamp] {
+        date {
+          match => ["timestamp", "ISO8601"]
+          target => "@timestamp"
+          remove_field => ["timestamp"]
+        }
+      }
+
+      # Converte payload_src/dst (base64 do JSON Go) para texto legível quando possível.
+      # payload_src_b64 e payload_dst_b64 são strings base64 explícitas geradas pelo proxy.
+      # payload_src_hex e payload_dst_hex são hex — pesquisáveis via regex no ES.
+      # Nenhuma transformação necessária: chegam como strings e são indexados diretamente.
+
+      # Adiciona tag para facilitar filtros no Kibana
+      if [port_mismatch] == true {
+        mutate {
+          add_tag => ["port_mismatch"]
+        }
+      }
+      if [ndpi_proto] == "Unknown" or [ndpi_proto] =~ /^Unknown/ {
+        mutate {
+          add_tag => ["ndpi_unknown"]
+        }
+      }
+      if [honeypot_error] =~ /no route/ {
+        mutate {
+          add_tag => ["no_route"]
+        }
+      }
+    }
     output {
       if [instance] == "proxy" {
         elasticsearch {

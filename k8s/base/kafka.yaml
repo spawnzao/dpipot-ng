@@ -48,6 +48,22 @@ spec:
               value: "168"
             - name: KAFKA_LOG_RETENTION_BYTES
               value: "10737418240"
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    until /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1; do
+                      sleep 3
+                    done
+                    sleep 5
+                    for topic in dpipot.events dpipot.events-application dpipot.events-ndpi; do
+                      /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
+                        --create --if-not-exists --topic "$topic" \
+                        --partitions 1 --replication-factor 1
+                    done
           resources:
             requests:
               cpu: 500m

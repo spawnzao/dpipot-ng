@@ -104,7 +104,7 @@ func generateHostKeys(log func(string, ...interface{})) error {
 		log("HostKeys: gerando chaves convincentes para %s (Org: %s, Local: %s/%s/%s)",
 			domain, org, city, state, country)
 	} else {
-		org = "dpipot Honeypot"
+		org = "DPIpot-NG Honeypot"
 		domain = "*.dpipot.local"
 		city = "Unknown"
 		state = "Unknown"

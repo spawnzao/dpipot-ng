@@ -739,8 +739,31 @@ greetingBuf = greetingBuf[:n]
 		ndpiLabel = "Unknown"
 	}
 
+	// Refinamento: quando o master protocol é genérico (Unknown) mas o app protocol
+	// é específico, usa o app protocol para roteamento. Isso cobre casos como
+	// Unknown.RDP onde o nDPI não classificou o transporte mas identificou a aplicação.
+	// Nota: TLS.X é tratado separadamente no bloco isTLS abaixo.
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" {
+		if appProtoFlow != "" && strings.ToUpper(appProtoFlow) != "UNKNOWN" {
+			log.Info("ndpiLabel refinado via appProtoFlow",
+				zap.String("master_was", ndpiLabel),
+				zap.String("app_proto", appProtoFlow))
+			ndpiLabel = appProtoFlow
+		}
+	}
+
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+
+	// Sem rota configurada: publica o evento com o payload já capturado (firstChunk)
+	// e não tenta dial para evitar erro desnecessário de conexão recusada.
+	if honeypotAddr == "" {
+		log.Info("sem rota para protocolo, capturando payload e encerrando",
+			zap.String("ndpi_label", ndpiLabel),
+			zap.Int("first_chunk_bytes", len(firstChunk)))
+		honeypotError = fmt.Sprintf("no route for protocol: %s", ndpiLabel)
+		goto publish
+	}
 
 	// Classificação HTTP por lista branca
 	if h.httpClassifier != nil && (ndpiLabel == "HTTP") && !isHttpAuth && !isHttpAuthTLS {
@@ -921,6 +944,24 @@ mitmLogger := func(format string, args ...interface{}) {
 				goto publish
 			}
 			ndpiLabel = "HTTP_AUTH"
+		}
+
+		// TLS.X: quando TLS é o transporte mas o app protocol é mais específico
+		// (ex: TLS.RDP, TLS.SSH, TLS.MQTT). Reroteia para o honeypot do app protocol
+		// mas mantém o MITM TLS para terminar a camada de transporte.
+		if !isHttpAuthTLS {
+			encapsulated := strings.ToUpper(appProtoFlow)
+			if encapsulated != "" && encapsulated != "UNKNOWN" && encapsulated != "TLS" {
+				if encAddr, _ := h.router.Resolve(appProtoFlow); encAddr != "" {
+					log.Info("TLS encapsulado detectado, roteando para honeypot do app protocol",
+						zap.String("transport", "TLS"),
+						zap.String("app_proto", appProtoFlow),
+						zap.String("old_honeypot", honeypotAddr),
+						zap.String("new_honeypot", encAddr))
+					honeypotAddr = encAddr
+					ndpiLabel = "TLS." + appProtoFlow // ex: "TLS.RDP", "TLS.SSH"
+				}
+			}
 		}
 
 		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
@@ -1158,6 +1199,9 @@ publish:
 	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
 	duration := time.Since(startTime)
 	durationMs := float64(duration.Nanoseconds()) / 1e6
+
+	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
+
 	event := &kafka.Event{
 		FlowID:        h.classifierFlowID,
 		TupleID:       h.tupleID,
@@ -1175,6 +1219,8 @@ publish:
 		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
 		DurationMs:    durationMs,
 		Instance:      "proxy",
+		PortMismatch:  portMismatch,
+		ExpectedProto: expectedProto,
 	}
 	h.producer.Publish(event)
 
