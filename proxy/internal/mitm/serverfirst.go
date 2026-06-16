@@ -1,8 +1,10 @@
 package mitm
 
 import (
+	"bytes"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/spawnzao/dpipot-ng/proxy/internal/kafka"
@@ -37,6 +39,15 @@ func HandleServerFirst(config ServerFirstConfig) error {
 
 	errChan := make(chan error, 2)
 
+	// Acumula o payload completo de cada direção — necessário para protocolos
+	// em modo-caractere (Telnet) onde cada Read() retorna 1 byte e o parser
+	// precisa do stream completo para extrair username/password corretamente.
+	var (
+		mu        sync.Mutex
+		clientBuf bytes.Buffer
+		serverBuf bytes.Buffer
+	)
+
 	go func() {
 		buf := make([]byte, 4096)
 		for {
@@ -44,27 +55,9 @@ func HandleServerFirst(config ServerFirstConfig) error {
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-
-				if config.OnEvent != nil {
-					for _, ev := range parser.ParseClientData(chunk, config.Logger) {
-						config.OnEvent(&kafka.Event{
-							FlowID:     config.FlowID,
-							TupleID:    config.TupleID,
-							Timestamp:  time.Now(),
-							SrcIP:      config.SrcIP,
-							SrcPort:    config.SrcPort,
-							DstIP:      config.DstIP,
-							DstPort:    config.DstPort,
-							NDPIProto:  config.NDPIProto,
-							NDPIApp:    string(ev.EventType),
-							AttackType: formatAttackType(ev),
-							Honeypot:   config.HoneypotAddr,
-							Instance:   "proxy",
-							PayloadSrc: chunk,
-						})
-					}
-				}
-
+				mu.Lock()
+				clientBuf.Write(chunk)
+				mu.Unlock()
 				if _, wErr := config.HoneypotConn.Write(chunk); wErr != nil {
 					errChan <- wErr
 					return
@@ -84,27 +77,9 @@ func HandleServerFirst(config ServerFirstConfig) error {
 			if n > 0 {
 				chunk := make([]byte, n)
 				copy(chunk, buf[:n])
-
-				if config.OnEvent != nil {
-					for _, ev := range parser.ParseServerData(chunk, config.Logger) {
-						config.OnEvent(&kafka.Event{
-							FlowID:     config.FlowID,
-							TupleID:    config.TupleID,
-							Timestamp:  time.Now(),
-							SrcIP:      config.SrcIP,
-							SrcPort:    config.SrcPort,
-							DstIP:      config.DstIP,
-							DstPort:    config.DstPort,
-							NDPIProto:  config.NDPIProto,
-							NDPIApp:    string(ev.EventType),
-							AttackType: formatAttackType(ev),
-							Honeypot:   config.HoneypotAddr,
-							Instance:   "proxy",
-							PayloadDst: chunk,
-						})
-					}
-				}
-
+				mu.Lock()
+				serverBuf.Write(chunk)
+				mu.Unlock()
 				if _, wErr := config.ClientConn.Write(chunk); wErr != nil {
 					errChan <- wErr
 					return
@@ -122,6 +97,62 @@ func HandleServerFirst(config ServerFirstConfig) error {
 
 	config.HoneypotConn.Close() //nolint:errcheck
 	config.ClientConn.Close()   //nolint:errcheck
+
+	// Parseia os buffers acumulados UMA VEZ após o fechamento da conexão.
+	// Isso garante que protocolos modo-caractere (Telnet) tenham o stream
+	// completo disponível para extrair username/password corretamente.
+	if config.OnEvent != nil {
+		mu.Lock()
+		srcData := clientBuf.Bytes()
+		dstData := serverBuf.Bytes()
+		mu.Unlock()
+
+		for _, ev := range parser.ParseClientData(srcData, config.Logger) {
+			ndpiApp := ndpiAppFromEvent(ev)
+			attackType := formatAttackType(ev)
+			if attackType == "" {
+				continue
+			}
+			config.OnEvent(&kafka.Event{
+				FlowID:     config.FlowID,
+				TupleID:    config.TupleID,
+				Timestamp:  time.Now(),
+				SrcIP:      config.SrcIP,
+				SrcPort:    config.SrcPort,
+				DstIP:      config.DstIP,
+				DstPort:    config.DstPort,
+				NDPIProto:  config.NDPIProto,
+				NDPIApp:    ndpiApp,
+				AttackType: attackType,
+				Honeypot:   config.HoneypotAddr,
+				Instance:   "proxy",
+				PayloadSrc: srcData,
+			})
+		}
+
+		for _, ev := range parser.ParseServerData(dstData, config.Logger) {
+			ndpiApp := ndpiAppFromEvent(ev)
+			attackType := formatAttackType(ev)
+			if attackType == "" {
+				continue
+			}
+			config.OnEvent(&kafka.Event{
+				FlowID:     config.FlowID,
+				TupleID:    config.TupleID,
+				Timestamp:  time.Now(),
+				SrcIP:      config.SrcIP,
+				SrcPort:    config.SrcPort,
+				DstIP:      config.DstIP,
+				DstPort:    config.DstPort,
+				NDPIProto:  config.NDPIProto,
+				NDPIApp:    ndpiApp,
+				AttackType: attackType,
+				Honeypot:   config.HoneypotAddr,
+				Instance:   "proxy",
+				PayloadDst: dstData,
+			})
+		}
+	}
 
 	return fmt.Errorf("serverfirst: %w", relayErr)
 }

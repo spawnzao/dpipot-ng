@@ -1,5 +1,22 @@
 package mitm
 
+// ndpiAppFromEvent mapeia o tipo de evento para o valor de ndpi_app no ES.
+// Usa "username"/"password" em vez de "credential" genérico para ser filtrável.
+func ndpiAppFromEvent(ev CaptureEvent) string {
+	switch ev.EventType {
+	case EventCredential:
+		if ev.Username != "" {
+			return "username"
+		}
+		if ev.Password != "" {
+			return "password"
+		}
+		return "credential"
+	default:
+		return string(ev.EventType)
+	}
+}
+
 func formatAttackType(ev CaptureEvent) string {
 	switch ev.EventType {
 	case EventCredential:
