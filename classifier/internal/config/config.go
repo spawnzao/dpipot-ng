@@ -33,7 +33,9 @@ func Load() (*Config, error) {
 	serverFirstPortsRaw := getEnv("SERVER_FIRST_PORTS", "")
 	cfg.ServerFirstPorts = parseServerFirstPorts(serverFirstPortsRaw)
 
-	portProtocolMapRaw := getEnv("PORT_PROTOCOL_MAP", "")
+	// PORT_PROTOCOL_MAP pode ser setado explicitamente; se não, deriva do SERVER_FIRST_PORTS
+	// (mesmo formato port:protocol), evitando duplicação de config no configmap.
+	portProtocolMapRaw := getEnv("PORT_PROTOCOL_MAP", serverFirstPortsRaw)
 	cfg.PortProtocolMap = parsePortProtocolMap(portProtocolMapRaw)
 
 	return cfg, nil
@@ -88,7 +90,9 @@ func parseServerFirstPorts(raw string) []uint16 {
 		if p == "" {
 			continue
 		}
-		port, err := strconv.ParseUint(p, 10, 16)
+		// Aceita tanto "21" quanto "21:FTP_CONTROL" — extrai só o número da porta
+		portStr := strings.SplitN(p, ":", 2)[0]
+		port, err := strconv.ParseUint(portStr, 10, 16)
 		if err != nil {
 			continue
 		}
