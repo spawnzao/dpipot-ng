@@ -105,6 +105,9 @@ func main() {
 	}
 	log.Info("HTTP classifier loaded successfully", zap.String("path", path))
 
+	// carrega mapa de portas bem conhecidas a partir do /etc/services
+	proxypkg.InitPortMap("/etc/services")
+
 	// inicializa servidor TCP
 	server := proxypkg.NewServer(
 		cfg.ListenAddr,
@@ -144,8 +147,14 @@ func main() {
 		errCh <- healthServer.Start()
 	}()
 
-	sig := <-sigCh
-	log.Info("sinal recebido, encerrando", zap.String("signal", sig.String()))
+	select {
+	case sig := <-sigCh:
+		log.Info("sinal recebido, encerrando", zap.String("signal", sig.String()))
+	case err := <-errCh:
+		if err != nil {
+			log.Fatal("serviço crítico falhou, encerrando processo", zap.Error(err))
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

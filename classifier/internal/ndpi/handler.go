@@ -69,7 +69,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		portProtocolMap:  cfg.PortProtocolMap,
 	}
 
-	h.startNdpiFlowsCleanup(2 * time.Minute)
+	h.startNdpiFlowsCleanup(30 * time.Second)
 
 	if h.logger != nil {
 		h.logger.Info("nDPI handler initialized")
@@ -337,16 +337,15 @@ func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
 }
 
 func (h *Handler) cleanupNdpiFlows() {
-	// Fase 2: libera C heap dos flows removidos no ciclo ANTERIOR.
-	// Garantia de segurança: 2 minutos já passaram desde a remoção do sync.Map,
-	// tempo muito superior ao de qualquer PacketProcessing em curso (µs).
+	// Fase 2: libera C heap dos flows removidos no ciclo ANTERIOR (30s atrás).
+	// Garantia de segurança: 30s >> tempo de qualquer PacketProcessing em curso (µs).
 	freed := len(h.pendingFree)
 	for _, f := range h.pendingFree {
 		f.Close()
 	}
 	h.pendingFree = h.pendingFree[:0]
 
-	// Fase 1: evicta flows que saíram da flowTable e os enfileira para free.
+	// Fase 1: evicta flows nDPI cujo tupleID saiu da flowTable.
 	evicted := 0
 	h.ndpiFlows.Range(func(key, value any) bool {
 		tupleID := key.(string)
@@ -359,8 +358,24 @@ func (h *Handler) cleanupNdpiFlows() {
 		return true
 	})
 
-	if h.logger != nil && (evicted > 0 || freed > 0) {
-		h.logger.Info("nDPI flows cleanup", zap.Int("evicted", evicted), zap.Int("freed", freed))
+	// Fase 1b: limpa UUIDs de flows server-first (não têm entrada em ndpiFlows,
+	// portanto o loop acima nunca os vê — sem isso, flowUUIDs vaza para sempre).
+	uuidsCleaned := 0
+	h.flowUUIDs.Range(func(key, value any) bool {
+		tupleID := key.(string)
+		if _, found := h.flowTable.Get(tupleID); !found {
+			h.flowUUIDs.Delete(tupleID)
+			uuidsCleaned++
+		}
+		return true
+	})
+
+	if h.logger != nil && (evicted > 0 || freed > 0 || uuidsCleaned > 0) {
+		h.logger.Info("nDPI flows cleanup",
+			zap.Int("evicted", evicted),
+			zap.Int("freed", freed),
+			zap.Int("uuids_cleaned", uuidsCleaned),
+		)
 	}
 }
 

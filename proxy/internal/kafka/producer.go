@@ -1,6 +1,8 @@
 package kafka
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
@@ -24,12 +26,31 @@ type Event struct {
 	HoneypotError string    `json:"honeypot_error"`
 	PayloadSrc    []byte    `json:"payload_src"`
 	PayloadDst    []byte    `json:"payload_dst"`
+	PayloadSrcHex string    `json:"payload_src_hex,omitempty"` // hex do payload cliente→honeypot (regex no ES)
+	PayloadDstHex string    `json:"payload_dst_hex,omitempty"` // hex do payload honeypot→cliente
+	PayloadSrcB64 string    `json:"payload_src_b64,omitempty"` // base64 explícito; compatível com decode_base64 do ES
+	PayloadDstB64 string    `json:"payload_dst_b64,omitempty"` // base64 explícito
 	PayloadSize   int64     `json:"payload_size"`
 	DurationMs    float64   `json:"duration_ms,omitempty"`
 	AttackType    string    `json:"attack_type,omitempty"`
 	CVE           string    `json:"cve,omitempty"`
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
+	PortMismatch  bool      `json:"port_mismatch,omitempty"`   // true: ndpi_proto ≠ protocolo esperado para dst_port
+	ExpectedProto string    `json:"expected_proto,omitempty"`  // protocolo esperado pela porta (ex: "SSH" para 22)
+}
+
+// enrichPayload preenche os campos *Hex e *B64 a partir dos bytes brutos.
+// Chamado automaticamente em drain() — nenhum callsite precisa ser alterado.
+func enrichPayload(e *Event) {
+	if len(e.PayloadSrc) > 0 {
+		e.PayloadSrcHex = hex.EncodeToString(e.PayloadSrc)
+		e.PayloadSrcB64 = base64.StdEncoding.EncodeToString(e.PayloadSrc)
+	}
+	if len(e.PayloadDst) > 0 {
+		e.PayloadDstHex = hex.EncodeToString(e.PayloadDst)
+		e.PayloadDstB64 = base64.StdEncoding.EncodeToString(e.PayloadDst)
+	}
 }
 
 type Producer struct {
@@ -115,6 +136,7 @@ func (p *Producer) drain() {
 	defer close(p.done)
 
 	for event := range p.events {
+		enrichPayload(event)
 		data, err := json.Marshal(event)
 		if err != nil {
 			p.log.Error("marshal evento kafka", zap.Error(err))
