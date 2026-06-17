@@ -236,17 +236,24 @@ func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...inter
 		if line == "" {
 			continue
 		}
-		if credIdx == 0 {
+		switch credIdx {
+		case 0:
 			events = append(events, CaptureEvent{
 				EventType: EventCredential,
 				Direction: "client->honeypot",
 				Username:  line,
 			})
-		} else {
+		case 1:
 			events = append(events, CaptureEvent{
 				EventType: EventCredential,
 				Direction: "client->honeypot",
 				Password:  line,
+			})
+		default:
+			events = append(events, CaptureEvent{
+				EventType: EventCommand,
+				Direction: "client->honeypot",
+				Command:   line,
 			})
 		}
 		credIdx++
