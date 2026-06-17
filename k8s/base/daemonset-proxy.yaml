@@ -94,8 +94,8 @@ spec:
       containers:
         # ── container: TCP proxy (Go) com nDPI integrado via CGO ─────────────────────
         - name: proxy
-          image: ghcr.io/spawnzao/dpipot-proxy:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/spawnzao/dpipot-proxy:release-0.2
+          imagePullPolicy: Always
           env:
             - name: CLASSIFIER_ENABLED
               value: "true"
