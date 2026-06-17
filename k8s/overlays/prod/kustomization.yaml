@@ -12,7 +12,7 @@ resources:
 # imagens com tag latest
 images:
   - name: ghcr.io/spawnzao/dpipot-proxy
-    newTag: "latest"
+    newTag: "release-0.2"
   - name: ghcr.io/spawnzao/dpipot-classifier
     newTag: "latest"
 
