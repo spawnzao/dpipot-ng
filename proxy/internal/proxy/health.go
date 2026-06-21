@@ -90,6 +90,22 @@ func (h *HealthServer) handleReady(w http.ResponseWriter, r *http.Request) {
 
 func (h *HealthServer) handleLive(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+
+	// Last-resort liveness check: if Kafka has had zero confirmed deliveries for
+	// >4 min (watchdog reconnect attempts failed), fail liveness so Kubernetes
+	// restarts the pod and the watchdog gets a fresh start with new DNS resolution.
+	if h.producer != nil && !h.producer.IsHealthy() {
+		since := time.Since(h.producer.LastOK())
+		if since > 4*time.Minute {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":          "unhealthy",
+				"kafka_down_secs": int(since.Seconds()),
+			})
+			return
+		}
+	}
+
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "alive"})
 }
