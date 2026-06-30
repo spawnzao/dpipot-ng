@@ -3,6 +3,7 @@ package kafka
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -207,6 +208,16 @@ func (p *Producer) watchdog() {
 				)
 				p.reconnect()
 			}
+			// Escalação final: se reconexões sucessivas falharam por >10 min, encerra o
+			// processo para que o K8s reinicie o container com uma conexão completamente nova.
+			// Só escalona se houver erros ativos (errs>0) para não sair por idle genuíno.
+			if since > 10*time.Minute && errs > 0 {
+				p.log.Error("kafka watchdog: sem entrega confirmada há >10min, encerrando para reinicialização pelo K8s",
+					zap.Duration("since_last_ok", since),
+					zap.Int64("consecutive_errors", errs),
+				)
+				os.Exit(1)
+			}
 		}
 	}
 }
@@ -234,15 +245,15 @@ func (p *Producer) reconnect() {
 	p.inner = newInner
 	p.mu.Unlock()
 
-	// Reset counters optimistically; if the new connection also fails,
-	// errCount will accumulate again and trigger another reconnect.
+	// Reset only errCount so the watchdog can detect if the new producer also fails.
+	// lastOK is NOT reset here — only a confirmed delivery callback should update it,
+	// so the 10-minute escalation threshold correctly measures time since last real delivery.
 	p.errCount.Store(0)
-	p.lastOK.Store(time.Now().Unix())
 	p.healthy.Store(true)
 
 	// Drain and close the old producer — this also unblocks handleDeliveryFor(old).
 	old.Flush(3000)
 	old.Close()
 
-	p.log.Info("kafka watchdog: producer reconectado com sucesso")
+	p.log.Info("kafka watchdog: novo producer criado, aguardando confirmação de entrega")
 }

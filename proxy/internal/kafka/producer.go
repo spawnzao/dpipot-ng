@@ -272,15 +272,15 @@ func (p *Producer) reconnect() {
 	p.inner = newInner
 	p.mu.Unlock()
 
-	// Reset counters optimistically; if the new connection also fails,
-	// errCount will accumulate again and trigger another reconnect.
+	// Reset only errCount so the watchdog can detect if the new producer also fails.
+	// lastOK is NOT reset here — only a confirmed delivery callback should update it,
+	// so the liveness probe can detect persistent failures even across reconnects.
 	p.errCount.Store(0)
-	p.lastOK.Store(time.Now().Unix())
 	p.healthy.Store(true)
 
 	// Drain and close the old producer — this also unblocks handleDeliveryFor(old).
 	old.Flush(3000)
 	old.Close()
 
-	p.log.Info("kafka watchdog: producer reconectado com sucesso")
+	p.log.Info("kafka watchdog: novo producer criado, aguardando confirmação de entrega")
 }
