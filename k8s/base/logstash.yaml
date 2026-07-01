@@ -40,7 +40,7 @@ data:
       # Nenhuma transformação necessária: chegam como strings e são indexados diretamente.
 
       # Adiciona tag para facilitar filtros no Kibana
-      if [port_mismatch] == true {
+      if [port_mismatch] {
         mutate {
           add_tag => ["port_mismatch"]
         }
