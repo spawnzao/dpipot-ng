@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: dpipot
-  labels:
-    app.kubernetes.io/name: dpipot

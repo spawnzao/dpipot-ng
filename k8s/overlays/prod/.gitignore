@@ -1,5 +1,0 @@
-# env local
-.env
-
-# secrets (contêm senhas敏感性)
-secrets/
