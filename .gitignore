@@ -53,3 +53,4 @@ cmd
 # Dev tools and tests (not deployed)
 tools/
 test/
+k8s/chart/values-vm.yaml

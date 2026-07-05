@@ -5,6 +5,7 @@ metadata:
   namespace: dpipot
 data:
   KAFKA: {{ .Values.kafka.enabled | toString | quote }}
+  CLASSIFIER_INTERFACE: {{ .Values.network.interface | quote }}
   {{- range $k, $v := .Values.config }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}

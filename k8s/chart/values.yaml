@@ -8,6 +8,9 @@ image:
     tag: latest
     pullPolicy: IfNotPresent
 
+network:
+  interface: "ens192"
+
 kafka:
   enabled: true
   persistence:
@@ -64,7 +67,6 @@ resources:
 config:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
   PROXY_TIMEOUT: "60s"
-  CLASSIFIER_INTERFACE: "ens192"
   FLOWTRACKER_PORT: "9090"
   FLOWTRACKER_TTL: "60s"
   HONEYPOT_ROUTES: "HTTP=wordpot-svc:80, TLS=wordpot-svc:80, HTTP_AUTH=heralding:80, HTTP_SUSPECT=galah-svc:8080, SSH=cowrie-svc:22, FTP_CONTROL=heralding:21, MYSQL=heralding:3306, TELNET=heralding:23, MAIL_SMTP=heralding:25, MAIL_SMTPS=heralding:25, MAIL_POP=heralding:110, MAIL_POPS=heralding:110, MAIL_IMAP=heralding:143, MAIL_IMAPS=heralding:143, RDP=heralding:3389, PostgreSQL=heralding:5432, VNC=heralding:5900"

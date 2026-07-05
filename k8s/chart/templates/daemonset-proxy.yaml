@@ -51,8 +51,8 @@ spec:
               iptables -t mangle -F TEST-TPROXY 2>/dev/null || true
               iptables -t mangle -X TEST-TPROXY 2>/dev/null || true
               iptables -t mangle -N TEST-TPROXY || true
-              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j MARK --set-mark 0x1
-              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
+              iptables -t mangle -A TEST-TPROXY -i {{ .Values.network.interface }} -p tcp -j MARK --set-mark 0x1
+              iptables -t mangle -A TEST-TPROXY -i {{ .Values.network.interface }} -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
               iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
               iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
 
