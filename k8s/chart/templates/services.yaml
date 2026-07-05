@@ -50,17 +50,12 @@ metadata:
   labels:
     app: kafka
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: kafka
   ports:
     - name: kafka-internal
       port: 9092
       targetPort: 9092
-      protocol: TCP
-    - name: kafka-external
-      port: 9094
-      targetPort: 9094
-      nodePort: 30092
       protocol: TCP
 {{- end }}

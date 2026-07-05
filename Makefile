@@ -72,14 +72,14 @@ test-tproxy:
 # ===========================================
 
 addons:
-	microk8s enable dns hostpath-storage ingress
+	microk8s enable dns hostpath-storage helm3
 
 deploy-dev:
-	cd k8s/base && kubectl apply -k .
+	microk8s helm upgrade --install dpipot k8s/chart/ --namespace $(NAMESPACE) --create-namespace
 	kubectl rollout status daemonset/dpipot-proxy -n $(NAMESPACE) --timeout=120s
 
 deploy-prod:
-	cd k8s/overlays/prod && kubectl apply -k .
+	microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-prod.yaml --namespace $(NAMESPACE) --create-namespace
 	kubectl rollout status daemonset/dpipot-proxy -n $(NAMESPACE) --timeout=120s
 
 update:
@@ -91,8 +91,8 @@ status:
 logs-proxy:
 	kubectl logs -n $(NAMESPACE) -l app=dpipot-proxy -c proxy -f
 
-logs-ndpi:
-	kubectl logs -n $(NAMESPACE) -l app=dpipot-proxy -c ndpi-classifier -f
+logs-classifier:
+	kubectl logs -n $(NAMESPACE) -l app=dpipot-proxy -c classifier -f
 
 logs-kafka:
 	kubectl logs -n $(NAMESPACE) -l app=kafka -f
@@ -122,12 +122,12 @@ help:
 	@echo "  make test-tproxy       Testar TPROXY"
 	@echo ""
 	@echo "Kubernetes:"
-	@echo "  make addons            Habilitar addons MicroK8s"
-	@echo "  make deploy-dev        Deploy dev"
-	@echo "  make deploy-prod      Deploy prod"
+	@echo "  make addons            Habilitar addons MicroK8s (dns, hostpath-storage, helm3)"
+	@echo "  make deploy-dev        Deploy com valores padrão (Helm)"
+	@echo "  make deploy-prod       Deploy prod (Helm, values-prod.yaml)"
 	@echo "  make status            Status pods"
 	@echo "  make logs-proxy        Logs proxy"
-	@echo "  make logs-ndpi         Logs nDPI"
+	@echo "  make logs-classifier   Logs classifier (nDPI)"
 	@echo ""
 	@echo "Util:"
 	@echo "  make clean             Limpar builds"
