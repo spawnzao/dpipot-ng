@@ -63,6 +63,29 @@ jobs:
             echo "target=prod" >> $GITHUB_OUTPUT
           fi
 
+      - name: adota recursos existentes para o Helm
+        run: |
+          NS=dpipot
+          RELEASE=dpipot
+          # Recursos namespaced
+          for kind in networkpolicies deployments daemonsets services configmaps serviceaccounts persistentvolumeclaims; do
+            microk8s kubectl label --overwrite -n $NS $kind --all \
+              app.kubernetes.io/managed-by=Helm 2>/dev/null || true
+            microk8s kubectl annotate --overwrite -n $NS $kind --all \
+              meta.helm.sh/release-name=$RELEASE \
+              meta.helm.sh/release-namespace=$NS 2>/dev/null || true
+          done
+          # Recursos cluster-scoped (filebeat RBAC)
+          for name in filebeat; do
+            for kind in clusterroles clusterrolebindings; do
+              microk8s kubectl label --overwrite $kind $name \
+                app.kubernetes.io/managed-by=Helm 2>/dev/null || true
+              microk8s kubectl annotate --overwrite $kind $name \
+                meta.helm.sh/release-name=$RELEASE \
+                meta.helm.sh/release-namespace=$NS 2>/dev/null || true
+            done
+          done
+
       - name: aplica manifests no microk8s
         run: |
           microk8s helm upgrade --install dpipot k8s/chart/ \
