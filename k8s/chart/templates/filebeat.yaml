@@ -115,11 +115,11 @@ spec:
               readOnly: true
           resources:
             requests:
-              cpu: 100m
-              memory: 100Mi
+              cpu: {{ .Values.resources.filebeat.requests.cpu }}
+              memory: {{ .Values.resources.filebeat.requests.memory }}
             limits:
-              cpu: 500m
-              memory: 200Mi
+              cpu: {{ .Values.resources.filebeat.limits.cpu }}
+              memory: {{ .Values.resources.filebeat.limits.memory }}
           securityContext:
             runAsUser: 0
       volumes:

@@ -24,6 +24,8 @@ metadata:
     app: kafka
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: kafka
@@ -65,22 +67,20 @@ spec:
               value: "10737418240"
             - name: KAFKA_LOG_DIRS
               value: "/var/lib/kafka/data"
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    until /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1; do
-                      sleep 3
-                    done
-                    sleep 5
-                    for topic in dpipot.events-application dpipot.events-ndpi; do
-                      /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 \
-                        --create --if-not-exists --topic "$topic" \
-                        --partitions 1 --replication-factor 1
-                    done
+          readinessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: 9092
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
           resources:
             requests:
               cpu: {{ .Values.resources.kafka.requests.cpu }}

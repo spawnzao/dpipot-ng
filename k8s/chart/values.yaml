@@ -63,6 +63,13 @@ resources:
     limits:
       cpu: 1000m
       memory: 2Gi
+  filebeat:
+    requests:
+      cpu: 100m
+      memory: 100Mi
+    limits:
+      cpu: 500m
+      memory: 400Mi
 
 config:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
