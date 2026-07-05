@@ -1,8 +1,8 @@
 image:
   proxy:
-    tag: release-0.2
+    tag: release-0.3
   classifier:
-    tag: release-0.2
+    tag: release-0.3
 
 kafka:
   persistence:

@@ -278,7 +278,7 @@ The chart ships four profiles selectable via `-f values-<profile>.yaml`. Each pr
 | Profile | Kafka | Filebeat | Logstash | Image tags | Kafka PVC |
 |---------|-------|----------|----------|------------|-----------|
 | _(default)_ | ✅ | ✅ | ✅ | `latest` | emptyDir |
-| `prod` | ✅ | ✅ | ✅ | `release-0.2` | 100Gi |
+| `prod` | ✅ | ✅ | ✅ | `release-0.3` | 100Gi |
 | `sensor` | ✅ | ❌ | kafka only | `latest` | emptyDir |
 | `light` | ❌ | ❌ | ❌ | `latest` | — |
 | `debug` | ❌ | ✅ | filebeat only | `latest` | — |
