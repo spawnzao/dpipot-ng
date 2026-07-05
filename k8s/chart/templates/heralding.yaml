@@ -7,7 +7,7 @@ metadata:
   namespace: dpipot
 data:
   heralding.yml: |
-    public_ip_as_destination_ip: true
+    public_ip_as_destination_ip: false
     bind_host: 0.0.0.0
     activity_logging:
       file:
