@@ -1,0 +1,62 @@
+{{- if .Values.honeypots.cowrie.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: dpipot
+  labels:
+    app: cowrie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cowrie
+  template:
+    metadata:
+      labels:
+        app: cowrie
+    spec:
+      containers:
+        - name: cowrie
+          image: cowrie/cowrie:latest
+          ports:
+            - containerPort: 2222
+              protocol: TCP
+            - containerPort: 2323
+              protocol: TCP
+          env:
+            - name: COWRIE_TELNET_ENABLED
+              value: "yes"
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /home/cowrie/var/log/cowrie
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+        - name: cowrie-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/cowrie.json ]; do sleep 1; done
+              exec tail -n +1 -F /logs/cowrie.json
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /logs
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: cowrie-logs
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,59 @@
+{{- if .Values.honeypots.wordpot.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpot
+  namespace: dpipot
+  labels:
+    app: wordpot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpot
+  template:
+    metadata:
+      labels:
+        app: wordpot
+    spec:
+      securityContext:
+        runAsUser: 0
+      containers:
+        - name: wordpot
+          image: dtagdevsec/wordpot:24.04.1
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          volumeMounts:
+            - name: wordpot-logs
+              mountPath: /opt/wordpot/logs
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+        - name: wordpot-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/wordpot.log ]; do sleep 1; done
+              exec tail -n +1 -F /logs/wordpot.log
+          volumeMounts:
+            - name: wordpot-logs
+              mountPath: /logs
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+      volumes:
+        - name: wordpot-logs
+          emptyDir: {}
+{{- end }}

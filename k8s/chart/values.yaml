@@ -1,0 +1,85 @@
+image:
+  proxy:
+    repository: ghcr.io/spawnzao/dpipot-proxy
+    tag: latest
+    pullPolicy: Always
+  classifier:
+    repository: ghcr.io/spawnzao/dpipot-classifier
+    tag: latest
+    pullPolicy: IfNotPresent
+
+kafka:
+  enabled: true
+  persistence:
+    enabled: false
+    size: 10Gi
+    storageClass: microk8s-hostpath
+
+filebeat:
+  enabled: true
+
+honeypots:
+  cowrie:
+    enabled: true
+  wordpot:
+    enabled: true
+  heralding:
+    enabled: true
+  galah:
+    enabled: true
+    persistence:
+      size: 10Gi
+      storageClass: microk8s-hostpath
+
+resources:
+  proxy:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 2000m
+      memory: 512Mi
+  classifier:
+    requests:
+      cpu: 200m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  logstash:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+  kafka:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+config:
+  PROXY_LISTEN_ADDR: "0.0.0.0:8080"
+  PROXY_TIMEOUT: "60s"
+  CLASSIFIER_INTERFACE: "ens192"
+  FLOWTRACKER_PORT: "9090"
+  FLOWTRACKER_TTL: "60s"
+  HONEYPOT_ROUTES: "HTTP=wordpot-svc:80, TLS=wordpot-svc:80, HTTP_AUTH=heralding:80, HTTP_SUSPECT=galah-svc:8080, SSH=cowrie-svc:22, FTP_CONTROL=heralding:21, MYSQL=heralding:3306, TELNET=heralding:23, MAIL_SMTP=heralding:25, MAIL_SMTPS=heralding:25, MAIL_POP=heralding:110, MAIL_POPS=heralding:110, MAIL_IMAP=heralding:143, MAIL_IMAPS=heralding:143, RDP=heralding:3389, PostgreSQL=heralding:5432, VNC=heralding:5900"
+  DEFAULT_ROUTE: "heralding:80"
+  KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
+  KAFKA_TOPIC: "dpipot.events"
+  MAX_PAYLOAD_BYTES: "65536"
+  SSH_INPUT_BUF_SIZE: "4096"
+  SSH_OUTPUT_BUF_SIZE: "65536"
+  LOG_LEVEL: "debug"
+  MAX_CONNECTIONS: "10000"
+  MAX_CONNECTIONS_PER_IP: "200"
+  SERVER_FIRST_PORTS: "21:FTP_CONTROL,23:TELNET,25:MAIL_SMTP,110:MAIL_POP,143:MAIL_IMAP,3306:MYSQL,5900:VNC"
+  SERVER_FIRST_PORTS_TLS: "993:MAIL_IMAPS,995:MAIL_POPS,465:MAIL_SMTPS"
+  HTTP_AUTH_PORTS: "8161,8080,4848,8983,7474,3000,8888,15672,9000,2375,8069,8181,61616,6379,9300"
+  HTTP_AUTH_PORTS_TLS: "8443,7687,5601,9090,2376,10250,9200"
+  TLS_USE_REALISTIC: "true"
+  HTTP_CLASSIFIER_CONFIG: "/etc/dpipot/legitimate_paths.yaml"

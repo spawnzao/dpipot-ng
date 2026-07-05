@@ -1,0 +1,154 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dpipot-proxy
+  namespace: dpipot
+  labels:
+    app: dpipot-proxy
+spec:
+  selector:
+    matchLabels:
+      app: dpipot-proxy
+  template:
+    metadata:
+      labels:
+        app: dpipot-proxy
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      initContainers:
+        - name: iptables-setup
+          image: alpine:3.19
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+
+              apk add --no-cache iptables iproute2
+
+              sysctl -w net.ipv4.ip_forward=1
+              sysctl -w net.ipv4.conf.all.rp_filter=0
+              sysctl -w net.ipv4.conf.default.rp_filter=0
+              sysctl -w net.ipv4.conf.all.route_localnet=1
+              sysctl -w net.ipv4.conf.default.route_localnet=1
+
+              echo "=== Configurando ip rule e route ==="
+              mkdir -p /etc/iproute2
+              grep -q "100" /etc/iproute2/rt_tables || echo "100 tproxy" >> /etc/iproute2/rt_tables
+
+              ip rule del fwmark 0x1 lookup 100 2>&1 || true
+              ip rule add fwmark 0x1 lookup 100 2>&1 || echo "FALHA: ip rule add"
+              ip rule list | grep fwmark || echo "FALHA: regra nao encontrada"
+
+              ip route del local default dev lo table 100 2>&1 || true
+              ip route add local default dev lo table 100 2>&1 || echo "FALHA: ip route add"
+              ip route list table 100 2>&1 || echo "FALHA: rota nao encontrada"
+
+              iptables -t mangle -F TEST-TPROXY 2>/dev/null || true
+              iptables -t mangle -X TEST-TPROXY 2>/dev/null || true
+              iptables -t mangle -N TEST-TPROXY || true
+              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j MARK --set-mark 0x1
+              iptables -t mangle -A TEST-TPROXY -i ens192 -p tcp -j TPROXY --tproxy-mark 0x1/0x1 --on-port 8080
+              iptables -t mangle -D PREROUTING -p tcp -j TEST-TPROXY 2>/dev/null || true
+              iptables -t mangle -A PREROUTING -p tcp -j TEST-TPROXY
+
+              echo "iptables TPROXY: todas as portas TCP -> proxy:8080 (apenas ens192)"
+              iptables -t mangle -L TEST-TPROXY -n || true
+              echo "Init concluído!"
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+              drop:
+                - ALL
+            privileged: true
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            runAsNonRoot: false
+            runAsUser: 0
+
+      containers:
+        - name: proxy
+          image: {{ .Values.image.proxy.repository }}:{{ .Values.image.proxy.tag }}
+          imagePullPolicy: {{ .Values.image.proxy.pullPolicy }}
+          env:
+            - name: CLASSIFIER_ENABLED
+              value: "true"
+          envFrom:
+            - configMapRef:
+                name: dpipot-config
+          ports:
+            - name: proxy
+              containerPort: 8080
+              hostPort: 8080
+              protocol: TCP
+            - name: health
+              containerPort: 8081
+              protocol: TCP
+          resources:
+            requests:
+              cpu: {{ .Values.resources.proxy.requests.cpu }}
+              memory: {{ .Values.resources.proxy.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.proxy.limits.cpu }}
+              memory: {{ .Values.resources.proxy.limits.memory }}
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 30
+            failureThreshold: 6
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+
+        - name: classifier
+          image: {{ .Values.image.classifier.repository }}:{{ .Values.image.classifier.tag }}
+          imagePullPolicy: {{ .Values.image.classifier.pullPolicy }}
+          envFrom:
+            - configMapRef:
+                name: dpipot-config
+          resources:
+            requests:
+              cpu: {{ .Values.resources.classifier.requests.cpu }}
+              memory: {{ .Values.resources.classifier.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.classifier.limits.cpu }}
+              memory: {{ .Values.resources.classifier.limits.memory }}
+          securityContext:
+            capabilities:
+              add:
+                - NET_RAW
+                - NET_ADMIN
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: false
+            runAsUser: 0
+
+      volumes:
+        - name: ndpi-socket
+          emptyDir: {}
+
+      terminationGracePeriodSeconds: 30
+
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule

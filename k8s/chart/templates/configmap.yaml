@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dpipot-config
+  namespace: dpipot
+data:
+  KAFKA: {{ .Values.kafka.enabled | toString | quote }}
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}

@@ -1,0 +1,5 @@
+kafka:
+  enabled: true
+
+filebeat:
+  enabled: false

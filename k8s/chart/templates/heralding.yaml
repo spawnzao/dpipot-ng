@@ -1,0 +1,311 @@
+{{- if .Values.honeypots.heralding.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heralding-config
+  namespace: dpipot
+data:
+  heralding.yml: |
+    public_ip_as_destination_ip: true
+    bind_host: 0.0.0.0
+    activity_logging:
+      file:
+        enabled: true
+        session_csv_log_file: "/var/log/heralding/session.csv"
+        session_json_log_file: "/var/log/heralding/log_session.json"
+        authentication_log_file: "/var/log/heralding/auth.csv"
+      syslog:
+        enabled: false
+      hpfeeds:
+        enabled: false
+        session_channel: "heralding.session"
+        auth_channel: "heralding.auth"
+        host:
+        port: 20000
+        ident:
+        secret:
+      curiosum:
+        enabled: false
+        port: 23400
+    hash_cracker:
+      enabled: false
+      wordlist_file: ''
+    capabilities:
+      ftp:
+        enabled: true
+        port: 21
+        timeout: 30
+        protocol_specific_data:
+          max_attempts: 3
+          banner: "Microsoft FTP Server"
+          syst_type: "Windows-NT"
+      ssh:
+        enabled: true
+        port: 22
+        timeout: 30
+        protocol_specific_data:
+          banner: "SSH-2.0-OpenSSH_6.6.1p1 Ubuntu-2ubuntu2.8"
+      telnet:
+        enabled: true
+        port: 23
+        timeout: 30
+        protocol_specific_data:
+          max_attempts: 3
+      smtp:
+        enabled: true
+        port: 25
+        timeout: 30
+        protocol_specific_data:
+          banner: "Microsoft ESMTP MAIL service ready"
+          fqdn: ""
+      http:
+        enabled: true
+        port: 80
+        timeout: 30
+        protocol_specific_data:
+          banner: ""
+      pop3:
+        enabled: true
+        port: 110
+        timeout: 30
+        protocol_specific_data:
+          max_attempts: 3
+          banner: "+OK POP3 server ready"
+      imap:
+        enabled: true
+        port: 143
+        timeout: 30
+        protocol_specific_data:
+          max_attempts: 3
+          banner: "* OK IMAP4rev1 Server Ready"
+      mysql:
+        enabled: true
+        port: 3306
+        timeout: 30
+      rdp:
+        enabled: true
+        port: 3389
+        timeout: 30
+        protocol_specific_data:
+          banner: ""
+          cert:
+            common_name: "*"
+            country: "US"
+            state: None
+            locality: None
+            organization: None
+            organizational_unit: None
+            valid_days: 365
+            serial_number: 0
+      postgresql:
+        enabled: true
+        port: 5432
+        timeout: 30
+      vnc:
+        enabled: true
+        port: 5900
+        timeout: 30
+      pop3s:
+        enabled: false
+        port: 995
+      imaps:
+        enabled: false
+        port: 993
+        timeout: 30
+      https:
+        enabled: false
+        port: 443
+        timeout: 30
+      smtps:
+        enabled: false
+        port: 465
+        timeout: 30
+      socks5:
+        enabled: false
+        port: 1080
+        timeout: 30
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: heralding-wordlist
+  namespace: dpipot
+data:
+  wordlist.txt: |
+    password
+    admin
+    root
+    123456
+    qwerty
+    letmein
+    welcome
+    123456789
+    password1
+    abc123
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: heralding
+  namespace: dpipot
+  labels:
+    app: heralding
+spec:
+  type: ClusterIP
+  selector:
+    app: heralding
+  ports:
+    - name: ftp
+      port: 21
+      targetPort: 21
+      protocol: TCP
+    - name: ssh
+      port: 22
+      targetPort: 22
+      protocol: TCP
+    - name: telnet
+      port: 23
+      targetPort: 23
+      protocol: TCP
+    - name: smtp
+      port: 25
+      targetPort: 25
+      protocol: TCP
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: pop3
+      port: 110
+      targetPort: 110
+      protocol: TCP
+    - name: imap
+      port: 143
+      targetPort: 143
+      protocol: TCP
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+      protocol: TCP
+    - name: rdp
+      port: 3389
+      targetPort: 3389
+      protocol: TCP
+    - name: postgresql
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+    - name: vnc
+      port: 5900
+      targetPort: 5900
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: heralding
+  namespace: dpipot
+  labels:
+    app: heralding
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: heralding
+  template:
+    metadata:
+      labels:
+        app: heralding
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+      containers:
+        - name: heralding
+          image: dtagdevsec/heralding:24.04.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - /usr/bin/heralding -c /etc/heralding/heralding.yml -l /var/log/heralding/heralding.log
+          ports:
+            - name: ftp
+              containerPort: 21
+              protocol: TCP
+            - name: ssh
+              containerPort: 22
+              protocol: TCP
+            - name: telnet
+              containerPort: 23
+              protocol: TCP
+            - name: smtp
+              containerPort: 25
+              protocol: TCP
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: pop3
+              containerPort: 110
+              protocol: TCP
+            - name: imap
+              containerPort: 143
+              protocol: TCP
+            - name: mysql
+              containerPort: 3306
+              protocol: TCP
+            - name: rdp
+              containerPort: 3389
+              protocol: TCP
+            - name: postgresql
+              containerPort: 5432
+              protocol: TCP
+            - name: vnc
+              containerPort: 5900
+              protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 512Mi
+          securityContext:
+            readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+          volumeMounts:
+            - name: config
+              mountPath: /etc/heralding
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/heralding
+            - name: tmp
+              mountPath: /tmp/heralding
+          livenessProbe:
+            tcpSocket:
+              port: 21
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            tcpSocket:
+              port: 21
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: config
+          configMap:
+            name: heralding-config
+        - name: logs
+          emptyDir: {}
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+{{- end }}
