@@ -184,7 +184,7 @@ kubectl apply -f k8s/secrets/logstash-secrets.yaml
 kubectl apply -f k8s/secrets/galah-secrets.yaml
 ```
 
-O `elastic-certs` (CA cert do Elasticsearch) já está embutido como segundo documento YAML dentro de `logstash-secrets.yaml` — o `kubectl apply` acima cria os dois secrets de uma vez. O único secret que precisa ser criado manualmente é o `ghcr-secret` (pull secret do GitHub Container Registry), que é específico do cluster.
+`elastic-certs` (the Elasticsearch CA cert) is already embedded as a second YAML document inside `logstash-secrets.yaml` — the `kubectl apply` above creates both secrets at once. The only secret that requires manual creation is `ghcr-secret` (GitHub Container Registry pull secret), which is cluster-specific.
 
 > The `.example` files are committed to the repository as templates. The real secret files are listed in `k8s/secrets/.gitignore` and must never be committed.
 
