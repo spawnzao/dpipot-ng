@@ -153,25 +153,20 @@ k8s/
 │       ├── services.yaml
 │       └── network-policy.yaml
 └── secrets/
-    ├── proxy-secrets.yaml.example       ← copy → proxy-secrets.yaml
     ├── logstash-secrets.yaml.example    ← copy → logstash-secrets.yaml
     └── galah-secrets.yaml.example       ← copy → galah-secrets.yaml
 ```
 
 ### Configuring Secrets Before Deploying
 
-`k8s/secrets/` contains three `.example` files. Copy and fill them before installing the chart:
+`k8s/secrets/` contains two `.example` files. Copy and fill them before installing the chart:
 
 ```bash
-# 1. Proxy secrets — public IP and port exposed to attackers
-cp k8s/secrets/proxy-secrets.yaml.example k8s/secrets/proxy-secrets.yaml
-# Edit: set PUBLIC_IP and PUBLIC_PORT to your node's real address
-
-# 2. Logstash → Elasticsearch credentials
+# 1. Logstash → Elasticsearch credentials
 cp k8s/secrets/logstash-secrets.yaml.example k8s/secrets/logstash-secrets.yaml
 # Edit: ELASTICSEARCH_HOST, ELASTICSEARCH_USER, ELASTIC_PASSWORD, ca.crt (base64)
 
-# 3. Galah (LLM-powered HTTP honeypot) API key
+# 2. Galah (LLM-powered HTTP honeypot) API key
 cp k8s/secrets/galah-secrets.yaml.example k8s/secrets/galah-secrets.yaml
 # Edit: api_key
 ```
@@ -179,7 +174,6 @@ cp k8s/secrets/galah-secrets.yaml.example k8s/secrets/galah-secrets.yaml
 Then apply them to the cluster:
 
 ```bash
-kubectl apply -f k8s/secrets/proxy-secrets.yaml
 kubectl apply -f k8s/secrets/logstash-secrets.yaml
 kubectl apply -f k8s/secrets/galah-secrets.yaml
 ```
