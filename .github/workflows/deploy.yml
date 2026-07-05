@@ -65,7 +65,9 @@ jobs:
 
       - name: aplica manifests no microk8s
         run: |
-          microk8s kubectl apply -k k8s/overlays/${{ steps.env.outputs.target }}
+          microk8s helm upgrade --install dpipot k8s/chart/ \
+            -f k8s/chart/values-${{ steps.env.outputs.target }}.yaml \
+            --namespace dpipot --create-namespace
 
       - name: verifica pods
         run: |
