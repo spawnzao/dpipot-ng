@@ -129,79 +129,79 @@ The system is deployed as a **DaemonSet** — one pod per node — and has been 
 - `hostNetwork: true` or a TPROXY-compatible CNI
 - `iptables` available in init containers
 
-Infrastructure is managed with **Kustomize**. The repository ships a `base` layer and a `prod` overlay:
+Infrastructure is managed with **Helm**. The chart lives in `k8s/chart/` and ships four deployment profiles as values override files:
 
 ```
 k8s/
-├── base/                   # Base manifests (namespace, configmap, DaemonSet, services)
-│   ├── kustomization.yaml
-│   ├── namespace.yaml
-│   ├── configmap.yaml      # All env vars for proxy + classifier
-│   ├── daemonset-proxy.yaml
-│   ├── services.yaml
-│   ├── honeypots.yaml      # cowrie, wordpot, heralding, galah deployments
-│   ├── kafka.yaml          # Kafka (KRaft, no Zookeeper)
-│   ├── logstash.yaml
-│   └── filebeat.yaml
-└── overlays/
-    └── prod/               # Production: PVCs, image pull policy, secrets
-        ├── kustomization.yaml
-        └── secrets/
-            ├── proxy-secrets.yaml.example       ← copy → proxy-secrets.yaml
-            ├── logstash-secrets.yaml.example    ← copy → logstash-secrets.yaml
-            └── galah-secrets.yaml.example       ← copy → galah-secrets.yaml
+├── chart/
+│   ├── Chart.yaml
+│   ├── values.yaml           # Defaults: all components enabled, tag latest
+│   ├── values-prod.yaml      # Pinned tags, kafka PVC 100Gi, higher requests
+│   ├── values-sensor.yaml    # kafka=true, filebeat=false
+│   ├── values-light.yaml     # kafka=false, filebeat=false (no pipeline stack)
+│   ├── values-debug.yaml     # kafka=false, filebeat=true
+│   └── templates/
+│       ├── configmap.yaml    # dpipot-config — all env vars for proxy + classifier
+│       ├── daemonset-proxy.yaml
+│       ├── kafka.yaml        # Kafka (KRaft) + optional PVC
+│       ├── logstash.yaml     # Only deployed when kafka or filebeat is enabled
+│       ├── filebeat.yaml
+│       ├── cowrie.yaml
+│       ├── wordpot.yaml
+│       ├── heralding.yaml
+│       ├── galah.yaml
+│       ├── services.yaml
+│       └── network-policy.yaml
+└── secrets/
+    ├── proxy-secrets.yaml.example       ← copy → proxy-secrets.yaml
+    ├── logstash-secrets.yaml.example    ← copy → logstash-secrets.yaml
+    └── galah-secrets.yaml.example       ← copy → galah-secrets.yaml
 ```
 
 ### Configuring Secrets Before Deploying
 
-The `secrets/` directory contains three `.example` files. You must copy and fill them before applying the production overlay:
+`k8s/secrets/` contains three `.example` files. Copy and fill them before installing the chart:
 
 ```bash
 # 1. Proxy secrets — public IP and port exposed to attackers
-cp k8s/overlays/prod/secrets/proxy-secrets.yaml.example \
-   k8s/overlays/prod/secrets/proxy-secrets.yaml
+cp k8s/secrets/proxy-secrets.yaml.example k8s/secrets/proxy-secrets.yaml
 # Edit: set PUBLIC_IP and PUBLIC_PORT to your node's real address
 
 # 2. Logstash → Elasticsearch credentials
-cp k8s/overlays/prod/secrets/logstash-secrets.yaml.example \
-   k8s/overlays/prod/secrets/logstash-secrets.yaml
+cp k8s/secrets/logstash-secrets.yaml.example k8s/secrets/logstash-secrets.yaml
 # Edit: ELASTICSEARCH_HOST, ELASTICSEARCH_USER, ELASTIC_PASSWORD, ca.crt (base64)
 
 # 3. Galah (LLM-powered HTTP honeypot) API key
-cp k8s/overlays/prod/secrets/galah-secrets.yaml.example \
-   k8s/overlays/prod/secrets/galah-secrets.yaml
+cp k8s/secrets/galah-secrets.yaml.example k8s/secrets/galah-secrets.yaml
 # Edit: api_key
 ```
 
-After creating the files, **add them as resources in `k8s/overlays/prod/kustomization.yaml`** so Kustomize picks them up:
+Then apply them to the cluster:
 
-```yaml
-# k8s/overlays/prod/kustomization.yaml
-resources:
-  - ../../base
-  - kafka-pvc.yaml
-  - pvc-cache.yaml
-  - secrets/proxy-secrets.yaml        # ← add
-  - secrets/logstash-secrets.yaml     # ← add
-  - secrets/galah-secrets.yaml        # ← add
+```bash
+kubectl apply -f k8s/secrets/proxy-secrets.yaml
+kubectl apply -f k8s/secrets/logstash-secrets.yaml
+kubectl apply -f k8s/secrets/galah-secrets.yaml
 ```
 
-> The `.example` files are committed to the repository as templates. The real secret files (`proxy-secrets.yaml`, `logstash-secrets.yaml`, `galah-secrets.yaml`) are listed in `.gitignore` and must never be committed.
+The chart also requires `elastic-certs` (CA cert for Elasticsearch TLS) and `ghcr-secret` (GitHub Container Registry pull secret) to exist in the `dpipot` namespace before install. These are cluster-specific and must be created manually.
+
+> The `.example` files are committed to the repository as templates. The real secret files are listed in `k8s/secrets/.gitignore` and must never be committed.
 
 ### Quick Deploy
 
 ```bash
-# Apply base (dev/lab — no secrets required)
-kubectl apply -k k8s/base/
-
-# Apply production overlay (secrets must be configured first — see above)
-kubectl apply -k k8s/overlays/prod/
+# Production (pinned tags, persistent Kafka, higher resource requests)
+microk8s helm upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-prod.yaml \
+  --namespace dpipot --create-namespace
 
 # Watch rollout
 kubectl rollout status daemonset/dpipot-proxy -n dpipot
+kubectl get pods -n dpipot
 ```
 
-**Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` and the `iptables` init script in `daemonset-proxy.yaml` to match your node's interface name before deploying.
+**Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` in `values.yaml` (or override per profile) to match your node's interface name before deploying.
 
 ---
 
@@ -273,44 +273,31 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 
 ## Deployment Scenarios
 
-### Full Stack (Default)
+The chart ships four profiles selectable via `-f values-<profile>.yaml`. Each profile is a minimal override on top of `values.yaml` — only differences are listed.
 
-All components running: proxy + classifier + Kafka + Logstash + Filebeat + Elasticsearch + Kibana.
+| Profile | Kafka | Filebeat | Logstash | Image tags | Kafka PVC |
+|---------|-------|----------|----------|------------|-----------|
+| _(default)_ | ✅ | ✅ | ✅ | `latest` | emptyDir |
+| `prod` | ✅ | ✅ | ✅ | `release-0.2` | 100Gi |
+| `sensor` | ✅ | ❌ | kafka only | `latest` | emptyDir |
+| `light` | ❌ | ❌ | ❌ | `latest` | — |
+| `debug` | ❌ | ✅ | filebeat only | `latest` | — |
 
-```yaml
-# k8s/base/configmap.yaml
-KAFKA: "true"
-KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
-CLASSIFIER_ENABLED: "true"
+**Logstash is only deployed when at least one pipeline is active** (kafka or filebeat enabled). With both disabled (`light`), the entire Kafka+Logstash+Filebeat stack is absent, freeing significant CPU and memory.
+
+```bash
+# Sensor node (Kafka + honeypots, no Filebeat)
+microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-sensor.yaml
+
+# Light node (honeypots only, no pipeline stack)
+microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-light.yaml
+
+# Debug (Filebeat only, inspect honeypot container logs in Elasticsearch)
+microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-debug.yaml
 ```
 
-Events flow: `proxy/classifier → Kafka → Logstash → Elasticsearch → Kibana`
-
----
-
-### Lightweight Mode (No Kafka / No Elasticsearch)
-
-To run the honeypot without the Kafka+Elasticsearch stack — for example on a resource-constrained lab node — simply disable Kafka. When `KAFKA=false`, neither the proxy nor the classifier attempt to connect to any broker. Events are logged to stdout only.
-
-```yaml
-# k8s/base/configmap.yaml
-KAFKA: "false"
-```
-
-With `KAFKA=false` you can **remove or scale to zero** the following workloads, freeing significant memory and CPU:
-
-| Workload | Can be removed? |
-|----------|----------------|
-| `kafka` Deployment | ✅ Yes |
-| `logstash` Deployment | ✅ Yes |
-| `filebeat` DaemonSet | ✅ Yes |
-| `elasticsearch` StatefulSet | ✅ Yes |
-| `kibana` Deployment | ✅ Yes |
-| `proxy` container | ❌ Required |
-| `classifier` container | ❌ Required (if `CLASSIFIER_ENABLED=true`) |
-| Honeypot services | ❌ Required |
-
-You can still inspect events in real time via `kubectl logs -f` on the proxy or classifier containers.
+Events flow: `proxy/classifier → Kafka → Logstash → Elasticsearch` (when kafka enabled)
+Honeypot logs: `container stdout → Filebeat → Logstash → Elasticsearch` (when filebeat enabled)
 
 ---
 
@@ -389,9 +376,11 @@ Credential events include additional fields: `username`, `password`, `command`, 
 
 - Kubernetes ≥ 1.25 (tested on **MicroK8s 1.29**, expected to work on k3s, kubeadm, EKS, GKE, AKS)
 - Nodes running Linux with `iptables` support (TPROXY target in `mangle` table)
-- Kustomize ≥ 5.0 (`kubectl kustomize` or standalone `kustomize` binary)
+- Helm ≥ 3.0
 - Container registry access to `ghcr.io/spawnzao` (or rebuild images locally)
 - `NET_ADMIN` + `NET_RAW` capabilities allowed by the cluster's admission policy
+
+> **Local testing:** The proxy requires `IP_TRANSPARENT` socket option, which needs `NET_ADMIN` and is blocked in nested container environments (LXC/Docker-in-Docker). Test in a real VM or a bare-metal node with `--privileged` (Docker) or equivalent.
 
 ---
 
@@ -435,8 +424,7 @@ dpipot-ng/
 │       ├── flowtracker/    # gRPC client for Classifier
 │       ├── httpclassifier/ # HTTP path whitelist
 │       └── kafka/          # Kafka producer
-└── k8s/                    # Kubernetes manifests (Kustomize)
-    ├── base/               # Base resources
-    └── overlays/prod/      # Production overlay (PVCs, image pull policy, secrets)
-        └── secrets/        # .example files — copy and fill before deploying
+└── k8s/                    # Kubernetes manifests (Helm)
+    ├── chart/              # Helm chart (Chart.yaml, values*.yaml, templates/)
+    └── secrets/            # .example files — copy and fill before helm install
 ```
