@@ -207,7 +207,7 @@ Each physical node in the cluster likely has different hardware and a different 
 ```
 
 ```yaml
-# Example: k8s/chart/values-ufes.yaml (node with 4 cores / 8 GB RAM / 42 GB disk)
+# Example: k8s/chart/values-vps.yaml (node with 4 cores / 8 GB RAM / 60 GB disk)
 network:
   interface: "ens18"          # use `ip link show` to find your interface
 
