@@ -197,6 +197,53 @@ kubectl get pods -n dpipot
 
 **Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` in `values.yaml` (or override per profile) to match your node's interface name before deploying.
 
+### Per-Node Overrides (required for multi-node deployments)
+
+Each physical node in the cluster likely has different hardware and a different network interface. **Do not adjust `values-prod.yaml` for node-specific settings** — it is shared across all nodes. Instead, create a local override file on each node and never commit it:
+
+```bash
+# On each node, create k8s/chart/values-<hostname>.yaml
+# This file is intentionally local — it is NOT committed to the repository.
+```
+
+```yaml
+# Example: k8s/chart/values-ufes.yaml (node with 4 cores / 8 GB RAM / 42 GB disk)
+network:
+  interface: "ens18"          # use `ip link show` to find your interface
+
+kafka:
+  persistence:
+    size: "10Gi"              # must fit within the node's available disk
+
+resources:
+  proxy:
+    requests: { cpu: 200m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 512Mi }
+  kafka:
+    requests: { cpu: 200m, memory: 512Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  # ... other components sized to match actual node capacity
+```
+
+Then always pass both files when deploying on that node:
+
+```bash
+microk8s helm upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-prod.yaml \
+  -f k8s/chart/values-<hostname>.yaml \
+  --namespace dpipot --create-namespace
+```
+
+Settings you almost always need to override per node:
+
+| Setting | Why it varies | How to find the right value |
+|---|---|---|
+| `network.interface` | Interface name differs by hypervisor/OS | `ip link show` |
+| `kafka.persistence.size` | Must fit in available disk | `df -h /` |
+| `resources.*` | requests/limits must fit in actual RAM/CPU | `nproc`, `free -h` |
+
+Deploying `values-prod.yaml` alone on an undersized node will cause `kafka.persistence.size` to exceed available disk and `resources.limits` to exceed physical RAM — both fail silently until Kafka crashes or the node runs OOM.
+
 ---
 
 ## Configuration Reference
