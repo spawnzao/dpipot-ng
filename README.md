@@ -290,8 +290,8 @@ microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-light.yaml
 microk8s helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-debug.yaml
 ```
 
-Events flow: `proxy/classifier → Kafka → Logstash → Elasticsearch` (when kafka enabled)
-Honeypot logs: `container stdout → Filebeat → Logstash → Elasticsearch` (when filebeat enabled)
+- Events flow: `proxy/classifier → Kafka → Logstash → Elasticsearch` (when kafka enabled)
+- Honeypot logs: `container stdout → Filebeat → Logstash → Elasticsearch` (when filebeat enabled)
 
 ---
 
