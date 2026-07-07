@@ -39,6 +39,16 @@ type Event struct {
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port
 	ExpectedProto string    `json:"expected_proto,omitempty"` // protocolo esperado pela porta (ex: "SSH" para 22)
+
+	// telemetria de capacidade — preenchido em eventos de fluxo, rejected e heartbeat
+	SlotsUsed   int     `json:"slots_used,omitempty"`
+	SlotsMax    int     `json:"slots_max,omitempty"`
+	PerIPActive int     `json:"per_ip_active,omitempty"`
+
+	// campos exclusivos de eventos internos (ndpi_app = "heartbeat" ou "rejected")
+	KafkaDrops  int64   `json:"kafka_drops,omitempty"`
+	KafkaStatus string  `json:"kafka_status,omitempty"` // "ok" | "error"
+	UptimeSec   float64 `json:"uptime_sec,omitempty"`
 }
 
 // enrichPayload preenche os campos *Hex e *B64 a partir dos bytes brutos.
@@ -73,6 +83,7 @@ type Producer struct {
 	closed   atomic.Bool
 	lastOK   atomic.Int64 // Unix timestamp of last confirmed delivery
 	errCount atomic.Int64 // consecutive delivery errors; reset on success
+	dropped  atomic.Int64 // eventos descartados por buffer cheio; reportado no heartbeat
 }
 
 func newKafkaConfig(brokers string) *kafka.ConfigMap {
@@ -131,6 +142,17 @@ func (p *Producer) LastOK() time.Time {
 	return time.Unix(p.lastOK.Load(), 0)
 }
 
+// DroppedAndReset atomically returns the number of events dropped since the last call
+// and resets the counter to zero. Using Swap(0) avoids the TOCTOU race that would occur
+// with a separate Load() + Store(0): any drop that arrives between those two operations
+// would be silently lost from the heartbeat report.
+func (p *Producer) DroppedAndReset() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.dropped.Swap(0)
+}
+
 func (p *Producer) Publish(event *Event) {
 	if p == nil || p.closed.Load() {
 		return
@@ -141,6 +163,7 @@ func (p *Producer) Publish(event *Event) {
 		p.log.Warn("kafka buffer cheio, evento descartado",
 			zap.String("flow_id", event.FlowID),
 		)
+		p.dropped.Add(1)
 	}
 }
 

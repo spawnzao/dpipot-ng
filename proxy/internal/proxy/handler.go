@@ -67,6 +67,11 @@ type Handler struct {
 
 	// proxyTimeout define o timeout de vida total da conexão
 	proxyTimeout time.Duration
+
+	// telemetria de carga capturada no momento do Accept, incluída no evento Kafka
+	slotsUsed   int
+	slotsMax    int
+	perIPActive int
 }
 
 func NewHandler(
@@ -1221,6 +1226,9 @@ publish:
 		Instance:      "proxy",
 		PortMismatch:  portMismatch,
 		ExpectedProto: expectedProto,
+		SlotsUsed:     h.slotsUsed,
+		SlotsMax:      h.slotsMax,
+		PerIPActive:   h.perIPActive,
 	}
 	h.producer.Publish(event)
 

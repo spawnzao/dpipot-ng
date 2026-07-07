@@ -120,7 +120,9 @@ func listenTransparent(addr string) (net.Listener, error) {
 	}
 
 	f := os.NewFile(uintptr(fd), "tproxy-listener")
-	return net.FileListener(f)
+	ln, err := net.FileListener(f)
+	f.Close() // net.FileListener duplicates the fd internally; close our copy
+	return ln, err
 }
 
 // Stop fecha o listener, fazendo ListenAndServe retornar.
@@ -142,6 +144,10 @@ func (s *Server) ListenAndServe() error {
 
 	s.log.Info("proxy escutando", zap.String("addr", s.listenAddr))
 
+	hbQuit := make(chan struct{})
+	go s.startHeartbeat(time.Now(), hbQuit)
+	defer close(hbQuit)
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -152,48 +158,111 @@ func (s *Server) ListenAndServe() error {
 			continue
 		}
 
-		srcIP := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+		srcTCPAddr := conn.RemoteAddr().(*net.TCPAddr)
+		srcIP := srcTCPAddr.IP.String()
 
 		// Verifica limite por IP antes do semáforo global.
 		val, _ := s.perIPConns.LoadOrStore(srcIP, new(atomic.Int64))
 		ipCounter := val.(*atomic.Int64)
 		if ipCounter.Add(1) > int64(s.maxPerIPConns) {
-			ipCounter.Add(-1)
+			if ipCounter.Add(-1) <= 0 {
+				s.perIPConns.Delete(srcIP)
+			}
 			s.log.Warn("conexão rejeitada: limite por IP atingido",
 				zap.String("src_ip", srcIP),
 				zap.Int("max_per_ip", s.maxPerIPConns),
 			)
+			s.producer.Publish(&kafka.Event{
+				Timestamp:   time.Now(),
+				SrcIP:       srcIP,
+				SrcPort:     srcTCPAddr.Port,
+				NDPIApp:     "rejected",
+				AttackType:  "conn_limit_per_ip",
+				PerIPActive: int(ipCounter.Load()),
+				SlotsUsed:   len(s.sem),
+				SlotsMax:    cap(s.sem),
+				Instance:    "proxy",
+			})
 			conn.Close()
 			continue
 		}
 
 		select {
 		case s.sem <- struct{}{}:
+			slotsUsed := len(s.sem)
+			slotsMax := cap(s.sem)
+			perIPActive := int(ipCounter.Load())
 			s.log.Info("🎯 Conexão aceita",
 				zap.String("local_addr", conn.LocalAddr().String()),
 				zap.String("remote_addr", conn.RemoteAddr().String()),
-				zap.Int("slots_used", len(s.sem)),
-				zap.Int("slots_max", cap(s.sem)),
+				zap.Int("slots_used", slotsUsed),
+				zap.Int("slots_max", slotsMax),
 			)
 			go func() {
 				defer func() {
 					<-s.sem
-					ipCounter.Add(-1)
+					if ipCounter.Add(-1) <= 0 {
+						s.perIPConns.Delete(srcIP)
+					}
 				}()
-				s.handle(conn)
+				s.handle(conn, slotsUsed, slotsMax, perIPActive)
 			}()
 		default:
-			ipCounter.Add(-1)
+			if ipCounter.Add(-1) <= 0 {
+				s.perIPConns.Delete(srcIP)
+			}
 			s.log.Warn("conexão rejeitada: limite máximo de conexões simultâneas atingido",
 				zap.String("remote_addr", conn.RemoteAddr().String()),
 				zap.Int("max_connections", cap(s.sem)),
 			)
+			s.producer.Publish(&kafka.Event{
+				Timestamp:  time.Now(),
+				SrcIP:      srcIP,
+				SrcPort:    srcTCPAddr.Port,
+				NDPIApp:    "rejected",
+				AttackType: "conn_limit_global",
+				SlotsUsed:  cap(s.sem),
+				SlotsMax:   cap(s.sem),
+				Instance:   "proxy",
+			})
 			conn.Close()
 		}
 	}
 }
 
-func (s *Server) handle(conn net.Conn) {
+// startHeartbeat publica um evento de telemetria a cada 60s enquanto o proxy está ativo.
+// Encerra quando quit é fechado (via defer close em ListenAndServe).
+func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
+	if s.producer == nil {
+		return
+	}
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-quit:
+			return
+		case <-ticker.C:
+			drops := s.producer.DroppedAndReset()
+			kafkaStatus := "ok"
+			if !s.producer.IsHealthy() {
+				kafkaStatus = "error"
+			}
+			s.producer.Publish(&kafka.Event{
+				Timestamp:   time.Now(),
+				NDPIApp:     "heartbeat",
+				SlotsUsed:   len(s.sem),
+				SlotsMax:    cap(s.sem),
+				KafkaDrops:  drops,
+				KafkaStatus: kafkaStatus,
+				UptimeSec:   time.Since(startTime).Seconds(),
+				Instance:    "proxy",
+			})
+		}
+	}
+}
+
+func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("handler recovered from panic", zap.Any("panic", r))
@@ -225,6 +294,9 @@ func (s *Server) handle(conn net.Conn) {
 		s.httpClassifier,
 		s.proxyTimeout,
 	)
+	h.slotsUsed = slotsUsed
+	h.slotsMax = slotsMax
+	h.perIPActive = perIPActive
 	h.Handle()
 
 	log.Info("handler finished")
