@@ -1210,6 +1210,7 @@ publish:
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
 	event := &kafka.Event{
+		EventType:     "flow",
 		FlowID:        h.classifierFlowID,
 		TupleID:       h.tupleID,
 		Timestamp:     time.Now(),

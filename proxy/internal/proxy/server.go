@@ -178,9 +178,9 @@ func (s *Server) ListenAndServe() error {
 			)
 			s.producer.Publish(&kafka.Event{
 				Timestamp:   time.Now(),
+				EventType:   "rejected",
 				SrcIP:       srcIP,
 				SrcPort:     srcTCPAddr.Port,
-				NDPIApp:     "rejected",
 				AttackType:  "conn_limit_per_ip",
 				PerIPActive: int(ipCounter.Load()),
 				SlotsUsed:   len(s.sem),
@@ -223,9 +223,9 @@ func (s *Server) ListenAndServe() error {
 			)
 			s.producer.Publish(&kafka.Event{
 				Timestamp:  time.Now(),
+				EventType:  "rejected",
 				SrcIP:      srcIP,
 				SrcPort:    srcTCPAddr.Port,
-				NDPIApp:    "rejected",
 				AttackType: "conn_limit_global",
 				SlotsUsed:  cap(s.sem),
 				SlotsMax:   cap(s.sem),
@@ -258,7 +258,7 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			}
 			s.producer.Publish(&kafka.Event{
 				Timestamp:   time.Now(),
-				NDPIApp:     "heartbeat",
+				EventType:   "heartbeat",
 				SlotsUsed:   len(s.sem),
 				SlotsMax:    cap(s.sem),
 				KafkaDrops:  drops,

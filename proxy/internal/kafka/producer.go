@@ -45,7 +45,10 @@ type Event struct {
 	SlotsMax    int     `json:"slots_max,omitempty"`
 	PerIPActive int     `json:"per_ip_active,omitempty"`
 
-	// campos exclusivos de eventos internos (ndpi_app = "heartbeat" ou "rejected")
+	// tipo do evento — "flow" | "heartbeat" | "rejected"
+	EventType string `json:"event_type,omitempty"`
+
+	// campos exclusivos de eventos internos (event_type = "heartbeat")
 	KafkaDrops  int64   `json:"kafka_drops,omitempty"`
 	KafkaStatus string  `json:"kafka_status,omitempty"` // "ok" | "error"
 	UptimeSec   float64 `json:"uptime_sec,omitempty"`
