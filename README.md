@@ -413,6 +413,17 @@ Credential events include additional fields: `username`, `password`, `command`, 
 
 ---
 
+## Guides
+
+Step-by-step deployment guides for specific platforms and configurations:
+
+| Guide | Description | Language |
+|---|---|---|
+| [Rocky Linux 9 — Full Setup](docs/en/rocky-linux-setup.md) | MicroK8s, networking, iptables TPROXY, secrets, Helm install | English |
+| [Rocky Linux 9 — Full Setup](docs/pt-br/rocky-linux-setup.md) | MicroK8s, networking, iptables TPROXY, secrets, Helm install | Português |
+
+---
+
 ## Requirements
 
 - Kubernetes ≥ 1.25 (tested on **MicroK8s 1.29**, expected to work on k3s, kubeadm, EKS, GKE, AKS)
