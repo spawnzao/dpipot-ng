@@ -222,6 +222,13 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		return
 	}
 
+	// nDPI flow setup only supports IPv4 (ndpi_flow_setup recebe ponteiros de 4 bytes).
+	// Para IPv6, SetupFlow faz silent return sem inicializar a struct C; chamar
+	// PacketProcessing em seguida acessa memória não-inicializada → SIGSEGV.
+	if srcIP.To4() == nil {
+		return
+	}
+
 	// Fluxo normal com nDPI
 	ndpiFlowI, loaded := h.ndpiFlows.Load(tupleID)
 	if !loaded {
