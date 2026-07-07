@@ -419,8 +419,8 @@ Step-by-step deployment guides for specific platforms and configurations:
 
 | Guide | Description | Language |
 |---|---|---|
-| [Rocky Linux 9 — Full Setup](docs/en/rocky-linux-setup.md) | MicroK8s, networking, iptables TPROXY, secrets, Helm install | English |
-| [Rocky Linux 9 — Full Setup](docs/pt-br/rocky-linux-setup.md) | MicroK8s, networking, iptables TPROXY, secrets, Helm install | Português |
+| [Rocky Linux 9 — Full Setup](docs/en/rocky-linux-setup.md) | k3s, SELinux, networking, iptables TPROXY, secrets, Helm install | English |
+| [Rocky Linux 9 — Full Setup](docs/pt-br/rocky-linux-setup.md) | k3s, SELinux, networking, iptables TPROXY, secrets, Helm install | Português |
 
 ---
 
