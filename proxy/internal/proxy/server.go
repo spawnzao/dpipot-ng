@@ -40,6 +40,8 @@ type Server struct {
 	sem                 chan struct{}
 	perIPConns          sync.Map // map[string]*atomic.Int64 — contador por IP de origem
 	maxPerIPConns       int
+	nodeName            string // spec.nodeName injetado via Downward API (NODE_NAME)
+	podName             string // metadata.name injetado via Downward API (POD_NAME)
 }
 
 func NewServer(
@@ -85,6 +87,8 @@ func NewServer(
 		proxyTimeout:        proxyTimeout,
 		sem:                 make(chan struct{}, maxConnections),
 		maxPerIPConns:       maxPerIPConns,
+		nodeName:            os.Getenv("NODE_NAME"),
+		podName:             os.Getenv("POD_NAME"),
 	}
 }
 
@@ -182,6 +186,8 @@ func (s *Server) ListenAndServe() error {
 				SlotsUsed:   len(s.sem),
 				SlotsMax:    cap(s.sem),
 				Instance:    "proxy",
+				NodeName:    s.nodeName,
+				PodName:     s.podName,
 			})
 			conn.Close()
 			continue
@@ -224,6 +230,8 @@ func (s *Server) ListenAndServe() error {
 				SlotsUsed:  cap(s.sem),
 				SlotsMax:   cap(s.sem),
 				Instance:   "proxy",
+				NodeName:   s.nodeName,
+				PodName:    s.podName,
 			})
 			conn.Close()
 		}
@@ -257,6 +265,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				KafkaStatus: kafkaStatus,
 				UptimeSec:   time.Since(startTime).Seconds(),
 				Instance:    "proxy",
+				NodeName:    s.nodeName,
+				PodName:     s.podName,
 			})
 		}
 	}
@@ -297,6 +307,8 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	h.slotsUsed = slotsUsed
 	h.slotsMax = slotsMax
 	h.perIPActive = perIPActive
+	h.nodeName = s.nodeName
+	h.podName = s.podName
 	h.Handle()
 
 	log.Info("handler finished")

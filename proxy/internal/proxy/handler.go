@@ -72,6 +72,8 @@ type Handler struct {
 	slotsUsed   int
 	slotsMax    int
 	perIPActive int
+	nodeName    string
+	podName     string
 }
 
 func NewHandler(
@@ -1229,6 +1231,8 @@ publish:
 		SlotsUsed:     h.slotsUsed,
 		SlotsMax:      h.slotsMax,
 		PerIPActive:   h.perIPActive,
+		NodeName:      h.nodeName,
+		PodName:       h.podName,
 	}
 	h.producer.Publish(event)
 

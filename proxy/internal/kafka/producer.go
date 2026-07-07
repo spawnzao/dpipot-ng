@@ -49,6 +49,10 @@ type Event struct {
 	KafkaDrops  int64   `json:"kafka_drops,omitempty"`
 	KafkaStatus string  `json:"kafka_status,omitempty"` // "ok" | "error"
 	UptimeSec   float64 `json:"uptime_sec,omitempty"`
+
+	// identificação da instância — preenchido em todos os eventos
+	NodeName string `json:"node_name,omitempty"` // spec.nodeName via Downward API
+	PodName  string `json:"pod_name,omitempty"`  // metadata.name via Downward API
 }
 
 // enrichPayload preenche os campos *Hex e *B64 a partir dos bytes brutos.
