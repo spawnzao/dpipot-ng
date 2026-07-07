@@ -68,7 +68,7 @@ spec:
             - name: KAFKA_LOG_DIRS
               value: "/var/lib/kafka/data"
             - name: KAFKA_HEAP_OPTS
-              value: "{{ .Values.resources.kafka.heapOpts | default \"-Xmx1G -Xms1G\" }}"
+              value: {{ .Values.resources.kafka.heapOpts | default "-Xmx1G -Xms1G" | quote }}
           readinessProbe:
             tcpSocket:
               port: 9092

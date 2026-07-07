@@ -195,7 +195,7 @@ spec:
               protocol: TCP
           env:
             - name: LS_JAVA_OPTS
-              value: "{{ .Values.resources.logstash.heapOpts | default \"-Xmx1g -Xms1g\" }}"
+              value: {{ .Values.resources.logstash.heapOpts | default "-Xmx1g -Xms1g" | quote }}
             - name: KAFKA_BOOTSTRAP_SERVERS
               value: "kafka-svc.dpipot.svc.cluster.local:9092"
             - name: ELASTICSEARCH_HOST
