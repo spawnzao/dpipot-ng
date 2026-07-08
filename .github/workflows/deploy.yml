@@ -29,6 +29,7 @@ jobs:
           if command -v k3s &>/dev/null; then
             echo "KUBECTL=kubectl" >> $GITHUB_ENV
             echo "HELM=helm" >> $GITHUB_ENV
+            echo "KUBECONFIG=$HOME/.kube/config" >> $GITHUB_ENV
             echo "API_URL=https://127.0.0.1:6443" >> $GITHUB_ENV
             echo "orchestrator=k3s" >> $GITHUB_ENV
             echo "✅ orchestrator: k3s"
