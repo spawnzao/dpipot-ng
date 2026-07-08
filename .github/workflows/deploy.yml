@@ -52,10 +52,10 @@ jobs:
           HOST=$(hostname -s)
           VALUES_FILE="k8s/chart/values-${HOST}.yaml"
           if [ -f "$VALUES_FILE" ]; then
-            echo "✅ usando values específico do host: $VALUES_FILE"
+            echo "✅ using host-specific values file: $VALUES_FILE"
             echo "path=$VALUES_FILE" >> $GITHUB_OUTPUT
           else
-            echo "⚠️ nenhum values-${HOST}.yaml encontrado, usando values.yaml padrão"
+            echo "⚠️ no values-${HOST}.yaml found, falling back to values.yaml defaults"
             echo "path=k8s/chart/values.yaml" >> $GITHUB_OUTPUT
           fi
 
