@@ -1,0 +1,7 @@
+# Host-specific values files (values-<hostname>.yaml) are kept locally on each runner.
+# Only the named profiles below are tracked in the repository.
+values-*.yaml
+!values-prod.yaml
+!values-sensor.yaml
+!values-debug.yaml
+!values-light.yaml
