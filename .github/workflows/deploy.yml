@@ -1,24 +1,24 @@
 name: deploy
 
 on:
-  # deploy apenas manual — cada host usa values diferentes (values-prod.yaml vs values-ufes.yaml)
-  # e o trigger automático via workflow_run não tem como saber qual values usar por host
+  # roda automaticamente após o build terminar com sucesso na main
+  workflow_run:
+    workflows: ["build and push images"]
+    types:
+      - completed
+    branches:
+      - main
+
+  # permite rodar manualmente pelo GitHub UI
   workflow_dispatch:
-    inputs:
-      environment:
-        description: 'ambiente para deploy'
-        required: true
-        default: 'prod'
-        type: choice
-        options:
-          - prod
-          - ufes
 
 jobs:
   deploy:
     name: deploy no microk8s
-    runs-on: self-hosted   # runner rodando na sua máquina com microk8s
-    if: github.event_name == 'workflow_dispatch'
+    runs-on: self-hosted   # runner rodando na máquina com microk8s
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: checkout
@@ -28,13 +28,13 @@ jobs:
         run: |
           echo "=== Checking MicroK8s status ==="
           microk8s status || true
-          
+
           echo "=== Checking API server ==="
           curl -k https://127.0.0.1:16443/healthz || true
-          
+
           echo "=== Checking kubectl ==="
           microk8s kubectl version --client || true
-          
+
           for i in {1..30}; do
             if microk8s kubectl get nodes &>/dev/null; then
               echo "MicroK8s is ready"
@@ -46,13 +46,17 @@ jobs:
           echo "MicroK8s API not available"
           exit 1
 
-      - name: define ambiente
-        id: env
+      - name: resolve values file
+        id: values
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "target=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          HOST=$(hostname -s)
+          VALUES_FILE="k8s/chart/values-${HOST}.yaml"
+          if [ -f "$VALUES_FILE" ]; then
+            echo "✅ usando values específico do host: $VALUES_FILE"
+            echo "path=$VALUES_FILE" >> $GITHUB_OUTPUT
           else
-            echo "target=prod" >> $GITHUB_OUTPUT
+            echo "⚠️ nenhum values-${HOST}.yaml encontrado, usando values.yaml padrão"
+            echo "path=k8s/chart/values.yaml" >> $GITHUB_OUTPUT
           fi
 
       - name: adota recursos existentes para o Helm
@@ -81,7 +85,7 @@ jobs:
       - name: aplica manifests no microk8s
         run: |
           microk8s helm upgrade --install dpipot k8s/chart/ \
-            -f k8s/chart/values-${{ steps.env.outputs.target }}.yaml \
+            -f ${{ steps.values.outputs.path }} \
             --namespace dpipot --create-namespace
 
       - name: verifica pods
