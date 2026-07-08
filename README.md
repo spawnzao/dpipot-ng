@@ -197,23 +197,30 @@ kubectl get pods -n dpipot
 
 **Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` in `values.yaml` (or override per profile) to match your node's interface name before deploying.
 
-### Per-Node Overrides (required for multi-node deployments)
+### Per-Node Values File (required for multi-node deployments)
 
-Each physical node in the cluster likely has different hardware and a different network interface. **Do not adjust `values-prod.yaml` for node-specific settings** — it is shared across all nodes. Instead, create a local override file on each node and never commit it:
+Each node must have its own local values file named `k8s/chart/values-$(hostname -s).yaml`. This file is **intentionally not committed to the repository** — `k8s/chart/.gitignore` excludes all `values-*.yaml` except the named profiles (`prod`, `sensor`, `light`, `debug`).
+
+**Why a separate file per node instead of a shared one?**
+
+A shared values file like `values-prod.yaml` is a repository-tracked file. Any future commit changing it — even a small tweak like adjusting the Kafka heap — will be applied to every node on the next CI/CD run. Node-specific settings such as `kafka.persistence.size` or `network.interface` would be silently overwritten. For example, `values-prod.yaml` sets `kafka.persistence.size: 100Gi`; a node with only 40 GB of free disk would fail on the next deploy after any push to `main` that touches that file. With a local per-node file that is never committed, that cannot happen.
+
+**Creating the file on a new node:**
 
 ```bash
-# On each node, create k8s/chart/values-<hostname>.yaml
-# This file is intentionally local — it is NOT committed to the repository.
-```
+# Find the hostname that will be used as the filename
+hostname -s   # e.g. "my-node"
 
-```yaml
-# Example: k8s/chart/values-vps.yaml (node with 4 cores / 8 GB RAM / 60 GB disk)
+# Create the file — it will never be committed (protected by .gitignore)
+cat > k8s/chart/values-my-node.yaml << 'EOF'
 network:
-  interface: "ens18"          # use `ip link show` to find your interface
+  interface: "ens18"          # use `ip link show` to find your interface name
 
 kafka:
   persistence:
-    size: "10Gi"              # must fit within the node's available disk
+    enabled: true
+    size: "10Gi"              # must fit within available disk: df -h /
+    storageClass: "local-path"  # k3s default; use "microk8s-hostpath" for MicroK8s
 
 resources:
   proxy:
@@ -222,16 +229,8 @@ resources:
   kafka:
     requests: { cpu: 200m, memory: 512Mi }
     limits:   { cpu: 1000m, memory: 1Gi }
-  # ... other components sized to match actual node capacity
-```
-
-Then always pass both files when deploying on that node:
-
-```bash
-microk8s helm upgrade --install dpipot k8s/chart/ \
-  -f k8s/chart/values-prod.yaml \
-  -f k8s/chart/values-<hostname>.yaml \
-  --namespace dpipot --create-namespace
+  # size all components to match actual node capacity (nproc, free -h)
+EOF
 ```
 
 Settings you almost always need to override per node:
@@ -240,9 +239,44 @@ Settings you almost always need to override per node:
 |---|---|---|
 | `network.interface` | Interface name differs by hypervisor/OS | `ip link show` |
 | `kafka.persistence.size` | Must fit in available disk | `df -h /` |
+| `kafka.persistence.storageClass` | Differs between k3s (`local-path`) and MicroK8s (`microk8s-hostpath`) | `kubectl get storageclass` |
 | `resources.*` | requests/limits must fit in actual RAM/CPU | `nproc`, `free -h` |
 
-Deploying `values-prod.yaml` alone on an undersized node will cause `kafka.persistence.size` to exceed available disk and `resources.limits` to exceed physical RAM — both fail silently until Kafka crashes or the node runs OOM.
+**Manual deploy** (if not using CI/CD):
+
+```bash
+# MicroK8s
+microk8s helm upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-$(hostname -s).yaml \
+  --namespace dpipot --create-namespace
+
+# k3s
+helm upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-$(hostname -s).yaml \
+  --namespace dpipot --create-namespace
+```
+
+### CI/CD (GitHub Actions)
+
+The repository includes a self-hosted GitHub Actions runner workflow (`.github/workflows/deploy.yml`) that deploys automatically after every successful image build on `main`.
+
+**Orchestrator detection:** the workflow detects whether the host runs k3s or MicroK8s and selects the right commands automatically — no configuration needed.
+
+| | MicroK8s | k3s |
+|---|---|---|
+| kubectl | `microk8s kubectl` | `kubectl` |
+| helm | `microk8s helm` | `helm` |
+| API port | 16443 | 6443 |
+
+**Values file resolution:** the workflow runs `hostname -s` and looks for `k8s/chart/values-$(hostname -s).yaml`. If the file exists it is used; if not, it falls back to `values.yaml` (generic defaults, no persistent PVC) and prints a visible warning in the CI log:
+
+```
+⚠️ no values-<hostname>.yaml found, falling back to values.yaml defaults
+```
+
+This makes misconfigured nodes immediately obvious in every CI run instead of silently deploying with a wrong profile.
+
+> If the runner host does not have a per-node values file yet, create it as described above. The next push to `main` will pick it up automatically.
 
 ---
 

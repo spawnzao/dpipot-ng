@@ -15,7 +15,7 @@ on:
 jobs:
   deploy:
     name: deploy no microk8s
-    runs-on: self-hosted   # runner rodando na máquina com microk8s
+    runs-on: self-hosted   # runner rodando na máquina com microk8s ou k3s
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
@@ -24,26 +24,39 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
-      - name: wait for microk8s
+      - name: detect orchestrator
         run: |
-          echo "=== Checking MicroK8s status ==="
-          microk8s status || true
+          if command -v k3s &>/dev/null; then
+            echo "KUBECTL=kubectl" >> $GITHUB_ENV
+            echo "HELM=helm" >> $GITHUB_ENV
+            echo "API_URL=https://127.0.0.1:6443" >> $GITHUB_ENV
+            echo "orchestrator=k3s" >> $GITHUB_ENV
+            echo "✅ orchestrator: k3s"
+          else
+            echo "KUBECTL=microk8s kubectl" >> $GITHUB_ENV
+            echo "HELM=microk8s helm" >> $GITHUB_ENV
+            echo "API_URL=https://127.0.0.1:16443" >> $GITHUB_ENV
+            echo "orchestrator=microk8s" >> $GITHUB_ENV
+            echo "✅ orchestrator: microk8s"
+          fi
 
-          echo "=== Checking API server ==="
-          curl -k https://127.0.0.1:16443/healthz || true
+      - name: wait for cluster
+        run: |
+          echo "=== Checking cluster API ==="
+          curl -k ${{ env.API_URL }}/healthz || true
 
           echo "=== Checking kubectl ==="
-          microk8s kubectl version --client || true
+          $KUBECTL version --client || true
 
           for i in {1..30}; do
-            if microk8s kubectl get nodes &>/dev/null; then
-              echo "MicroK8s is ready"
+            if $KUBECTL get nodes &>/dev/null; then
+              echo "Cluster is ready"
               exit 0
             fi
-            echo "Waiting for MicroK8s API... ($i/30)"
+            echo "Waiting for cluster API... ($i/30)"
             sleep 2
           done
-          echo "MicroK8s API not available"
+          echo "Cluster API not available"
           exit 1
 
       - name: resolve values file
@@ -65,26 +78,26 @@ jobs:
           RELEASE=dpipot
           # Recursos namespaced
           for kind in networkpolicies deployments daemonsets services configmaps serviceaccounts persistentvolumeclaims; do
-            microk8s kubectl label --overwrite -n $NS $kind --all \
+            $KUBECTL label --overwrite -n $NS $kind --all \
               app.kubernetes.io/managed-by=Helm 2>/dev/null || true
-            microk8s kubectl annotate --overwrite -n $NS $kind --all \
+            $KUBECTL annotate --overwrite -n $NS $kind --all \
               meta.helm.sh/release-name=$RELEASE \
               meta.helm.sh/release-namespace=$NS 2>/dev/null || true
           done
           # Recursos cluster-scoped (filebeat RBAC)
           for name in filebeat; do
             for kind in clusterroles clusterrolebindings; do
-              microk8s kubectl label --overwrite $kind $name \
+              $KUBECTL label --overwrite $kind $name \
                 app.kubernetes.io/managed-by=Helm 2>/dev/null || true
-              microk8s kubectl annotate --overwrite $kind $name \
+              $KUBECTL annotate --overwrite $kind $name \
                 meta.helm.sh/release-name=$RELEASE \
                 meta.helm.sh/release-namespace=$NS 2>/dev/null || true
             done
           done
 
-      - name: aplica manifests no microk8s
+      - name: aplica manifests
         run: |
-          microk8s helm upgrade --install dpipot k8s/chart/ \
+          $HELM upgrade --install dpipot k8s/chart/ \
             -f ${{ steps.values.outputs.path }} \
             --namespace dpipot --create-namespace
 
@@ -92,8 +105,8 @@ jobs:
         run: |
           echo "Aguardando 30 segundos para stabilização..."
           sleep 30
-          microk8s kubectl get pods -n dpipot -o wide
+          $KUBECTL get pods -n dpipot -o wide
 
       - name: verifica pods
         run: |
-          microk8s kubectl get pods -n dpipot -o wide
+          $KUBECTL get pods -n dpipot -o wide
