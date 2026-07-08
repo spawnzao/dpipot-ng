@@ -1,15 +1,8 @@
 name: deploy
 
 on:
-  # roda automaticamente após o build terminar com sucesso na main
-  workflow_run:
-    workflows: ["build and push images"]
-    types:
-      - completed
-    branches:
-      - main
-
-  # permite rodar manualmente pelo GitHub UI
+  # deploy apenas manual — cada host usa values diferentes (values-prod.yaml vs values-ufes.yaml)
+  # e o trigger automático via workflow_run não tem como saber qual values usar por host
   workflow_dispatch:
     inputs:
       environment:
@@ -19,14 +12,13 @@ on:
         type: choice
         options:
           - prod
+          - ufes
 
 jobs:
   deploy:
     name: deploy no microk8s
     runs-on: self-hosted   # runner rodando na sua máquina com microk8s
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - name: checkout
