@@ -397,7 +397,7 @@ func (h *Handler) Handle() {
 			MaxPayloadSize: h.maxPayloadBytes,
 			Deadline:    deadline,
 			OnEvent: func(event *kafka.Event) {
-				h.producer.Publish(event)
+				h.publishEvent(event)
 			},
 			Logger: mitmLogger,
 		})
@@ -455,7 +455,7 @@ greetingBuf = greetingBuf[:n]
 		for _, ev := range bannerEvents {
 			if ev.EventType == mitm.EventBanner || ev.Banner != "" {
 				if h.producer != nil {
-					h.producer.Publish(&kafka.Event{
+					h.publishEvent(&kafka.Event{
 						FlowID:      h.classifierFlowID,
 				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
@@ -509,7 +509,7 @@ greetingBuf = greetingBuf[:n]
 			MaxPayloadSize: h.maxPayloadBytes,
 			Deadline:     deadline,
 			OnEvent: func(event *kafka.Event) {
-				h.producer.Publish(event)
+				h.publishEvent(event)
 			},
 			Logger: mitmLogger,
 		})
@@ -839,7 +839,7 @@ greetingBuf = greetingBuf[:n]
 			TupleID:      h.tupleID,
 			Deadline:     deadline,
 			OnEvent: func(event *kafka.Event) {
-				h.producer.Publish(event)
+				h.publishEvent(event)
 			},
 			Logger: func(format string, args ...interface{}) {
 				log.Info(fmt.Sprintf("RDP: "+format, args...))
@@ -897,7 +897,7 @@ greetingBuf = greetingBuf[:n]
 			SSHInputBufSize:  h.sshInputBufSize,
 			SSHOutputBufSize: h.sshOutputBufSize,
 			OnEvent: func(event *kafka.Event) {
-				h.producer.Publish(event)
+				h.publishEvent(event)
 			},
 		}
 
@@ -925,7 +925,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						Honeypot:   honeypotAddr,
 						Instance:      "proxy",
 					}
-					h.producer.Publish(event)
+					h.publishEvent(event)
 				} else {
 					log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
 				}
@@ -1058,7 +1058,7 @@ mitmLogger := func(format string, args ...interface{}) {
 				PayloadDst: payloadDstTLS,
 				Instance:      "proxy",
 			}
-			h.producer.Publish(event)
+			h.publishEvent(event)
 			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
 		}
 
@@ -1162,7 +1162,7 @@ mitmLogger := func(format string, args ...interface{}) {
 						eventType = "password"
 						attackType = ev.Password
 					}
-					h.producer.Publish(&kafka.Event{
+					h.publishEvent(&kafka.Event{
 						FlowID:      h.classifierFlowID,
 				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
@@ -1183,7 +1183,7 @@ mitmLogger := func(format string, args ...interface{}) {
 			respEvents := parser.ParseServerData(dstData, func(format string, args ...interface{}) {})
 			for _, ev := range respEvents {
 				if ev.Response != "" {
-					h.producer.Publish(&kafka.Event{
+					h.publishEvent(&kafka.Event{
 						FlowID:      h.classifierFlowID,
 				TupleID:     h.tupleID,
 						Timestamp:   time.Now(),
@@ -1235,7 +1235,7 @@ publish:
 		NodeName:      h.nodeName,
 		PodName:       h.podName,
 	}
-	h.producer.Publish(event)
+	h.publishEvent(event)
 
 	if honeypotError != "" {
 		log.Info("fluxo encerrado com erro",
@@ -1254,6 +1254,22 @@ publish:
 			zap.Float64("duration_ms", durationMs),
 		)
 	}
+}
+
+// publishEvent injeta node_name, pod_name e event_type (padrão "flow") em
+// qualquer evento antes de repassar ao producer. Todos os Publish em Handle()
+// devem usar este método para garantir que nenhum documento chegue ao ES sem
+// a identidade do nó.
+func (h *Handler) publishEvent(event *kafka.Event) {
+	if h.producer == nil {
+		return
+	}
+	event.NodeName = h.nodeName
+	event.PodName = h.podName
+	if event.EventType == "" {
+		event.EventType = "flow"
+	}
+	h.producer.Publish(event)
 }
 
 // limitedTeeWriter é um io.Writer que copia para um buffer
