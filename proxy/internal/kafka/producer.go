@@ -25,8 +25,8 @@ type Event struct {
 	NDPIApp       string    `json:"ndpi_app"`
 	Honeypot      string    `json:"honeypot"`
 	HoneypotError string    `json:"honeypot_error"`
-	PayloadSrc    []byte    `json:"payload_src"`
-	PayloadDst    []byte    `json:"payload_dst"`
+	PayloadSrc    []byte    `json:"-"`
+	PayloadDst    []byte    `json:"-"`
 	PayloadSrcHex string    `json:"payload_src_hex,omitempty"` // hex do payload cliente→honeypot (regex no ES)
 	PayloadDstHex string    `json:"payload_dst_hex,omitempty"` // hex do payload honeypot→cliente
 	PayloadSrcB64 string    `json:"payload_src_b64,omitempty"` // base64 explícito; compatível com decode_base64 do ES
