@@ -33,6 +33,10 @@ classifier/*.a
 .vscode/
 .idea/
 
+# Claude Code local settings
+.claude/settings.json
+.claude/settings.local.json
+
 # env local
 .env
 
