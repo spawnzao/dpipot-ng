@@ -104,7 +104,7 @@ spec:
               cp /galah/config/rules.yaml /tmp/rules.yaml
               /opt/galah/galah \
                 --provider=openai \
-                --model=qwen/qwen3.6-27b \
+                --model=openai/gpt-oss-120b \
                 --api-key=$LLM_API_KEY \
                 --config-file /tmp/config.yaml \
                 --rules-config-file /tmp/rules.yaml \
