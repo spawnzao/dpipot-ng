@@ -1258,7 +1258,7 @@ publish:
 		RttMs:          clientRttMs,
 		RttVarMs:       clientRttVarMs,
 		TCPRetransmits: clientRetransmits,
-		SlotsUsed:     h.slotsUsed,
+		SlotsUsed:     kafka.IntPtr(h.slotsUsed),
 		SlotsMax:      h.slotsMax,
 		PerIPActive:   h.perIPActive,
 		NodeName:      h.nodeName,

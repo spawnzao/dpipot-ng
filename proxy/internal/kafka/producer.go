@@ -53,24 +53,25 @@ type Event struct {
 	TCPRetransmits uint8   `json:"tcp_retransmits,omitempty"` // retransmissões não recuperadas
 
 	// telemetria de capacidade — preenchido em eventos de fluxo, rejected e heartbeat
-	SlotsUsed   int     `json:"slots_used,omitempty"`
-	SlotsMax    int     `json:"slots_max,omitempty"`
+	SlotsUsed   *int `json:"slots_used,omitempty"`
+	SlotsMax    int  `json:"slots_max,omitempty"`
 	PerIPActive int     `json:"per_ip_active,omitempty"`
 
 	// tipo do evento — "flow" | "heartbeat" | "rejected"
 	EventType string `json:"event_type,omitempty"`
 
 	// campos exclusivos de eventos internos (event_type = "heartbeat")
-	KafkaDrops    int64   `json:"kafka_drops,omitempty"`
+	// Todos usam ponteiro para aparecerem mesmo quando zero — diagnóstico requer visibilidade completa.
+	KafkaDrops    *int64  `json:"kafka_drops,omitempty"`
 	KafkaStatus   string  `json:"kafka_status,omitempty"` // "ok" | "error"
 	UptimeSec     float64 `json:"uptime_sec,omitempty"`
-	KafkaChanLen  int     `json:"kafka_chan_len,omitempty"` // eventos no canal Go aguardando drain
-	KafkaQueueLen int     `json:"kafka_queue_len,omitempty"` // mensagens no librdkafka aguardando entrega
+	KafkaChanLen  *int    `json:"kafka_chan_len,omitempty"`  // eventos no canal Go aguardando drain
+	KafkaQueueLen *int    `json:"kafka_queue_len,omitempty"` // mensagens no librdkafka aguardando entrega
 
 	// telemetria do FlowTracker — preenchido no heartbeat
-	FlowTrackerTimeouts  int64 `json:"flowtracker_timeouts,omitempty"`
-	FlowTrackerNotFound  int64 `json:"flowtracker_not_found,omitempty"`
-	FlowTrackerUnknown   int64 `json:"flowtracker_unknown,omitempty"`
+	FlowTrackerTimeouts *int64 `json:"flowtracker_timeouts,omitempty"`
+	FlowTrackerNotFound *int64 `json:"flowtracker_not_found,omitempty"`
+	FlowTrackerUnknown  *int64 `json:"flowtracker_unknown,omitempty"`
 
 	// identificação da instância — preenchido em todos os eventos
 	NodeName string `json:"node_name,omitempty"` // spec.nodeName via Downward API
@@ -361,3 +362,8 @@ func (p *Producer) reconnect() {
 
 	p.log.Info("kafka watchdog: novo producer criado, aguardando confirmação de entrega")
 }
+
+// IntPtr e Int64Ptr retornam ponteiros para os valores. Usados em campos com omitempty
+// que precisam aparecer no JSON mesmo quando o valor é zero (ex: campos do heartbeat).
+func IntPtr(n int) *int       { return &n }
+func Int64Ptr(n int64) *int64 { return &n }
