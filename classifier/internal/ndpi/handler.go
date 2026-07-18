@@ -125,8 +125,13 @@ func (h *Handler) processIPv4(data []byte) {
 	srcPort := uint16(tcpHeader[0])<<8 | uint16(tcpHeader[1])
 	dstPort := uint16(tcpHeader[2])<<8 | uint16(tcpHeader[3])
 
-	// Get TCP flags
+	// Extrai campos do cabeçalho IP (leitura direta do buffer — zero overhead)
+	ttl := ipHeader[8]
+	tos := ipHeader[1]
+
+	// Get TCP flags e TCP window
 	var tcpFlags string
+	var tcpWindow uint16
 	if len(tcpHeader) >= 14 {
 		flags := tcpHeader[13]
 		if flags&0x02 != 0 {
@@ -148,11 +153,14 @@ func (h *Handler) processIPv4(data []byte) {
 			tcpFlags = "none"
 		}
 	}
+	if protocol == 6 && len(tcpHeader) >= 16 {
+		tcpWindow = uint16(tcpHeader[14])<<8 | uint16(tcpHeader[15])
+	}
 
 	// Pass the complete IP packet (from IP header to end) to nDPI
 	ipPacket := data[ipOffset:]
 
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, protocol, ipPacket, 0x0800, tcpFlags)
+	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, protocol, ipPacket, 0x0800, tcpFlags, ttl, tos, tcpWindow, 4)
 }
 
 func (h *Handler) processIPv6(data []byte) {
@@ -180,13 +188,22 @@ func (h *Handler) processIPv6(data []byte) {
 	srcPort := uint16(tcpHeader[0])<<8 | uint16(tcpHeader[1])
 	dstPort := uint16(tcpHeader[2])<<8 | uint16(tcpHeader[3])
 
+	// Extrai campos do cabeçalho IPv6
+	hopLimit := ipHeader[7]      // Hop Limit (equivalente ao TTL)
+	trafficClass := ipHeader[1]  // Traffic Class (equivalente ao TOS/DSCP)
+
+	var tcpWindowIPv6 uint16
+	if nextHeader == 6 && len(tcpHeader) >= 16 {
+		tcpWindowIPv6 = uint16(tcpHeader[14])<<8 | uint16(tcpHeader[15])
+	}
+
 	// Pass the complete IP packet (from IP header to end) to nDPI
 	ipPacket := data[ipOffset:]
 
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, nextHeader, ipPacket, 0x86dd, "N/A")
+	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, nextHeader, ipPacket, 0x86dd, "N/A", hopLimit, trafficClass, tcpWindowIPv6, 6)
 }
 
-func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string) {
+func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ethertype uint16, tcpFlags string, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
 	tupleID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
 	// UUID único por conexão: gerado na primeira vez que o tupleID aparece.
@@ -218,6 +235,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			ProtocolNum:    protocol,
 			LastSeen:       time.Now(),
 			FlowUUID:       flowUUID,
+			TTL:            ttl,
+			TOS:            tos,
+			TCPWindow:      tcpWindow,
+			IPVersion:      ipVersion,
 		})
 		return
 	}
@@ -288,6 +309,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		ProtocolNum:    protocol,
 		LastSeen:       time.Now(),
 		FlowUUID:       flowUUID,
+		TTL:            ttl,
+		TOS:            tos,
+		TCPWindow:      tcpWindow,
+		IPVersion:      ipVersion,
 	})
 
 	if h.producer != nil {

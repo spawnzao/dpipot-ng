@@ -19,6 +19,12 @@ type Entry struct {
 	ProtocolNum    uint8
 	LastSeen       time.Time
 	FlowUUID       string // UUID único por conexão TCP; gerado no primeiro pacote
+
+	// campos extraídos do cabeçalho IP/TCP do primeiro pacote
+	TTL       uint8  // IP TTL (IPv4) / Hop Limit (IPv6)
+	TOS       uint8  // IP Type of Service / Traffic Class
+	TCPWindow uint16 // TCP window size (0 para UDP)
+	IPVersion uint8  // 4 ou 6
 }
 
 type Table struct {

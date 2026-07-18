@@ -33,6 +33,10 @@ type QueryResponse struct {
 	MasterProtocol string `json:"master_protocol"`
 	Category       uint32 `json:"category"`
 	FlowUUID       string `json:"flow_uuid,omitempty"`
+	TTL            uint8  `json:"ttl,omitempty"`
+	TOS            uint8  `json:"tos,omitempty"`
+	TCPWindow      uint16 `json:"tcp_window,omitempty"`
+	IPVersion      uint8  `json:"ip_version,omitempty"`
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -125,6 +129,10 @@ func (s *Server) handleConnection(conn net.Conn) {
 			MasterProtocol: entry.MasterProtocol,
 			Category:       entry.Category,
 			FlowUUID:       entry.FlowUUID,
+			TTL:            entry.TTL,
+			TOS:            entry.TOS,
+			TCPWindow:      entry.TCPWindow,
+			IPVersion:      entry.IPVersion,
 		}
 		data, _ := json.Marshal(resp)
 		conn.Write(data)

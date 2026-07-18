@@ -92,6 +92,10 @@ type QueryResponse struct {
 	MasterProtocol string `json:"master_protocol"`
 	Category       uint32 `json:"category"`
 	FlowUUID       string `json:"flow_uuid,omitempty"`
+	TTL            uint8  `json:"ttl,omitempty"`
+	TOS            uint8  `json:"tos,omitempty"`
+	TCPWindow      uint16 `json:"tcp_window,omitempty"`
+	IPVersion      uint8  `json:"ip_version,omitempty"`
 }
 
 func (c *Client) getConn() (net.Conn, error) {
@@ -112,16 +116,16 @@ func (c *Client) putConn(conn net.Conn) {
 	}
 }
 
-func (c *Client) doQuery(conn net.Conn, flowID string) (proto, masterProto string, category uint32, flowUUID string, found bool, err error) {
+func (c *Client) doQuery(conn net.Conn, flowID string) (resp QueryResponse, err error) {
 	req := QueryRequest{FlowID: flowID}
 	data, err := json.Marshal(req)
 	if err != nil {
-		return "", "", 0, "", false, fmt.Errorf("marshal failed: %w", err)
+		return QueryResponse{}, fmt.Errorf("marshal failed: %w", err)
 	}
 
 	conn.SetWriteDeadline(time.Now().Add(c.timeout))
 	if _, err := conn.Write(data); err != nil {
-		return "", "", 0, "", false, fmt.Errorf("write failed: %w", err)
+		return QueryResponse{}, fmt.Errorf("write failed: %w", err)
 	}
 
 	conn.SetReadDeadline(time.Now().Add(c.timeout))
@@ -129,22 +133,21 @@ func (c *Client) doQuery(conn net.Conn, flowID string) (proto, masterProto strin
 	n, err := conn.Read(respBuf)
 	if err != nil {
 		if err == io.EOF {
-			return "", "", 0, "", false, fmt.Errorf("connection closed")
+			return QueryResponse{}, fmt.Errorf("connection closed")
 		}
-		return "", "", 0, "", false, fmt.Errorf("read failed: %w", err)
+		return QueryResponse{}, fmt.Errorf("read failed: %w", err)
 	}
 
-	var resp QueryResponse
 	if err := json.Unmarshal(respBuf[:n], &resp); err != nil {
-		return "", "", 0, "", false, fmt.Errorf("unmarshal failed: %w", err)
+		return QueryResponse{}, fmt.Errorf("unmarshal failed: %w", err)
 	}
 
-	return resp.Protocol, resp.MasterProtocol, resp.Category, resp.FlowUUID, resp.Found, nil
+	return resp, nil
 }
 
-func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category uint32, flowUUID string, found bool, err error) {
+func (c *Client) QueryFlow(flowID string) (resp QueryResponse, err error) {
 	if !c.enabled {
-		return "", "", 0, "", false, fmt.Errorf("FlowTracker not available")
+		return QueryResponse{}, fmt.Errorf("FlowTracker not available")
 	}
 
 	start := time.Now()
@@ -153,10 +156,10 @@ func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category u
 	for attempt := 0; attempt < 2; attempt++ {
 		conn, dialErr := c.getConn()
 		if dialErr != nil {
-			return "", "", 0, "", false, fmt.Errorf("dial failed: %w", dialErr)
+			return QueryResponse{}, fmt.Errorf("dial failed: %w", dialErr)
 		}
 
-		proto, masterProto, category, flowUUID, found, err = c.doQuery(conn, flowID)
+		resp, err = c.doQuery(conn, flowID)
 		if err != nil {
 			conn.Close()
 			if attempt == 0 {
@@ -176,12 +179,12 @@ func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category u
 					)
 				}
 			}
-			return "", "", 0, "", false, err
+			return QueryResponse{}, err
 		}
 
 		elapsed := time.Since(start)
 
-		if !found {
+		if !resp.Found {
 			c.cntNotFound.Add(1)
 			if c.logger != nil {
 				c.logger.Debug("FlowTracker: fluxo não encontrado (nDPI ainda classificando)",
@@ -189,7 +192,7 @@ func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category u
 					zap.Duration("elapsed", elapsed),
 				)
 			}
-		} else if proto == "" || strings.ToUpper(proto) == "UNKNOWN" {
+		} else if resp.Protocol == "" || strings.ToUpper(resp.Protocol) == "UNKNOWN" {
 			c.cntUnknown.Add(1)
 			if c.logger != nil {
 				c.logger.Debug("FlowTracker: protocolo UNKNOWN (nDPI não conseguiu classificar)",
@@ -198,7 +201,6 @@ func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category u
 				)
 			}
 		} else if c.logger != nil && elapsed > c.timeout/2 {
-			// Log quando latência > 50% do timeout, mesmo que tenha sucesso
 			c.logger.Warn("FlowTracker query lenta",
 				zap.String("flow_id", flowID),
 				zap.Duration("elapsed", elapsed),
@@ -207,10 +209,10 @@ func (c *Client) QueryFlow(flowID string) (proto, masterProto string, category u
 		}
 
 		c.putConn(conn)
-		return proto, masterProto, category, flowUUID, found, nil
+		return resp, nil
 	}
 
-	return "", "", 0, "", false, fmt.Errorf("query failed after retries")
+	return QueryResponse{}, fmt.Errorf("query failed after retries")
 }
 
 func (c *Client) IsEnabled() bool {

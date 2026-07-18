@@ -275,12 +275,12 @@ func (h *Handler) Handle() {
 		earlyTrackerFound            bool
 	)
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		if p, m, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && found {
+		if earlyResp, err := h.flowTracker.QueryFlow(flowIDForTracker); err == nil && earlyResp.Found {
 			earlyTrackerFound = true
-			earlyProto = p
-			earlyMasterProto = m
-			if flowUUID != "" {
-				h.classifierFlowID = flowUUID
+			earlyProto = earlyResp.Protocol
+			earlyMasterProto = earlyResp.MasterProtocol
+			if earlyResp.FlowUUID != "" {
+				h.classifierFlowID = earlyResp.FlowUUID
 				log = log.With(zap.String("flow_id", h.classifierFlowID))
 			}
 		}
@@ -322,6 +322,10 @@ func (h *Handler) Handle() {
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
 		trackerFound     bool
+		clientTTL        uint8
+		clientTOS        uint8
+		clientTCPWindow  uint16
+		clientIPVersion  uint8
 	)
 
 	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
@@ -706,15 +710,19 @@ greetingBuf = greetingBuf[:n]
 	flowIDForTracker = normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
 
 	if h.flowTracker != nil && h.flowTracker.IsEnabled() {
-		appProtoFromTracker, masterProtoFromTracker, _, flowUUID, found, err := h.flowTracker.QueryFlow(flowIDForTracker)
-		masterProtoFlow = appProtoFromTracker
-		appProtoFlow = masterProtoFromTracker
-		if flowUUID != "" && h.classifierFlowID == "" {
-			h.classifierFlowID = flowUUID
+		ftResp, err := h.flowTracker.QueryFlow(flowIDForTracker)
+		masterProtoFlow = ftResp.Protocol
+		appProtoFlow = ftResp.MasterProtocol
+		if ftResp.FlowUUID != "" && h.classifierFlowID == "" {
+			h.classifierFlowID = ftResp.FlowUUID
 			log = log.With(zap.String("flow_id", h.classifierFlowID))
 		}
-		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+		if err == nil && ftResp.Found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
 			trackerFound = true
+			clientTTL = ftResp.TTL
+			clientTOS = ftResp.TOS
+			clientTCPWindow = ftResp.TCPWindow
+			clientIPVersion = ftResp.IPVersion
 			ndpiLabel = masterProtoFlow
 			if ndpiLabel == "" {
 				ndpiLabel = appProtoFlow
@@ -722,6 +730,8 @@ greetingBuf = greetingBuf[:n]
 			log.Info("fluxo classificado via FlowTracker",
 				zap.String("ndpi_proto", masterProtoFlow),
 				zap.String("ndpi_app", appProtoFlow),
+				zap.Uint8("ttl", clientTTL),
+				zap.Uint16("tcp_window", clientTCPWindow),
 			)
 		} else {
 			// Razão do fallback já foi logada no client (Warn para timeout, Debug para not-found/unknown).
@@ -1232,6 +1242,10 @@ publish:
 		PortMismatch:  portMismatch,
 		ExpectedProto: expectedProto,
 		TrackerFound:  trackerFound,
+		TTL:           clientTTL,
+		TOS:           clientTOS,
+		TCPWindow:     clientTCPWindow,
+		IPVersion:     clientIPVersion,
 		SlotsUsed:     h.slotsUsed,
 		SlotsMax:      h.slotsMax,
 		PerIPActive:   h.perIPActive,

@@ -41,6 +41,12 @@ type Event struct {
 	ExpectedProto string    `json:"expected_proto,omitempty"` // protocolo esperado pela porta (ex: "SSH" para 22)
 	TrackerFound  bool      `json:"tracker_found,omitempty"`  // true: FlowTracker respondeu com protocolo conhecido
 
+	// campos de rede extraídos via FlowTracker (origem: cabeçalhos IP/TCP do atacante)
+	TTL       uint8  `json:"ttl,omitempty"`        // IP TTL / IPv6 Hop Limit do cliente
+	TOS       uint8  `json:"tos,omitempty"`        // IP TOS / Traffic Class
+	TCPWindow uint16 `json:"tcp_window,omitempty"` // TCP window size inicial
+	IPVersion uint8  `json:"ip_version,omitempty"` // 4 ou 6
+
 	// telemetria de capacidade — preenchido em eventos de fluxo, rejected e heartbeat
 	SlotsUsed   int     `json:"slots_used,omitempty"`
 	SlotsMax    int     `json:"slots_max,omitempty"`
