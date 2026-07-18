@@ -321,11 +321,14 @@ func (h *Handler) Handle() {
 		isProbe          bool
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
-		trackerFound     bool
-		clientTTL        uint8
-		clientTOS        uint8
-		clientTCPWindow  uint16
-		clientIPVersion  uint8
+		trackerFound       bool
+		clientTTL          uint8
+		clientTOS          uint8
+		clientTCPWindow    uint16
+		clientIPVersion    uint8
+		clientRttMs        float64
+		clientRttVarMs     float64
+		clientRetransmits  uint8
 	)
 
 	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
@@ -1219,6 +1222,12 @@ publish:
 	duration := time.Since(startTime)
 	durationMs := float64(duration.Nanoseconds()) / 1e6
 
+	if tcpInfo := getTCPInfo(h.conn); tcpInfo != nil {
+		clientRttMs = float64(tcpInfo.Rtt) / 1000.0
+		clientRttVarMs = float64(tcpInfo.Rttvar) / 1000.0
+		clientRetransmits = tcpInfo.Retransmits
+	}
+
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
 	event := &kafka.Event{
@@ -1241,11 +1250,14 @@ publish:
 		Instance:      "proxy",
 		PortMismatch:  portMismatch,
 		ExpectedProto: expectedProto,
-		TrackerFound:  trackerFound,
-		TTL:           clientTTL,
-		TOS:           clientTOS,
-		TCPWindow:     clientTCPWindow,
-		IPVersion:     clientIPVersion,
+		TrackerFound:   trackerFound,
+		TTL:            clientTTL,
+		TOS:            clientTOS,
+		TCPWindow:      clientTCPWindow,
+		IPVersion:      clientIPVersion,
+		RttMs:          clientRttMs,
+		RttVarMs:       clientRttVarMs,
+		TCPRetransmits: clientRetransmits,
 		SlotsUsed:     h.slotsUsed,
 		SlotsMax:      h.slotsMax,
 		PerIPActive:   h.perIPActive,
@@ -1277,6 +1289,40 @@ publish:
 // qualquer evento antes de repassar ao producer. Todos os Publish em Handle()
 // devem usar este método para garantir que nenhum documento chegue ao ES sem
 // a identidade do nó.
+// getTCPInfo lê métricas da conexão TCP via getsockopt(TCP_INFO).
+// Retorna nil se a conexão não for *net.TCPConn ou se o syscall falhar.
+func getTCPInfo(conn net.Conn) *syscall.TCPInfo {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
+	raw, err := tcpConn.SyscallConn()
+	if err != nil {
+		return nil
+	}
+	var info syscall.TCPInfo
+	var sysErr error
+	raw.Control(func(fd uintptr) {
+		size := uint32(unsafe.Sizeof(info))
+		_, _, errno := syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.IPPROTO_TCP),
+			uintptr(syscall.TCP_INFO),
+			uintptr(unsafe.Pointer(&info)),
+			uintptr(unsafe.Pointer(&size)),
+			0,
+		)
+		if errno != 0 {
+			sysErr = errno
+		}
+	})
+	if sysErr != nil {
+		return nil
+	}
+	return &info
+}
+
 func (h *Handler) publishEvent(event *kafka.Event) {
 	if h.producer == nil {
 		return

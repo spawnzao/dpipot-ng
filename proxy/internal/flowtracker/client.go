@@ -51,8 +51,7 @@ func (c *Client) StatsAndReset() FlowTrackerStats {
 func NewClient(cfg config.Config, logger *zap.Logger) *Client {
 	addr := fmt.Sprintf("%s:%d", cfg.ClassifierHost, cfg.ClassifierPort)
 
-	// Usa FLOWTRACKER_TTL como timeout da query (antes era hardcoded em 100ms).
-	timeout := cfg.FlowTrackerTTL
+	timeout := cfg.FlowTrackerQueryTimeout
 	if timeout <= 0 {
 		timeout = 100 * time.Millisecond
 	}

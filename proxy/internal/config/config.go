@@ -24,7 +24,8 @@ type Config struct {
 	ClassifierEnabled  bool
 	ClassifierHost     string
 	ClassifierPort     int
-	FlowTrackerTTL     time.Duration
+	FlowTrackerTTL          time.Duration
+	FlowTrackerQueryTimeout time.Duration
 	ServerFirstPorts      map[uint16]string
 	ServerFirstPortsTLS map[uint16]string
 	HttpAuthPorts        map[uint16]bool
@@ -50,7 +51,8 @@ func Load() (*Config, error) {
 		ClassifierEnabled:  getEnv("CLASSIFIER_ENABLED", "false") == "true",
 		ClassifierHost:     "127.0.0.1",
 		ClassifierPort:     getInt("FLOWTRACKER_PORT", 9090),
-		FlowTrackerTTL:     getDuration("FLOWTRACKER_TTL", 15*time.Second),
+		FlowTrackerTTL:          getDuration("FLOWTRACKER_TTL", 15*time.Second),
+		FlowTrackerQueryTimeout: getDuration("FLOWTRACKER_QTIMEOUT", 100*time.Millisecond),
 		MaxConnections:    getInt("MAX_CONNECTIONS", 10000),
 		MaxPerIPConns:     getInt("MAX_CONNECTIONS_PER_IP", 50),
 		PayloadB64Enabled: parseBoolEnv("PAYLOAD_B64_ENABLED", true),

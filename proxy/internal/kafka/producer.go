@@ -47,6 +47,11 @@ type Event struct {
 	TCPWindow uint16 `json:"tcp_window,omitempty"` // TCP window size inicial
 	IPVersion uint8  `json:"ip_version,omitempty"` // 4 ou 6
 
+	// métricas TCP da conexão cliente→proxy (getsockopt TCP_INFO)
+	RttMs          float64 `json:"rtt_ms,omitempty"`          // RTT suavizado (µs→ms)
+	RttVarMs       float64 `json:"rtt_var_ms,omitempty"`      // variância do RTT (µs→ms)
+	TCPRetransmits uint8   `json:"tcp_retransmits,omitempty"` // retransmissões não recuperadas
+
 	// telemetria de capacidade — preenchido em eventos de fluxo, rejected e heartbeat
 	SlotsUsed   int     `json:"slots_used,omitempty"`
 	SlotsMax    int     `json:"slots_max,omitempty"`
