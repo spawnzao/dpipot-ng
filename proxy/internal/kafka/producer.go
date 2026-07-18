@@ -73,6 +73,12 @@ type Event struct {
 	FlowTrackerNotFound *int64 `json:"flowtracker_not_found,omitempty"`
 	FlowTrackerUnknown  *int64 `json:"flowtracker_unknown,omitempty"`
 
+	// qualidade de link — preenchido no heartbeat; permite calcular retransmits/fluxo por direção
+	TCPRetransmitsClientTotal   *int64 `json:"tcp_retransmits_client_total,omitempty"`
+	TCPRetransmitsHoneypotTotal *int64 `json:"tcp_retransmits_honeypot_total,omitempty"`
+	FlowsClientTotal            *int64 `json:"flows_client_total,omitempty"`
+	FlowsHoneypotTotal          *int64 `json:"flows_honeypot_total,omitempty"`
+
 	// identificação da instância — preenchido em todos os eventos
 	NodeName string `json:"node_name,omitempty"` // spec.nodeName via Downward API
 	PodName  string `json:"pod_name,omitempty"`  // metadata.name via Downward API

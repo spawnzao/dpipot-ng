@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 	"unsafe"
@@ -74,6 +75,12 @@ type Handler struct {
 	perIPActive int
 	nodeName    string
 	podName     string
+
+	// ponteiros para contadores do Server — acumulados durante Handle() e zerados no heartbeat
+	retransmitsClient   *atomic.Int64
+	retransmitsHoneypot *atomic.Int64
+	flowsClient         *atomic.Int64
+	flowsHoneypot       *atomic.Int64
 }
 
 func NewHandler(
@@ -1226,6 +1233,21 @@ publish:
 		clientRttMs = float64(tcpInfo.Rtt) / 1000.0
 		clientRttVarMs = float64(tcpInfo.Rttvar) / 1000.0
 		clientRetransmits = tcpInfo.Retransmits
+		if h.retransmitsClient != nil {
+			h.retransmitsClient.Add(int64(tcpInfo.Retransmits))
+		}
+	}
+	if h.flowsClient != nil {
+		h.flowsClient.Add(1)
+	}
+
+	if tcpInfo := getTCPInfo(honeypotConn); tcpInfo != nil {
+		if h.retransmitsHoneypot != nil {
+			h.retransmitsHoneypot.Add(int64(tcpInfo.Retransmits))
+		}
+		if h.flowsHoneypot != nil {
+			h.flowsHoneypot.Add(1)
+		}
 	}
 
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)

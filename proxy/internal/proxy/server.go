@@ -42,6 +42,12 @@ type Server struct {
 	maxPerIPConns       int
 	nodeName            string // spec.nodeName injetado via Downward API (NODE_NAME)
 	podName             string // metadata.name injetado via Downward API (POD_NAME)
+
+	// contadores de qualidade de link — acumulados por connection e zerados a cada heartbeat
+	retransmitsClient   atomic.Int64 // soma de retransmissões atacante→proxy
+	retransmitsHoneypot atomic.Int64 // soma de retransmissões proxy→honeypot
+	flowsClient         atomic.Int64 // conexões de atacante concluídas
+	flowsHoneypot       atomic.Int64 // conexões com honeypot estabelecidas
 }
 
 func NewServer(
@@ -270,9 +276,13 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				Instance:            "proxy",
 				NodeName:            s.nodeName,
 				PodName:             s.podName,
-				FlowTrackerTimeouts: kafka.Int64Ptr(ftStats.Timeouts),
-				FlowTrackerNotFound: kafka.Int64Ptr(ftStats.NotFound),
-				FlowTrackerUnknown:  kafka.Int64Ptr(ftStats.UnknownProto),
+				FlowTrackerTimeouts:         kafka.Int64Ptr(ftStats.Timeouts),
+				FlowTrackerNotFound:         kafka.Int64Ptr(ftStats.NotFound),
+				FlowTrackerUnknown:          kafka.Int64Ptr(ftStats.UnknownProto),
+				TCPRetransmitsClientTotal:   kafka.Int64Ptr(s.retransmitsClient.Swap(0)),
+				TCPRetransmitsHoneypotTotal: kafka.Int64Ptr(s.retransmitsHoneypot.Swap(0)),
+				FlowsClientTotal:            kafka.Int64Ptr(s.flowsClient.Swap(0)),
+				FlowsHoneypotTotal:          kafka.Int64Ptr(s.flowsHoneypot.Swap(0)),
 			})
 		}
 	}
@@ -315,6 +325,10 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	h.perIPActive = perIPActive
 	h.nodeName = s.nodeName
 	h.podName = s.podName
+	h.retransmitsClient = &s.retransmitsClient
+	h.retransmitsHoneypot = &s.retransmitsHoneypot
+	h.flowsClient = &s.flowsClient
+	h.flowsHoneypot = &s.flowsHoneypot
 	h.Handle()
 
 	log.Info("handler finished")
