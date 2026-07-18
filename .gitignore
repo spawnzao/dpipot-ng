@@ -52,7 +52,7 @@ k8s/overlays/*/secrets.yaml
 
 DOCUMENTATION.md
 POST_REBOOT.mdcmd
-cmd
+/cmd
 
 # Dev tools and tests (not deployed)
 tools/
