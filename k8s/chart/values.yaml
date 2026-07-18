@@ -6,7 +6,7 @@ image:
   classifier:
     repository: ghcr.io/spawnzao/dpipot-classifier
     tag: latest
-    pullPolicy: IfNotPresent
+    pullPolicy: Always
 
 network:
   interface: "ens192"
