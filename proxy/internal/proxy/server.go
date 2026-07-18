@@ -265,6 +265,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				KafkaDrops:           drops,
 				KafkaStatus:          kafkaStatus,
 				UptimeSec:            time.Since(startTime).Seconds(),
+				KafkaChanLen:         s.producer.ChanLen(),
+				KafkaQueueLen:        s.producer.QueueLen(),
 				Instance:             "proxy",
 				NodeName:             s.nodeName,
 				PodName:              s.podName,

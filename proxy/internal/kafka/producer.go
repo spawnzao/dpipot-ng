@@ -61,9 +61,11 @@ type Event struct {
 	EventType string `json:"event_type,omitempty"`
 
 	// campos exclusivos de eventos internos (event_type = "heartbeat")
-	KafkaDrops  int64   `json:"kafka_drops,omitempty"`
-	KafkaStatus string  `json:"kafka_status,omitempty"` // "ok" | "error"
-	UptimeSec   float64 `json:"uptime_sec,omitempty"`
+	KafkaDrops    int64   `json:"kafka_drops,omitempty"`
+	KafkaStatus   string  `json:"kafka_status,omitempty"` // "ok" | "error"
+	UptimeSec     float64 `json:"uptime_sec,omitempty"`
+	KafkaChanLen  int     `json:"kafka_chan_len,omitempty"` // eventos no canal Go aguardando drain
+	KafkaQueueLen int     `json:"kafka_queue_len,omitempty"` // mensagens no librdkafka aguardando entrega
 
 	// telemetria do FlowTracker — preenchido no heartbeat
 	FlowTrackerTimeouts  int64 `json:"flowtracker_timeouts,omitempty"`
@@ -184,6 +186,25 @@ func (p *Producer) DroppedAndReset() int64 {
 		return 0
 	}
 	return p.dropped.Swap(0)
+}
+
+// ChanLen retorna quantos eventos estão no canal Go aguardando ser drenados para o librdkafka.
+func (p *Producer) ChanLen() int {
+	if p == nil {
+		return 0
+	}
+	return len(p.events)
+}
+
+// QueueLen retorna quantas mensagens estão na fila interna do librdkafka aguardando entrega.
+func (p *Producer) QueueLen() int {
+	if p == nil {
+		return 0
+	}
+	p.mu.RLock()
+	n := p.inner.Len()
+	p.mu.RUnlock()
+	return n
 }
 
 func (p *Producer) Publish(event *Event) {
