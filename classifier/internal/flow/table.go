@@ -12,11 +12,6 @@ type Entry struct {
 	Protocol       string
 	MasterProtocol string
 	Category       uint32
-	SrcIP          string
-	SrcPort        uint16
-	DstIP          string
-	DstPort        uint16
-	ProtocolNum    uint8
 	LastSeen       time.Time
 	FlowUUID       string // UUID único por conexão TCP; gerado no primeiro pacote
 
