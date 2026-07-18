@@ -81,6 +81,8 @@ config:
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   MAX_PAYLOAD_BYTES: "65536"
+  PAYLOAD_B64_ENABLED: "true"
+  PAYLOAD_HEX_ENABLED: "true"
   SSH_INPUT_BUF_SIZE: "4096"
   SSH_OUTPUT_BUF_SIZE: "65536"
   LOG_LEVEL: "debug"

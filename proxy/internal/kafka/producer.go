@@ -58,15 +58,19 @@ type Event struct {
 	PodName  string `json:"pod_name,omitempty"`  // metadata.name via Downward API
 }
 
-// enrichPayload preenche os campos *Hex e *B64 a partir dos bytes brutos.
-// Chamado automaticamente em drain() — nenhum callsite precisa ser alterado.
-func enrichPayload(e *Event) {
-	if len(e.PayloadSrc) > 0 {
+// enrichPayload preenche os campos *Hex e *B64 a partir dos bytes brutos,
+// respeitando os toggles PAYLOAD_HEX_ENABLED e PAYLOAD_B64_ENABLED.
+func (p *Producer) enrichPayload(e *Event) {
+	if p.payloadHexEnabled && len(e.PayloadSrc) > 0 {
 		e.PayloadSrcHex = hex.EncodeToString(e.PayloadSrc)
+	}
+	if p.payloadB64Enabled && len(e.PayloadSrc) > 0 {
 		e.PayloadSrcB64 = base64.StdEncoding.EncodeToString(e.PayloadSrc)
 	}
-	if len(e.PayloadDst) > 0 {
+	if p.payloadHexEnabled && len(e.PayloadDst) > 0 {
 		e.PayloadDstHex = hex.EncodeToString(e.PayloadDst)
+	}
+	if p.payloadB64Enabled && len(e.PayloadDst) > 0 {
 		e.PayloadDstB64 = base64.StdEncoding.EncodeToString(e.PayloadDst)
 	}
 }
@@ -91,6 +95,9 @@ type Producer struct {
 	lastOK   atomic.Int64 // Unix timestamp of last confirmed delivery
 	errCount atomic.Int64 // consecutive delivery errors; reset on success
 	dropped  atomic.Int64 // eventos descartados por buffer cheio; reportado no heartbeat
+
+	payloadB64Enabled bool
+	payloadHexEnabled bool
 }
 
 func newKafkaConfig(brokers string) *kafka.ConfigMap {
@@ -109,20 +116,22 @@ func newKafkaConfig(brokers string) *kafka.ConfigMap {
 	}
 }
 
-func NewProducer(brokers, topic string, log *zap.Logger) (*Producer, error) {
+func NewProducer(brokers, topic string, log *zap.Logger, payloadB64, payloadHex bool) (*Producer, error) {
 	p, err := kafka.NewProducer(newKafkaConfig(brokers))
 	if err != nil {
 		return nil, fmt.Errorf("kafka producer: %w", err)
 	}
 
 	prod := &Producer{
-		inner:      p,
-		topicDebug: topic + "-debug",
-		topicApp:   topic + "-application",
-		brokers:    brokers,
-		log:        log,
-		events:     make(chan *Event, 100000),
-		quit:       make(chan struct{}),
+		inner:             p,
+		topicDebug:        topic + "-debug",
+		topicApp:          topic + "-application",
+		brokers:           brokers,
+		log:               log,
+		events:            make(chan *Event, 100000),
+		quit:              make(chan struct{}),
+		payloadB64Enabled: payloadB64,
+		payloadHexEnabled: payloadHex,
 	}
 	prod.healthy.Store(true)
 	prod.lastOK.Store(time.Now().Unix())
@@ -199,7 +208,7 @@ func (p *Producer) drain() {
 	defer p.wg.Done()
 
 	for event := range p.events {
-		enrichPayload(event)
+		p.enrichPayload(event)
 		data, err := json.Marshal(event)
 		if err != nil {
 			p.log.Error("marshal evento kafka", zap.Error(err))

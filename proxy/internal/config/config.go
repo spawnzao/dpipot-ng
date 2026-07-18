@@ -31,6 +31,8 @@ type Config struct {
 	HttpAuthPortsTLS     map[uint16]bool
 	MaxConnections  int
 	MaxPerIPConns   int
+	PayloadB64Enabled bool
+	PayloadHexEnabled bool
 }
 
 func Load() (*Config, error) {
@@ -49,8 +51,10 @@ func Load() (*Config, error) {
 		ClassifierHost:     "127.0.0.1",
 		ClassifierPort:     getInt("FLOWTRACKER_PORT", 9090),
 		FlowTrackerTTL:     getDuration("FLOWTRACKER_TTL", 15*time.Second),
-		MaxConnections: getInt("MAX_CONNECTIONS", 10000),
-		MaxPerIPConns:  getInt("MAX_CONNECTIONS_PER_IP", 50),
+		MaxConnections:    getInt("MAX_CONNECTIONS", 10000),
+		MaxPerIPConns:     getInt("MAX_CONNECTIONS_PER_IP", 50),
+		PayloadB64Enabled: parseBoolEnv("PAYLOAD_B64_ENABLED", true),
+		PayloadHexEnabled: parseBoolEnv("PAYLOAD_HEX_ENABLED", true),
 	}
 
 	routesRaw := getEnv("HONEYPOT_ROUTES",

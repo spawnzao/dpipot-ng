@@ -54,7 +54,7 @@ func main() {
 	// inicializa Kafka producer (opcional: KAFKA=false desabilita)
 	var producer *kafkapkg.Producer
 	if cfg.KafkaEnabled {
-		producer, err = kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, log)
+		producer, err = kafkapkg.NewProducer(cfg.KafkaBrokers, cfg.KafkaTopic, log, cfg.PayloadB64Enabled, cfg.PayloadHexEnabled)
 		if err != nil {
 			log.Fatal("kafka producer", zap.Error(err))
 		}
