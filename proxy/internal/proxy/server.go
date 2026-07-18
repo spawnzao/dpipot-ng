@@ -256,17 +256,21 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			if !s.producer.IsHealthy() {
 				kafkaStatus = "error"
 			}
+			ftStats := s.flowTracker.StatsAndReset()
 			s.producer.Publish(&kafka.Event{
-				Timestamp:   time.Now(),
-				EventType:   "heartbeat",
-				SlotsUsed:   len(s.sem),
-				SlotsMax:    cap(s.sem),
-				KafkaDrops:  drops,
-				KafkaStatus: kafkaStatus,
-				UptimeSec:   time.Since(startTime).Seconds(),
-				Instance:    "proxy",
-				NodeName:    s.nodeName,
-				PodName:     s.podName,
+				Timestamp:            time.Now(),
+				EventType:            "heartbeat",
+				SlotsUsed:            len(s.sem),
+				SlotsMax:             cap(s.sem),
+				KafkaDrops:           drops,
+				KafkaStatus:          kafkaStatus,
+				UptimeSec:            time.Since(startTime).Seconds(),
+				Instance:             "proxy",
+				NodeName:             s.nodeName,
+				PodName:              s.podName,
+				FlowTrackerTimeouts:  ftStats.Timeouts,
+				FlowTrackerNotFound:  ftStats.NotFound,
+				FlowTrackerUnknown:   ftStats.UnknownProto,
 			})
 		}
 	}

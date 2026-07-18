@@ -39,6 +39,7 @@ type Event struct {
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port
 	ExpectedProto string    `json:"expected_proto,omitempty"` // protocolo esperado pela porta (ex: "SSH" para 22)
+	TrackerFound  bool      `json:"tracker_found,omitempty"`  // true: FlowTracker respondeu com protocolo conhecido
 
 	// telemetria de capacidade — preenchido em eventos de fluxo, rejected e heartbeat
 	SlotsUsed   int     `json:"slots_used,omitempty"`
@@ -52,6 +53,11 @@ type Event struct {
 	KafkaDrops  int64   `json:"kafka_drops,omitempty"`
 	KafkaStatus string  `json:"kafka_status,omitempty"` // "ok" | "error"
 	UptimeSec   float64 `json:"uptime_sec,omitempty"`
+
+	// telemetria do FlowTracker — preenchido no heartbeat
+	FlowTrackerTimeouts  int64 `json:"flowtracker_timeouts,omitempty"`
+	FlowTrackerNotFound  int64 `json:"flowtracker_not_found,omitempty"`
+	FlowTrackerUnknown   int64 `json:"flowtracker_unknown,omitempty"`
 
 	// identificação da instância — preenchido em todos os eventos
 	NodeName string `json:"node_name,omitempty"` // spec.nodeName via Downward API

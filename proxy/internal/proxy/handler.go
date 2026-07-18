@@ -321,6 +321,7 @@ func (h *Handler) Handle() {
 		isProbe          bool
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
+		trackerFound     bool
 	)
 
 	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
@@ -713,6 +714,7 @@ greetingBuf = greetingBuf[:n]
 			log = log.With(zap.String("flow_id", h.classifierFlowID))
 		}
 		if err == nil && found && masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+			trackerFound = true
 			ndpiLabel = masterProtoFlow
 			if ndpiLabel == "" {
 				ndpiLabel = appProtoFlow
@@ -722,7 +724,7 @@ greetingBuf = greetingBuf[:n]
 				zap.String("ndpi_app", appProtoFlow),
 			)
 		} else {
-			log.Debug("FlowTracker não tem classificação ou retornou UNKNOWN, usando fallback", zap.Error(err))
+			// Razão do fallback já foi logada no client (Warn para timeout, Debug para not-found/unknown).
 			if fallbackProto != "" {
 				ndpiLabel = fallbackProto
 				masterProtoFlow = fallbackProto
@@ -1229,6 +1231,7 @@ publish:
 		Instance:      "proxy",
 		PortMismatch:  portMismatch,
 		ExpectedProto: expectedProto,
+		TrackerFound:  trackerFound,
 		SlotsUsed:     h.slotsUsed,
 		SlotsMax:      h.slotsMax,
 		PerIPActive:   h.perIPActive,
