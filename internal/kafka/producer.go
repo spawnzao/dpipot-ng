@@ -69,7 +69,9 @@ type Event struct {
 	KafkaQueueLen *int    `json:"kafka_queue_len,omitempty"` // mensagens no librdkafka aguardando entrega
 
 	// tamanho atual da flow table in-process — preenchido no heartbeat
-	FlowTableSize *int `json:"flow_table_size,omitempty"`
+	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
+	FlowTableNotFound *int64 `json:"flow_table_not_found,omitempty"` // lookups sem entrada (nDPI ainda não classificou)
+	FlowTableUnknown  *int64 `json:"flow_table_unknown,omitempty"`   // entrada existe mas protocolo é Unknown
 
 	// qualidade de link — preenchido no heartbeat; permite calcular retransmits/fluxo por direção
 	TCPRetransmitsClientTotal   *int64 `json:"tcp_retransmits_client_total,omitempty"`

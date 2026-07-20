@@ -72,12 +72,10 @@ spec:
             runAsUser: 0
 
       containers:
-        - name: proxy
-          image: {{ .Values.image.proxy.repository }}:{{ .Values.image.proxy.tag }}
-          imagePullPolicy: {{ .Values.image.proxy.pullPolicy }}
+        - name: dpipot
+          image: {{ .Values.image.dpipot.repository }}:{{ .Values.image.dpipot.tag }}
+          imagePullPolicy: {{ .Values.image.dpipot.pullPolicy }}
           env:
-            - name: CLASSIFIER_ENABLED
-              value: "true"
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
@@ -99,11 +97,11 @@ spec:
               protocol: TCP
           resources:
             requests:
-              cpu: {{ .Values.resources.proxy.requests.cpu }}
-              memory: {{ .Values.resources.proxy.requests.memory }}
+              cpu: {{ .Values.resources.dpipot.requests.cpu }}
+              memory: {{ .Values.resources.dpipot.requests.memory }}
             limits:
-              cpu: {{ .Values.resources.proxy.limits.cpu }}
-              memory: {{ .Values.resources.proxy.limits.memory }}
+              cpu: {{ .Values.resources.dpipot.limits.cpu }}
+              memory: {{ .Values.resources.dpipot.limits.memory }}
           livenessProbe:
             httpGet:
               path: /healthz/live
@@ -122,37 +120,11 @@ spec:
             capabilities:
               add:
                 - NET_ADMIN
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            runAsNonRoot: false
-            runAsUser: 0
-
-        - name: classifier
-          image: {{ .Values.image.classifier.repository }}:{{ .Values.image.classifier.tag }}
-          imagePullPolicy: {{ .Values.image.classifier.pullPolicy }}
-          envFrom:
-            - configMapRef:
-                name: dpipot-config
-          resources:
-            requests:
-              cpu: {{ .Values.resources.classifier.requests.cpu }}
-              memory: {{ .Values.resources.classifier.requests.memory }}
-            limits:
-              cpu: {{ .Values.resources.classifier.limits.cpu }}
-              memory: {{ .Values.resources.classifier.limits.memory }}
-          securityContext:
-            capabilities:
-              add:
                 - NET_RAW
-                - NET_ADMIN
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: false
             runAsUser: 0
-
-      volumes:
-        - name: ndpi-socket
-          emptyDir: {}
 
       terminationGracePeriodSeconds: 30
 

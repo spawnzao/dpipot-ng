@@ -81,6 +81,8 @@ type Handler struct {
 	retransmitsHoneypot *atomic.Int64
 	flowsClient         *atomic.Int64
 	flowsHoneypot       *atomic.Int64
+	flowTableNotFound   *atomic.Int64
+	flowTableUnknown    *atomic.Int64
 }
 
 func NewHandler(
@@ -744,6 +746,9 @@ greetingBuf = greetingBuf[:n]
 					zap.Uint16("tcp_window", clientTCPWindow),
 				)
 			} else {
+				if h.flowTableUnknown != nil {
+					h.flowTableUnknown.Add(1)
+				}
 				if fallbackProto != "" {
 					ndpiLabel = fallbackProto
 					masterProtoFlow = fallbackProto
@@ -755,6 +760,9 @@ greetingBuf = greetingBuf[:n]
 				}
 			}
 		} else {
+			if h.flowTableNotFound != nil {
+				h.flowTableNotFound.Add(1)
+			}
 			if fallbackProto != "" {
 				ndpiLabel = fallbackProto
 				masterProtoFlow = fallbackProto

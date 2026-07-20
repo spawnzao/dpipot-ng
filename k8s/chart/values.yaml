@@ -1,4 +1,9 @@
 image:
+  dpipot:
+    repository: ghcr.io/spawnzao/dpipot
+    tag: latest
+    pullPolicy: Always
+  # kept for reference; no longer deployed
   proxy:
     repository: ghcr.io/spawnzao/dpipot-proxy
     tag: latest
@@ -35,20 +40,13 @@ honeypots:
       storageClass: microk8s-hostpath
 
 resources:
-  proxy:
+  dpipot:
     requests:
-      cpu: 100m
-      memory: 64Mi
+      cpu: 300m
+      memory: 192Mi
     limits:
       cpu: 2000m
-      memory: 512Mi
-  classifier:
-    requests:
-      cpu: 200m
-      memory: 128Mi
-    limits:
-      cpu: 1000m
-      memory: 512Mi
+      memory: 1Gi
   logstash:
     requests:
       cpu: 250m
@@ -74,7 +72,6 @@ resources:
 config:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
   PROXY_TIMEOUT: "60s"
-  FLOWTRACKER_PORT: "9090"
   FLOWTRACKER_TTL: "60s"
   HONEYPOT_ROUTES: "HTTP=wordpot-svc:80, TLS=wordpot-svc:80, HTTP_AUTH=heralding:80, HTTP_SUSPECT=galah-svc:8080, SSH=cowrie-svc:22, FTP_CONTROL=heralding:21, MYSQL=heralding:3306, TELNET=heralding:23, MAIL_SMTP=heralding:25, MAIL_SMTPS=heralding:25, MAIL_POP=heralding:110, MAIL_POPS=heralding:110, MAIL_IMAP=heralding:143, MAIL_IMAPS=heralding:143, RDP=heralding:3389, PostgreSQL=heralding:5432, VNC=heralding:5900"
   DEFAULT_ROUTE: "heralding:80"

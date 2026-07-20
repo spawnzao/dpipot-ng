@@ -48,6 +48,10 @@ type Server struct {
 	retransmitsHoneypot atomic.Int64 // soma de retransmissões proxy→honeypot
 	flowsClient         atomic.Int64 // conexões de atacante concluídas
 	flowsHoneypot       atomic.Int64 // conexões com honeypot estabelecidas
+
+	// diagnóstico da flow table — acumulados por connection e zerados a cada heartbeat
+	flowTableNotFound atomic.Int64 // lookup sem entrada (nDPI ainda não classificou)
+	flowTableUnknown  atomic.Int64 // entrada existe mas protocolo é Unknown
 }
 
 func NewServer(
@@ -278,6 +282,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				NodeName:                    s.nodeName,
 				PodName:                     s.podName,
 				FlowTableSize:               kafka.IntPtr(flowTableSize),
+				FlowTableNotFound:           kafka.Int64Ptr(s.flowTableNotFound.Swap(0)),
+				FlowTableUnknown:            kafka.Int64Ptr(s.flowTableUnknown.Swap(0)),
 				TCPRetransmitsClientTotal:   kafka.Int64Ptr(s.retransmitsClient.Swap(0)),
 				TCPRetransmitsHoneypotTotal: kafka.Int64Ptr(s.retransmitsHoneypot.Swap(0)),
 				FlowsClientTotal:            kafka.Int64Ptr(s.flowsClient.Swap(0)),
@@ -328,6 +334,8 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	h.retransmitsHoneypot = &s.retransmitsHoneypot
 	h.flowsClient = &s.flowsClient
 	h.flowsHoneypot = &s.flowsHoneypot
+	h.flowTableNotFound = &s.flowTableNotFound
+	h.flowTableUnknown = &s.flowTableUnknown
 	h.Handle()
 
 	log.Info("handler finished")
