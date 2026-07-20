@@ -1,0 +1,1444 @@
+package proxy
+
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+	"io"
+	"net"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"time"
+	"unsafe"
+
+	"github.com/spawnzao/dpipot-ng/internal/flow"
+	"github.com/spawnzao/dpipot-ng/internal/httpclassifier"
+	"github.com/spawnzao/dpipot-ng/internal/kafka"
+	"github.com/spawnzao/dpipot-ng/internal/mitm"
+	"github.com/spawnzao/dpipot-ng/internal/router"
+	"go.uber.org/zap"
+)
+
+const (
+	classifyBufferSize  = 4096
+	honeypotDialTimeout = 5 * time.Second
+	originalDstTimeout  = 2 * time.Second
+)
+
+// Handler processa uma única conexão TCP de um atacante.
+// É criado um Handler por conexão, rodando em goroutine separada.
+type Handler struct {
+	tupleID          string // 5-tupla normalizada; calculado após resolução do origDst
+	classifierFlowID string // UUID gerado pelo classifier; obtido via FlowTracker
+	conn    net.Conn
+	router  *router.Router
+	producer *kafka.Producer
+	log     *zap.Logger
+
+	srcIP   string
+	srcPort int
+	dstIP   string
+	dstPort int
+
+	// CertManager para TLS MITM
+	certMgr *mitm.CertManager
+
+	// captura dos payloads para o Kafka
+	maxPayloadBytes  int64
+	sshInputBufSize  int
+	sshOutputBufSize int
+	flowTable        *flow.Table
+
+	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
+	serverFirstPorts map[uint16]string
+
+	// serverFirstPortsTLS contém as portas TLS server-first (ex: 993 IMAPS, 995 POP3S)
+	serverFirstPortsTLS map[uint16]string
+
+	// httpAuthPorts contém as portas HTTP que precisam de autenticação (plaintext)
+	httpAuthPorts map[uint16]bool
+
+	// httpAuthPortsTLS contém as portas HTTP TLS que precisam de autenticação
+	httpAuthPortsTLS map[uint16]bool
+
+	// httpClassifier classifica requisições HTTP por lista branca
+	httpClassifier *httpclassifier.Classifier
+
+	// proxyTimeout define o timeout de vida total da conexão
+	proxyTimeout time.Duration
+
+	// telemetria de carga capturada no momento do Accept, incluída no evento Kafka
+	slotsUsed   int
+	slotsMax    int
+	perIPActive int
+	nodeName    string
+	podName     string
+
+	// ponteiros para contadores do Server — acumulados durante Handle() e zerados no heartbeat
+	retransmitsClient   *atomic.Int64
+	retransmitsHoneypot *atomic.Int64
+	flowsClient         *atomic.Int64
+	flowsHoneypot       *atomic.Int64
+}
+
+func NewHandler(
+	conn net.Conn,
+	r *router.Router,
+	producer *kafka.Producer,
+	maxPayloadBytes int64,
+	sshInputBufSize int,
+	sshOutputBufSize int,
+	log *zap.Logger,
+	flowTable *flow.Table,
+	certMgr *mitm.CertManager,
+	serverFirstPorts map[uint16]string,
+	serverFirstPortsTLS map[uint16]string,
+	httpAuthPorts map[uint16]bool,
+	httpAuthPortsTLS map[uint16]bool,
+	httpClassifier *httpclassifier.Classifier,
+	proxyTimeout time.Duration,
+) *Handler {
+	return &Handler{
+		conn:                conn,
+		router:              r,
+		producer:            producer,
+		maxPayloadBytes:     maxPayloadBytes,
+		sshInputBufSize:     sshInputBufSize,
+		sshOutputBufSize:    sshOutputBufSize,
+		log:                 log,
+		flowTable:           flowTable,
+		certMgr:             certMgr,
+		serverFirstPorts:    serverFirstPorts,
+		serverFirstPortsTLS: serverFirstPortsTLS,
+		httpAuthPorts:       httpAuthPorts,
+		httpAuthPortsTLS:    httpAuthPortsTLS,
+		httpClassifier:      httpClassifier,
+		proxyTimeout:        proxyTimeout,
+	}
+}
+
+// getOriginalDst obtém o IP e porta originais de destino usando
+// getsockopt(IP_ORIGINAL_DST) no Linux.
+// Funciona com REDIRECT.
+//
+// Usa SyscallConn().Control() em vez de File() para evitar que o fd seja
+// removido do poller epoll do runtime Go, o que quebraria SetDeadline.
+func getOriginalDst(conn net.Conn) (net.IP, uint16, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil, 0, fmt.Errorf("não é uma conexão TCP")
+	}
+
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return nil, 0, fmt.Errorf("SyscallConn: %w", err)
+	}
+
+	var addr syscall.RawSockaddrInet4
+	var addrLen uint32 = syscall.SizeofSockaddrInet4
+	var sysErr syscall.Errno
+
+	if ctrlErr := rawConn.Control(func(fd uintptr) {
+		_, _, sysErr = syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(80), // IP_ORIGINAL_DST
+			uintptr(unsafe.Pointer(&addr)),
+			uintptr(unsafe.Pointer(&addrLen)),
+			0,
+		)
+	}); ctrlErr != nil {
+		return nil, 0, fmt.Errorf("Control: %w", ctrlErr)
+	}
+	if sysErr != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_ORIGINAL_DST: %v", sysErr)
+	}
+
+	ip := net.IP(addr.Addr[:])
+	port := binary.BigEndian.Uint16((*[2]byte)(unsafe.Pointer(&addr.Port))[:])
+
+	return ip, port, nil
+}
+
+// getTproxyDst obtém o IP e porta originais quando o tráfego vem via TPROXY.
+// Usa IP_PKTINFO para obter o endereço de destino original do pacote.
+// Estrutura in_pktinfo: https://elixir.bootlin.com/linux/v5.15/source/include/uapi/linux/in.h#L240
+type inPktInfo struct {
+	ifIndex uint32
+	specDst [4]byte
+	addr    [4]byte
+}
+
+// getTproxyDst obtém o IP e porta originais quando o tráfego vem via TPROXY.
+//
+// Usa SyscallConn().Control() em vez de File() para evitar que o fd seja
+// removido do poller epoll do runtime Go, o que quebraria SetDeadline.
+func getTproxyDst(conn net.Conn) (net.IP, uint16, error) {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil, 0, fmt.Errorf("não é uma conexão TCP")
+	}
+
+	rawConn, err := tcpConn.SyscallConn()
+	if err != nil {
+		return nil, 0, fmt.Errorf("SyscallConn: %w", err)
+	}
+
+	var pktInfo inPktInfo
+	var pktInfoLen uint32 = uint32(unsafe.Sizeof(pktInfo))
+	var pktSysErr syscall.Errno
+
+	if ctrlErr := rawConn.Control(func(fd uintptr) {
+		_, _, pktSysErr = syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(25), // IP_PKTINFO
+			uintptr(unsafe.Pointer(&pktInfo)),
+			uintptr(unsafe.Pointer(&pktInfoLen)),
+			0,
+		)
+	}); ctrlErr != nil {
+		return nil, 0, fmt.Errorf("Control (IP_PKTINFO): %w", ctrlErr)
+	}
+	if pktSysErr != 0 {
+		return nil, 0, fmt.Errorf("getsockopt IP_PKTINFO: %v", pktSysErr)
+	}
+
+	ip := net.IP(pktInfo.specDst[:])
+	if ip.Equal(net.IPv4zero) {
+		ip = net.IP(pktInfo.addr[:])
+	}
+
+	// sockaddr_in: 2-byte family + 2-byte port (BE) + 4-byte addr + 8-byte pad = 16 bytes
+	var origDstAddr [16]byte
+	var origDstLen uint32 = 16
+
+	// IP_ORIGINAL_DSTADDR é best-effort; ignora erro
+	rawConn.Control(func(fd uintptr) { //nolint:errcheck
+		syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.SOL_IP),
+			uintptr(20), // IP_ORIGINAL_DSTADDR
+			uintptr(unsafe.Pointer(&origDstAddr)),
+			uintptr(unsafe.Pointer(&origDstLen)),
+			0,
+		)
+	})
+
+	origPort := uint16(origDstAddr[2])<<8 | uint16(origDstAddr[3])
+	localAddr := conn.LocalAddr().(*net.TCPAddr)
+	if origPort == 0 {
+		origPort = uint16(localAddr.Port)
+	}
+
+	return ip, origPort, nil
+}
+
+// Handle é o ciclo de vida completo de uma conexão:
+//
+//  1. Lê o primeiro chunk do atacante
+//  2. Obtém IP/porta original via getsockopt
+//  3. Classifica com nDPI
+//  4. Resolve honeypot pelo label
+//  5. Tenta conectar ao honeypot (pode falhar)
+//  6. Se conectado: pipe bidirecional com captura de payload
+//  7. Sempre: publica evento no Kafka (mesmo se honeypot falhar)
+func (h *Handler) Handle() {
+	defer h.conn.Close()
+
+	srcAddr := h.conn.RemoteAddr().(*net.TCPAddr)
+	dstAddr := h.conn.LocalAddr().(*net.TCPAddr)
+
+	log := h.log.With(
+		zap.Stringer("src", srcAddr),
+		zap.Stringer("dst", dstAddr),
+	)
+
+	h.srcIP = srcAddr.IP.String()
+	h.srcPort = srcAddr.Port
+	h.dstIP = dstAddr.IP.String()
+	h.dstPort = dstAddr.Port
+
+	log.Info("🔍 Handle() iniciado")
+
+	// Aplica timeout de vida total da conexão (PROXY_TIMEOUT)
+	deadline := time.Now().Add(h.proxyTimeout)
+	h.conn.SetDeadline(deadline)
+
+	// tuple_id preliminar usando dstAddr (em TPROXY mode == origDst real)
+	// Pode ser refinado em STEP 2 se REDIRECT retornar IP diferente.
+	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
+	h.tupleID = flowIDForTracker
+	log = log.With(zap.String("tuple_id", h.tupleID))
+
+	appProtoFlow := "Unknown"
+	var (
+		earlyProto, earlyMasterProto string
+		earlyTrackerFound            bool
+	)
+	if h.flowTable != nil {
+		if entry, found := h.flowTable.Get(flowIDForTracker); found {
+			earlyTrackerFound = true
+			earlyProto = entry.Protocol
+			earlyMasterProto = entry.MasterProtocol
+			if entry.FlowUUID != "" {
+				h.classifierFlowID = entry.FlowUUID
+				log = log.With(zap.String("flow_id", h.classifierFlowID))
+			}
+		}
+	}
+
+	// Fallback via SERVER_FIRST_PORTS: calculado sempre e usado quando ndpiLabel
+	// ainda for "Unknown" — tanto quando FlowTracker não encontrou o fluxo quanto
+	// quando encontrou mas o protocolo ainda não foi classificado pelo nDPI.
+	var fallbackProto string
+	if proto := h.serverFirstPorts[uint16(dstAddr.Port)]; proto != "" {
+		fallbackProto = proto
+		if !earlyTrackerFound {
+			log.Debug("proto encontrado no SERVER_FIRST_PORTS", zap.Uint16("port", uint16(dstAddr.Port)), zap.String("app_proto", proto))
+		}
+	}
+
+	var (
+		bufSrc           bytes.Buffer
+		bufDst           bytes.Buffer
+		ndpiLabel        = "Unknown"
+		masterProtoFlow  = "Unknown"
+		honeypotAddr     string
+		honeypotError    string
+		startTime        = time.Now()
+		wg               sync.WaitGroup
+		teeWriterSrc     *limitedTeeWriter
+		teeWriterDst     *limitedTeeWriter
+		honeypotConn     net.Conn
+		err              error
+		n                int
+		firstChunk       []byte
+		origDstIP        = dstAddr.IP
+		origDstPort      = uint16(dstAddr.Port)
+		isZeroIP        bool
+		isSSH          bool
+		isTLS          bool
+		isClientTimeout   bool
+		isProbe          bool
+		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
+		refined          string
+		trackerFound       bool
+		clientTTL          uint8
+		clientTOS          uint8
+		clientTCPWindow    uint16
+		clientIPVersion    uint8
+		clientRttMs        float64
+		clientRttVarMs     float64
+		clientRetransmits  uint8
+	)
+
+	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
+	// depois usa SERVER_FIRST_PORTS como fallback se ndpiLabel ainda for "Unknown"
+	// (FlowTracker não encontrou o fluxo OU encontrou mas nDPI ainda não classificou).
+	if earlyTrackerFound {
+		masterProtoFlow = earlyProto      // swap intencional: proto → masterProtoFlow
+		appProtoFlow = earlyMasterProto   // swap intencional: masterProto → appProtoFlow
+		if masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+			ndpiLabel = masterProtoFlow
+		}
+	}
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && fallbackProto != "" {
+		ndpiLabel = fallbackProto
+		log.Debug("SERVER_FIRST_PORTS fallback aplicado", zap.String("ndpi_label", ndpiLabel))
+	}
+
+	// --- STEP 1: verifica se é porta server-first ---
+	dstPort := uint16(dstAddr.Port)
+	isServerFirst := isServerFirstPort(h.serverFirstPorts, dstPort)
+	isServerFirstTLS := mitm.IsServerFirstTLSPort(h.serverFirstPortsTLS, dstPort)
+
+	// Verifica se é porta HTTP_AUTH (plaintext ou TLS)
+	isHttpAuth := h.httpAuthPorts[dstPort]
+	isHttpAuthTLS := h.httpAuthPortsTLS[dstPort]
+
+	// Não pode ser server-first E HTTP_AUTH simultaneamente
+	if (isServerFirst || isServerFirstTLS) && (isHttpAuth || isHttpAuthTLS) {
+		log.Warn("porta não pode ser server-first E HTTP_AUTH simultaneamente", zap.Uint16("port", dstPort))
+		honeypotError = "invalid port configuration"
+		goto publish
+	}
+
+	if isServerFirst && isServerFirstTLS {
+		log.Warn("porta não pode ser server-first E server-first-TLS simultaneamente", zap.Uint16("port", dstPort))
+		honeypotError = "invalid server-first configuration"
+		goto publish
+	}
+
+	// Server-first TLS (IMAPS 993, POP3S 995, etc): TLS handshake primeiro, depois relay
+	if isServerFirstTLS {
+		log.Debug("porta server-first TLS detectada",
+			zap.Uint16("port", dstPort),
+			zap.String("app_proto", h.serverFirstPortsTLS[dstPort]))
+
+		ndpiLabel := appProtoFlow
+		if ndpiLabel == "" || ndpiLabel == "Unknown" {
+			ndpiLabel = h.serverFirstPortsTLS[dstPort]
+		}
+
+		honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+		log.Debug("rota SF-TLS resolvida",
+			zap.String("app_proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr))
+
+		cert := h.certMgr.Cert()
+		mitmLogger := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf("SF-TLS: "+format, args...)
+			log.Info(msg)
+		}
+
+		err = mitm.HandleServerFirstTLS(mitm.ServerFirstTLSConfig{
+			ClientConn:   h.conn,
+			HoneypotConn: nil,
+			Cert:        cert,
+			FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+			SrcIP:       h.srcIP,
+			SrcPort:     h.srcPort,
+			DstIP:       h.dstIP,
+			DstPort:     h.dstPort,
+			HoneypotAddr: honeypotAddr,
+			NDPIProto:   ndpiLabel,
+			MaxPayloadSize: h.maxPayloadBytes,
+			Deadline:    deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: mitmLogger,
+		})
+		if err != nil {
+			if isExpectedTLSError(err) {
+				log.Warn("HandleServerFirstTLS falhou", zap.Error(err))
+			} else {
+				log.Error("HandleServerFirstTLS falhou", zap.Error(err))
+			}
+			honeypotError = fmt.Sprintf("server-first TLS relay failed: %v", err)
+		}
+		goto publish
+	}
+
+	if isServerFirst {
+		log.Debug("porta server-first detectada, conectando ao honeypot para greeting",
+			zap.Uint16("port", dstPort))
+
+		honeypotAddr = h.router.ResolveByPort(dstPort)
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para porta server-first", zap.Uint16("port", dstPort))
+			honeypotError = fmt.Sprintf("no honeypot for port %d", dstPort)
+			goto publish
+		}
+
+		honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+		if err != nil {
+			log.Error("falha conectando ao honeypot (server-first)",
+				zap.String("honeypot", honeypotAddr),
+				zap.Error(err))
+			honeypotError = fmt.Sprintf("connection failed: %v", err)
+			goto publish
+		}
+
+		// Recebe greeting do servidor
+		greetingBuf := make([]byte, classifyBufferSize)
+		// Mantém o deadline de vida total da conexão (não usar timeout curto)
+		n, err = honeypotConn.Read(greetingBuf)
+
+		if err != nil {
+			log.Warn("timeout/nenhum greeting do honeypot (server-first)", zap.Error(err))
+			honeypotConn.Close()
+			honeypotError = fmt.Sprintf("greeting failed: %v", err)
+			goto publish
+		}
+
+greetingBuf = greetingBuf[:n]
+		log.Debug("recebi greeting do honeypot (server-first)",
+			zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]),
+			zap.Uint16("port", dstPort))
+
+		parser := mitm.NewParser(ndpiLabel, int(dstPort))
+		bannerEvents := parser.ParseServerData(greetingBuf, func(format string, args ...interface{}) {})
+
+		for _, ev := range bannerEvents {
+			if ev.EventType == mitm.EventBanner || ev.Banner != "" {
+				if h.producer != nil {
+					h.publishEvent(&kafka.Event{
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+						Timestamp:   time.Now(),
+						SrcIP:       h.srcIP,
+						SrcPort:     h.srcPort,
+						DstIP:       h.dstIP,
+						DstPort:     int(dstPort),
+						NDPIProto:   ndpiLabel,
+						NDPIApp:    string(ev.EventType),
+						AttackType: ev.Banner,
+						Honeypot:    honeypotAddr,
+						Instance:      "proxy",
+						PayloadDst:  greetingBuf,
+					})
+				}
+			}
+		}
+
+		log.Info("ServerFirst: banner/version publicado no Kafka")
+
+		// Envia greeting para o cliente
+		_, err = h.conn.Write(greetingBuf)
+		if err != nil {
+			log.Warn("falha ao enviar greeting para o cliente", zap.Error(err))
+			honeypotConn.Close()
+			honeypotError = fmt.Sprintf("greeting forward failed: %v", err)
+			goto publish
+		}
+
+		// Flush para garantir que chegou ao cliente
+		if f, ok := h.conn.(interface{ Flush() error }); ok {
+			f.Flush()
+		}
+
+		mitmLogger := func(format string, args ...interface{}) {
+			msg := fmt.Sprintf("ServerFirst: "+format, args...)
+			log.Info(msg)
+		}
+
+		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
+			ClientConn:     h.conn,
+			HoneypotConn: honeypotConn,
+			FlowID:       h.classifierFlowID,
+			TupleID:      h.tupleID,
+			SrcIP:        h.srcIP,
+			SrcPort:      h.srcPort,
+			DstIP:        h.dstIP,
+			DstPort:      h.dstPort,
+			HoneypotAddr: honeypotAddr,
+			NDPIProto:    ndpiLabel,
+			MaxPayloadSize: h.maxPayloadBytes,
+			Deadline:     deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: mitmLogger,
+		})
+		if err != nil {
+			log.Error("HandleServerFirst falhou", zap.Error(err))
+			honeypotError = fmt.Sprintf("server-first relay failed: %v", err)
+		}
+
+		goto publish
+	}
+
+	// --- STEP 2: tenta ler primeiro chunk do cliente ---
+	// Para protocolos que o cliente fala primero (HTTP é FTP, etc), isso funciona
+	firstChunk = make([]byte, classifyBufferSize)
+	// Mantém o deadline de vida total da conexão (não usar timeout curto)
+	n, err = h.conn.Read(firstChunk)
+
+	log.Info("📥 dados lidos do cliente", zap.Int("n", n), zap.Error(err))
+
+	// Se der timeout (i/o timeout), pode ser:
+	// 1. Cliente ainda não enviou dados (esperando greeting do servidor - ex: MySQL)
+	// 2. Rede lenta
+	// 3. Cliente malicioso
+	isClientTimeout = false
+	if err != nil {
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			log.Debug("timeout lendo do cliente, tentando conectar ao honeypot para receber greeting", zap.Error(err))
+			isClientTimeout = true
+		} else if err != io.EOF {
+			log.Debug("erro lendo primeiro chunk", zap.Error(err))
+			honeypotError = fmt.Sprintf("read error: %v", err)
+			goto publish
+		}
+	}
+
+	isProbe = false
+	if n == 0 && !isServerFirstPort(h.serverFirstPorts, dstPort) {
+		if err == nil || err == io.EOF {
+			isProbe = true
+		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			isProbe = true
+		}
+	}
+	if isProbe {
+		log.Debug("cliente não enviou dados ou fechou conexão (0 bytes lidos)", zap.Int("n", n), zap.Error(err))
+		honeypotError = ""
+		goto publish
+	}
+
+	if isClientTimeout {
+		// Só tenta ler greeting do honeypot se a porta for server-first
+		if !isServerFirstPort(h.serverFirstPorts, dstPort) {
+			log.Debug("timeout do cliente mas porta não é server-first, fluxo normal",
+				zap.Uint16("port", dstPort))
+		} else {
+			// Porta é server-first, conecta ao honeypot para receber greeting
+			honeypotAddrFromPort := h.router.ResolveByPort(uint16(dstAddr.Port))
+
+			if honeypotAddrFromPort != "" {
+				log.Debug("conectando ao honeypot para receber greeting do servidor",
+					zap.Stringer("dstAddr", dstAddr),
+					zap.String("honeypot", honeypotAddrFromPort),
+				)
+
+				var honeypotGreetingConn net.Conn
+				honeypotGreetingConn, err = net.DialTimeout("tcp", honeypotAddrFromPort, honeypotDialTimeout)
+				if err != nil {
+					log.Warn("falha conectando ao honeypot por porta", zap.Error(err))
+					goto publish
+				}
+				// Agora espera o greeting do servidor (com timeout)
+				greetingBuf := make([]byte, classifyBufferSize)
+				// Mantém o deadline de vida total da conexão (não usar timeout curto)
+				n, err = honeypotGreetingConn.Read(greetingBuf)
+
+				if err != nil {
+					log.Warn("timeout lendo greeting do honeypot", zap.Error(err))
+					honeypotGreetingConn.Close()
+				} else {
+					greetingBuf = greetingBuf[:n]
+					log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
+
+					// Envia greeting para o cliente
+					_, err = h.conn.Write(greetingBuf)
+					if err != nil {
+						log.Warn("falha enviando greeting para o cliente", zap.Error(err))
+					}
+
+					// Agora conecta ao honeypot definitivo usando o protocolo classificado
+					honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+					log.Debug("protocolo identificado via greeting, honeypot resolved",
+						zap.String("app_proto", ndpiLabel),
+						zap.String("honeypot", honeypotAddr),
+					)
+
+					// Usa o greeting como primeiro chunk
+					firstChunk = greetingBuf
+					bufSrc.Write(firstChunk)
+
+					// Conecta ao honeypot definitivo
+					honeypotGreetingConn.Close()
+					honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+					if err != nil {
+						log.Error("falha conectando ao honeypot (greeting path)",
+							zap.String("honeypot", honeypotAddr),
+							zap.Error(err),
+						)
+						honeypotError = fmt.Sprintf("connection failed: %v", err)
+						goto publish
+					}
+					defer honeypotConn.Close()
+
+					// Vai direto para o relay (Step 6)
+					goto doRelay
+				}
+			}
+		}
+	}
+
+	if n > 0 {
+		firstChunk = firstChunk[:n]
+		bufSrc.Write(firstChunk)
+
+		// Detecta se é conexão de probe (todos os bytes lidos são zeros)
+		zeroCount := 0
+		for i := 0; i < n; i++ {
+			if firstChunk[i] == 0 {
+				zeroCount++
+			}
+		}
+		isAllZeros := zeroCount == n
+		log.Info("🔍 dados recebidos", zap.Int("n", n), zap.Int("zeros", zeroCount), zap.Bool("isAllZeros", isAllZeros))
+		if isAllZeros {
+			isProbe = true
+			log.Info("🔍 conexão de probe detectada", zap.Int("bytes", n), zap.Bool("isProbe", isProbe))
+		}
+	}
+
+	// --- STEP 2: obtém IP/porta original ---
+	// Primeiro tenta TPROXY (IP_PKTINFO), depois REDIRECT (IP_ORIGINAL_DST)
+	origDstIP, origDstPort, err = getTproxyDst(h.conn)
+	isZeroIP = origDstIP != nil && origDstIP.IsUnspecified()
+	if err != nil || isZeroIP {
+		if err != nil {
+			log.Debug("TPROXY não disponível, tentando REDIRECT", zap.Error(err))
+		} else {
+			log.Debug("TPROXY retornou IP inválido (0.0.0.0), tentando REDIRECT")
+		}
+		origDstIP, origDstPort, err = getOriginalDst(h.conn)
+		isZeroIP = origDstIP != nil && origDstIP.IsUnspecified()
+		if err != nil || isZeroIP {
+			if err != nil {
+				log.Debug("REDIRECT falhou, usando fallback",
+					zap.Error(err),
+					zap.Stringer("local", dstAddr),
+				)
+			} else {
+				log.Debug("REDIRECT retornou IP inválido (0.0.0.0), usando fallback",
+					zap.Stringer("local", dstAddr),
+				)
+			}
+			// Fallback: usa dstAddr como origDst (o IP que o cliente Tentou alcançar)
+			origDstIP = dstAddr.IP
+			origDstPort = uint16(dstAddr.Port)
+		}
+	}
+
+	h.conn.SetDeadline(deadline)
+
+	// Refina tuple_id com origDst real (pode diferir de dstAddr em modo REDIRECT)
+	refined = normalizeFlowID(srcAddr.IP, origDstIP, uint16(srcAddr.Port), origDstPort, 6)
+	if refined != h.tupleID {
+		h.tupleID = refined
+		log = log.With(zap.String("tuple_id", h.tupleID))
+	}
+
+	log.Debug("IP original via TPROXY/REDIRECT",
+		zap.Stringer("origDstIP", origDstIP),
+		zap.Uint16("origDstPort", origDstPort),
+		zap.Stringer("localAddr", dstAddr),
+	)
+
+	log.Debug("informações do fluxo",
+		zap.String("src_ip", srcAddr.IP.String()),
+		zap.Uint16("src_port", uint16(srcAddr.Port)),
+		zap.String("dst_ip", dstAddr.IP.String()),
+		zap.Uint16("dst_port", uint16(dstAddr.Port)),
+		zap.Stringer("origDstIP", origDstIP),
+		zap.Uint16("origDstPort", origDstPort),
+	)
+
+	// --- STEP 3: classifica via flow table in-process (nDPI no mesmo binário) ---
+	flowIDForTracker = normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
+
+	if h.flowTable != nil {
+		if entry, found := h.flowTable.Get(flowIDForTracker); found {
+			masterProtoFlow = entry.Protocol
+			appProtoFlow = entry.MasterProtocol
+			if entry.FlowUUID != "" && h.classifierFlowID == "" {
+				h.classifierFlowID = entry.FlowUUID
+				log = log.With(zap.String("flow_id", h.classifierFlowID))
+			}
+			if masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
+				trackerFound = true
+				clientTTL = entry.TTL
+				clientTOS = entry.TOS
+				clientTCPWindow = entry.TCPWindow
+				clientIPVersion = entry.IPVersion
+				ndpiLabel = masterProtoFlow
+				if ndpiLabel == "" {
+					ndpiLabel = appProtoFlow
+				}
+				log.Info("fluxo classificado via flow table",
+					zap.String("ndpi_proto", masterProtoFlow),
+					zap.String("ndpi_app", appProtoFlow),
+					zap.Uint8("ttl", clientTTL),
+					zap.Uint16("tcp_window", clientTCPWindow),
+				)
+			} else {
+				if fallbackProto != "" {
+					ndpiLabel = fallbackProto
+					masterProtoFlow = fallbackProto
+					appProtoFlow = ""
+				} else {
+					ndpiLabel = "Unknown"
+					masterProtoFlow = "Unknown"
+					appProtoFlow = "Unknown"
+				}
+			}
+		} else {
+			if fallbackProto != "" {
+				ndpiLabel = fallbackProto
+				masterProtoFlow = fallbackProto
+				appProtoFlow = ""
+			} else {
+				ndpiLabel = "Unknown"
+				masterProtoFlow = "Unknown"
+				appProtoFlow = "Unknown"
+			}
+		}
+	} else {
+		masterProtoFlow = ndpiLabel
+		appProtoFlow = ""
+	}
+
+	log.Info("fluxo classificado", zap.String("app_proto", ndpiLabel))
+
+	// Garante que ndpiLabel nunca seja vazio
+	if ndpiLabel == "" {
+		ndpiLabel = "Unknown"
+	}
+
+	// Refinamento: quando o master protocol é genérico (Unknown) mas o app protocol
+	// é específico, usa o app protocol para roteamento. Isso cobre casos como
+	// Unknown.RDP onde o nDPI não classificou o transporte mas identificou a aplicação.
+	// Nota: TLS.X é tratado separadamente no bloco isTLS abaixo.
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" {
+		if appProtoFlow != "" && strings.ToUpper(appProtoFlow) != "UNKNOWN" {
+			log.Info("ndpiLabel refinado via appProtoFlow",
+				zap.String("master_was", ndpiLabel),
+				zap.String("app_proto", appProtoFlow))
+			ndpiLabel = appProtoFlow
+		}
+	}
+
+	// --- STEP 4: resolve honeypot pelo label nDPI ---
+	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
+
+	// Sem rota configurada: publica o evento com o payload já capturado (firstChunk)
+	// e não tenta dial para evitar erro desnecessário de conexão recusada.
+	if honeypotAddr == "" {
+		log.Info("sem rota para protocolo, capturando payload e encerrando",
+			zap.String("ndpi_label", ndpiLabel),
+			zap.Int("first_chunk_bytes", len(firstChunk)))
+		honeypotError = fmt.Sprintf("no route for protocol: %s", ndpiLabel)
+		goto publish
+	}
+
+	// Classificação HTTP por lista branca
+	if h.httpClassifier != nil && (ndpiLabel == "HTTP") && !isHttpAuth && !isHttpAuthTLS {
+		class, httpMethod, httpPath := h.httpClassifier.Classify(firstChunk)
+
+		switch class {
+		case httpclassifier.ClassUnknown:
+			log.Debug("HTTP: payload não reconhecido, mantendo rota normal",
+				zap.String("app_proto", ndpiLabel),
+			)
+
+		case httpclassifier.ClassLegitimate:
+			log.Debug("HTTP legítimo, mantendo rota normal",
+				zap.String("method", httpMethod),
+				zap.String("path", httpPath),
+			)
+
+		case httpclassifier.ClassMalicious:
+			log.Info("🚨 HTTP suspeito detectado, roteando para HTTP_SUSPECT",
+				zap.String("method", httpMethod),
+				zap.String("path", httpPath),
+				zap.String("src", h.srcIP),
+			)
+			if addr, _ := h.router.Resolve("HTTP_SUSPECT"); addr != "" {
+				honeypotAddr = addr
+				ndpiLabel = "HTTP_SUSPECT"
+			} else {
+				log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
+					zap.String("path", httpPath),
+				)
+			}
+		}
+	}
+
+	// Se for porta HTTP_AUTH (plaintext), sobrescreve para AUTH
+	if isHttpAuth {
+		log.Debug("porta HTTP AUTH (plaintext) detectada, roteando para HTTP_AUTH",
+			zap.Uint16("port", dstPort))
+		honeypotAddr, _ = h.router.Resolve("HTTP_AUTH")
+		if honeypotAddr == "" {
+			log.Warn("não encontrou honeypot para HTTP_AUTH", zap.Uint16("port", dstPort))
+			honeypotError = "no honeypot for HTTP_AUTH"
+			goto publish
+		}
+		ndpiLabel = "HTTP_AUTH"
+	}
+
+	// --- NOVO: Tratamento especial para RDP ---
+	if ndpiLabel == "RDP" {
+		log.Info("RDP detectado, usando handler dedicado")
+
+		// HandleRDP faz o dial do honeypot ele mesmo, após o TLS com o cliente
+		// ser estabelecido. A primeira conexão do mstsc.exe serve apenas para
+		// exibir o certificado do proxy; conectar ao honeypot nesse momento é
+		// desnecessário e causa timeout de 30 s.
+		if err := mitm.HandleRDP(mitm.RDPConfig{
+			ClientConn:   h.conn,
+			HoneypotAddr: honeypotAddr,
+			FirstChunk:   firstChunk,
+			TLSCert:      h.certMgr.Cert(),
+			FlowID:       h.classifierFlowID,
+			SrcIP:        h.srcIP,
+			SrcPort:      h.srcPort,
+			DstIP:        origDstIP.String(),
+			DstPort:      int(origDstPort),
+			TupleID:      h.tupleID,
+			Deadline:     deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: func(format string, args ...interface{}) {
+				log.Info(fmt.Sprintf("RDP: "+format, args...))
+			},
+		}); err != nil {
+			if strings.Contains(err.Error(), "with client") {
+				log.Warn("RDP client TLS falhou (scanner/probe)", zap.Error(err))
+			} else {
+				log.Warn("RDP relay encerrado", zap.Error(err))
+			}
+		}
+
+		goto publish
+	}
+
+	// --- STEP 4.5: verifica se precisa de MITM ---
+	isSSH = mitm.IsSSH(firstChunk)
+	isTLS = mitm.IsTLS(firstChunk)
+	log.Debug("🔍 verificando MITM",
+		zap.ByteString("firstChunk", firstChunk[:min(20, len(firstChunk))]),
+		zap.Bool("isSSH", isSSH),
+		zap.Bool("isTLS", isTLS),
+		zap.Bool("isProbe", isProbe),
+	)
+
+	// SSH: usa MITM
+	if isSSH {
+		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
+
+		hostKey, err := GetSSHHostKey()
+		if err != nil {
+			log.Error("falha obtendo host key SSH", zap.Error(err))
+			honeypotError = fmt.Sprintf("MITM setup failed: %v", err)
+			goto publish
+		}
+
+		// Para o MITM de SSH, precisamos repassar o primeiro chunk que já foi lido
+		// O MITM não viu esse dados, então criamos uma conexão com preload
+		clientConn := &mitm.PreloadConn{
+			Conn:    h.conn,
+			Preload: firstChunk,
+		}
+		log.Debug("SSH MITM: passando conexão com preload", zap.Int("bytes", len(firstChunk)))
+		mitmConfig := mitm.SSHMITMConfig{
+			HostKey:          hostKey,
+			Banner:           string(firstChunk),
+			TargetAddr:       honeypotAddr,
+			FlowID:           h.classifierFlowID,
+			TupleID:          h.tupleID,
+			SrcIP:            srcAddr.IP.String(),
+			SrcPort:          srcAddr.Port,
+			DstIP:            origDstIP.String(),
+			DstPort:          int(origDstPort),
+			Deadline:         deadline,
+			SSHInputBufSize:  h.sshInputBufSize,
+			SSHOutputBufSize: h.sshOutputBufSize,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+		}
+
+mitmLogger := func(format string, args ...interface{}) {
+			log.Info("SSH-MITM: "+fmt.Sprintf(format, args...))
+		}
+
+		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
+		if err != nil {
+			errStr := err.Error()
+			if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet") {
+				if strings.Contains(errStr, "permission denied, permission denied, permission denied") {
+					log.Info("MITM SSH: cliente esgotou tentativas de senha (comportamento esperado)", zap.Error(err))
+					event := &kafka.Event{
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(origDstPort),
+						NDPIProto:   "SSH",
+						NDPIApp:    "auth_exhausted",
+						AttackType: "client exhausted password attempts",
+						Honeypot:   honeypotAddr,
+						Instance:      "proxy",
+					}
+					h.publishEvent(event)
+				} else {
+					log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
+				}
+			} else {
+				log.Info("MITM SSH: cliente fechou conexão antes do handshake", zap.Error(err))
+			}
+			honeypotError = fmt.Sprintf("MITM failed: %v", err)
+		}
+		goto publish
+	}
+
+	// TLS: usa MITM com certificados do CertManager (do disco ou gerados)
+	// Se for porta HTTP_AUTH_TLS, roteia para AUTH em vez do protocolo nDPI
+	if isTLS {
+		// Se for porta HTTP_AUTH_TLS, roteia para HTTP_AUTH
+		if isHttpAuthTLS {
+			log.Debug("porta HTTP AUTH TLS detectada, roteando para HTTP_AUTH",
+				zap.Uint16("port", dstPort))
+			honeypotAddr, _ = h.router.Resolve("HTTP_AUTH")
+			if honeypotAddr == "" {
+				log.Warn("não encontrou honeypot para HTTP_AUTH", zap.Uint16("port", dstPort))
+				honeypotError = "no honeypot for HTTP_AUTH"
+				goto publish
+			}
+			ndpiLabel = "HTTP_AUTH"
+		}
+
+		// TLS.X: quando TLS é o transporte mas o app protocol é mais específico
+		// (ex: TLS.RDP, TLS.SSH, TLS.MQTT). Reroteia para o honeypot do app protocol
+		// mas mantém o MITM TLS para terminar a camada de transporte.
+		if !isHttpAuthTLS {
+			encapsulated := strings.ToUpper(appProtoFlow)
+			if encapsulated != "" && encapsulated != "UNKNOWN" && encapsulated != "TLS" {
+				if encAddr, _ := h.router.Resolve(appProtoFlow); encAddr != "" {
+					log.Info("TLS encapsulado detectado, roteando para honeypot do app protocol",
+						zap.String("transport", "TLS"),
+						zap.String("app_proto", appProtoFlow),
+						zap.String("old_honeypot", honeypotAddr),
+						zap.String("new_honeypot", encAddr))
+					honeypotAddr = encAddr
+					ndpiLabel = "TLS." + appProtoFlow // ex: "TLS.RDP", "TLS.SSH"
+				}
+			}
+		}
+
+		log.Info("🔐 TLS detectado, usando MITM", zap.String("target", honeypotAddr))
+
+		var bufSrcTLS, bufDstTLS bytes.Buffer
+		limSrcTLS := newLimitedTeeWriter(&bufSrcTLS, h.maxPayloadBytes)
+		limDstTLS := newLimitedTeeWriter(&bufDstTLS, h.maxPayloadBytes)
+
+		cert := h.certMgr.Cert()
+		mitmConfig := mitm.TLSMITMConfig{
+			Cert:         cert,
+			TargetAddr:   honeypotAddr,
+			FirstData:    firstChunk,
+			OnSrcData: func(p []byte) {
+				limSrcTLS.Write(p) // honeypot → cliente = payload_dst
+			},
+			OnDstData: func(p []byte) {
+				limDstTLS.Write(p) // cliente → honeypot = payload_src
+			},
+			Deadline: deadline,
+		}
+
+		// Classificação HTTP sobre TLS (HTTPS): inspeciona o primeiro chunk decriptado
+		if h.httpClassifier != nil && !isHttpAuth && !isHttpAuthTLS {
+			mitmConfig.OnFirstDecrypted = func(chunk []byte) string {
+				class, httpMethod, httpPath := h.httpClassifier.Classify(chunk)
+				switch class {
+				case httpclassifier.ClassUnknown:
+					log.Debug("HTTPS: payload não reconhecido, mantendo rota normal",
+						zap.String("app_proto", ndpiLabel),
+					)
+
+				case httpclassifier.ClassLegitimate:
+					log.Debug("HTTPS legítimo, mantendo rota normal",
+						zap.String("method", httpMethod),
+						zap.String("path", httpPath),
+					)
+
+				case httpclassifier.ClassMalicious:
+					log.Info("🚨 HTTPS suspeito detectado, roteando para HTTP_SUSPECT",
+						zap.String("method", httpMethod),
+						zap.String("path", httpPath),
+						zap.String("src", h.srcIP),
+					)
+					if attackAddr, _ := h.router.Resolve("HTTP_SUSPECT"); attackAddr != "" {
+						honeypotAddr = attackAddr
+						ndpiLabel = "HTTP_SUSPECT"
+						return attackAddr
+					}
+					log.Warn("honeypot HTTP_SUSPECT não configurado, mantendo rota normal",
+						zap.String("path", httpPath),
+					)
+				}
+				return ""
+			}
+		}
+
+		mitmLogger := func(format string, args ...interface{}) {
+			log.Info("TLS-MITM: "+fmt.Sprintf(format, args...))
+		}
+
+		err = mitm.HandleTLS(h.conn, mitmConfig, mitmLogger)
+		if err != nil {
+			if isExpectedTLSError(err) {
+				log.Warn("MITM TLS falhou", zap.Error(err))
+			} else {
+				log.Error("MITM TLS falhou", zap.Error(err))
+			}
+			honeypotError = fmt.Sprintf("MITM failed: %v", err)
+		}
+
+		payloadSrcTLS := bufDstTLS.Bytes() // cliente → honeypot
+		payloadDstTLS := bufSrcTLS.Bytes() // honeypot → cliente
+
+		if h.producer != nil && (len(payloadSrcTLS) > 0 || len(payloadDstTLS) > 0) {
+			event := &kafka.Event{
+				FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+				Timestamp:   time.Now(),
+				SrcIP:       h.srcIP,
+				SrcPort:     h.srcPort,
+				DstIP:       h.dstIP,
+				DstPort:     h.dstPort,
+				NDPIProto:   ndpiLabel,
+				Honeypot:    honeypotAddr,
+				PayloadSrc: payloadSrcTLS,
+				PayloadDst: payloadDstTLS,
+				Instance:      "proxy",
+			}
+			h.publishEvent(event)
+			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
+		}
+
+		log.Info("fluxo encerrado", zap.String("app_proto", ndpiLabel), zap.String("honeypot", honeypotAddr), zap.Int("payload_src_bytes", len(payloadSrcTLS)), zap.Int("payload_dst_bytes", len(payloadDstTLS)))
+		return
+	}
+
+	// --- STEP 5: tenta conectar ao honeypot ---
+	honeypotConn, err = net.DialTimeout("tcp", honeypotAddr, honeypotDialTimeout)
+	if err != nil {
+		log.Error("falha conectando ao honeypot",
+			zap.String("honeypot", honeypotAddr),
+			zap.Error(err),
+		)
+		honeypotError = fmt.Sprintf("connection failed: %v", err)
+		goto publish
+	}
+	defer honeypotConn.Close()
+	// Aplica o timeout de vida total na conexão com o honeypot
+	honeypotConn.SetDeadline(deadline)
+
+	doRelay:
+	// --- STEP 6: reenvia o primeiro chunk para o honeypot ---
+	// Para server-first, já enviamos o greeting sebelumnya, então pulamos esta etapa
+	if !skipFirstChunkWrite && len(firstChunk) > 0 {
+		log.Debug("escrevendo firstChunk para honeypot", zap.Int("len", len(firstChunk)))
+		if _, err = honeypotConn.Write(firstChunk); err != nil {
+			log.Error("erro reenviando primeiro chunk", zap.Error(err))
+			honeypotError = fmt.Sprintf("write failed: %v", err)
+			goto publish
+		}
+		log.Debug("firstChunk escrito com sucesso")
+	} else {
+		log.Debug("pulando escrita do firstChunk (server-first já enviou greeting)")
+	}
+
+	// --- STEP 7: pipe bidirecional com captura de payload ---
+	teeWriterSrc = newLimitedTeeWriter(&bufSrc, h.maxPayloadBytes)
+	teeWriterDst = newLimitedTeeWriter(&bufDst, h.maxPayloadBytes)
+
+	// Não resetar startTime - queremos o tempo total da conexão
+	wg.Add(2)
+
+	// goroutine 1: atacante → honeypot
+	// SetDeadline(deadline) já foi aplicado em ambas as conexões; io.Copy retorna
+	// automaticamente quando o prazo expira. Fechar a outra conexão sinaliza ao
+	// io.Copy da goroutine 2 que deve encerrar também.
+	go func() {
+		defer wg.Done()
+		log.Debug("goroutine src→dst iniciada")
+		src := io.TeeReader(h.conn, teeWriterSrc)
+		n, err := io.Copy(honeypotConn, src)
+		if err != nil {
+			log.Debug("pipe src→dst encerrado",
+				zap.Int64("bytes_copied", n),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe src→dst concluído", zap.Int64("bytes_copied", n))
+		}
+		honeypotConn.Close()
+	}()
+
+	// goroutine 2: honeypot → atacante
+	go func() {
+		defer wg.Done()
+		log.Debug("goroutine dst→src iniciada")
+		src := io.TeeReader(honeypotConn, teeWriterDst)
+		n, err := io.Copy(h.conn, src)
+		if err != nil {
+			log.Debug("pipe dst→src encerrado",
+				zap.Int64("bytes_copied", n),
+				zap.Error(err))
+		} else {
+			log.Debug("pipe dst→src concluído", zap.Int64("bytes_copied", n))
+		}
+		h.conn.Close()
+	}()
+
+	wg.Wait()
+
+	if (appProtoFlow == "Telnet" || appProtoFlow == "TELNET" || dstPort == 23) ||
+		(appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110) ||
+		(appProtoFlow == "IMAP" || appProtoFlow == "IMAP4" || dstPort == 143 || dstPort == 993) {
+		parser := mitm.NewParser(appProtoFlow, int(dstPort))
+		protoLabel := "Telnet"
+		if appProtoFlow == "POP" || appProtoFlow == "POP3" || dstPort == 110 {
+			protoLabel = "POP3"
+		} else if appProtoFlow == "IMAP" || appProtoFlow == "IMAP4" || dstPort == 143 || dstPort == 993 {
+			protoLabel = "IMAP"
+		}
+		if srcData := bufSrc.Bytes(); len(srcData) > 0 {
+			cmdEvents := parser.ParseClientData(srcData, func(format string, args ...interface{}) {})
+			for _, ev := range cmdEvents {
+				if ev.Command != "" || ev.Username != "" || ev.Password != "" {
+					eventType := "command"
+					attackType := ev.Command
+					if ev.Username != "" {
+						eventType = "username"
+						attackType = ev.Username
+					} else if ev.Password != "" {
+						eventType = "password"
+						attackType = ev.Password
+					}
+					h.publishEvent(&kafka.Event{
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(dstPort),
+						NDPIProto:   protoLabel,
+						NDPIApp:    eventType,
+						AttackType: attackType,
+						Honeypot:    honeypotAddr,
+						Instance:      "proxy",
+					})
+				}
+			}
+		}
+		if dstData := bufDst.Bytes(); len(dstData) > 0 {
+			respEvents := parser.ParseServerData(dstData, func(format string, args ...interface{}) {})
+			for _, ev := range respEvents {
+				if ev.Response != "" {
+					h.publishEvent(&kafka.Event{
+						FlowID:      h.classifierFlowID,
+				TupleID:     h.tupleID,
+						Timestamp:   time.Now(),
+						SrcIP:       srcAddr.IP.String(),
+						SrcPort:     srcAddr.Port,
+						DstIP:       origDstIP.String(),
+						DstPort:     int(dstPort),
+						NDPIProto:   protoLabel,
+						NDPIApp:    "response",
+						AttackType: ev.Response,
+						Honeypot:    honeypotAddr,
+						Instance:      "proxy",
+					})
+				}
+			}
+		}
+	}
+
+publish:
+	// --- STEP 8: sempre publica evento no Kafka (mesmo se honeypot falhou) ---
+	duration := time.Since(startTime)
+	durationMs := float64(duration.Nanoseconds()) / 1e6
+
+	if tcpInfo := getTCPInfo(h.conn); tcpInfo != nil {
+		clientRttMs = float64(tcpInfo.Rtt) / 1000.0
+		clientRttVarMs = float64(tcpInfo.Rttvar) / 1000.0
+		clientRetransmits = tcpInfo.Retransmits
+		if h.retransmitsClient != nil {
+			h.retransmitsClient.Add(int64(tcpInfo.Retransmits))
+		}
+	}
+	if h.flowsClient != nil {
+		h.flowsClient.Add(1)
+	}
+
+	if tcpInfo := getTCPInfo(honeypotConn); tcpInfo != nil {
+		if h.retransmitsHoneypot != nil {
+			h.retransmitsHoneypot.Add(int64(tcpInfo.Retransmits))
+		}
+		if h.flowsHoneypot != nil {
+			h.flowsHoneypot.Add(1)
+		}
+	}
+
+	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
+
+	event := &kafka.Event{
+		EventType:     "flow",
+		FlowID:        h.classifierFlowID,
+		TupleID:       h.tupleID,
+		Timestamp:     time.Now(),
+		SrcIP:         srcAddr.IP.String(),
+		SrcPort:       srcAddr.Port,
+		DstIP:         origDstIP.String(),
+		DstPort:       int(origDstPort),
+		NDPIProto:     ndpiLabel,
+		NDPIApp:       appProtoFlow,
+		Honeypot:      honeypotAddr,
+		HoneypotError: honeypotError,
+		PayloadSrc:    append([]byte(nil), bufSrc.Bytes()...),
+		PayloadDst:    append([]byte(nil), bufDst.Bytes()...),
+		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
+		DurationMs:    durationMs,
+		Instance:      "proxy",
+		PortMismatch:  portMismatch,
+		ExpectedProto: expectedProto,
+		TrackerFound:   trackerFound,
+		TTL:            clientTTL,
+		TOS:            clientTOS,
+		TCPWindow:      clientTCPWindow,
+		IPVersion:      clientIPVersion,
+		RttMs:          clientRttMs,
+		RttVarMs:       clientRttVarMs,
+		TCPRetransmits: clientRetransmits,
+		SlotsUsed:     kafka.IntPtr(h.slotsUsed),
+		SlotsMax:      h.slotsMax,
+		PerIPActive:   h.perIPActive,
+		NodeName:      h.nodeName,
+		PodName:       h.podName,
+	}
+	h.publishEvent(event)
+
+	if honeypotError != "" {
+		log.Info("fluxo encerrado com erro",
+			zap.String("app_proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr),
+			zap.String("error", honeypotError),
+			zap.Int("payload_src_bytes", bufSrc.Len()),
+			zap.Float64("duration_ms", durationMs),
+		)
+	} else {
+		log.Info("fluxo encerrado",
+			zap.String("app_proto", ndpiLabel),
+			zap.String("honeypot", honeypotAddr),
+			zap.Int("payload_src_bytes", bufSrc.Len()),
+			zap.Int("payload_dst_bytes", bufDst.Len()),
+			zap.Float64("duration_ms", durationMs),
+		)
+	}
+}
+
+// publishEvent injeta node_name, pod_name e event_type (padrão "flow") em
+// qualquer evento antes de repassar ao producer. Todos os Publish em Handle()
+// devem usar este método para garantir que nenhum documento chegue ao ES sem
+// a identidade do nó.
+// getTCPInfo lê métricas da conexão TCP via getsockopt(TCP_INFO).
+// Retorna nil se a conexão não for *net.TCPConn ou se o syscall falhar.
+func getTCPInfo(conn net.Conn) *syscall.TCPInfo {
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		return nil
+	}
+	raw, err := tcpConn.SyscallConn()
+	if err != nil {
+		return nil
+	}
+	var info syscall.TCPInfo
+	var sysErr error
+	raw.Control(func(fd uintptr) {
+		size := uint32(unsafe.Sizeof(info))
+		_, _, errno := syscall.Syscall6(
+			syscall.SYS_GETSOCKOPT,
+			fd,
+			uintptr(syscall.IPPROTO_TCP),
+			uintptr(syscall.TCP_INFO),
+			uintptr(unsafe.Pointer(&info)),
+			uintptr(unsafe.Pointer(&size)),
+			0,
+		)
+		if errno != 0 {
+			sysErr = errno
+		}
+	})
+	if sysErr != nil {
+		return nil
+	}
+	return &info
+}
+
+func (h *Handler) publishEvent(event *kafka.Event) {
+	if h.producer == nil {
+		return
+	}
+	event.NodeName = h.nodeName
+	event.PodName = h.podName
+	if event.EventType == "" {
+		event.EventType = "flow"
+	}
+	h.producer.Publish(event)
+}
+
+// limitedTeeWriter é um io.Writer que copia para um buffer
+// até o limite de bytes configurado, depois descarta silenciosamente.
+// Isso evita OOM se um atacante mandar um payload enorme.
+type limitedTeeWriter struct {
+	buf     *bytes.Buffer
+	limit   int64
+	written int64
+}
+
+func newLimitedTeeWriter(buf *bytes.Buffer, limit int64) *limitedTeeWriter {
+	return &limitedTeeWriter{buf: buf, limit: limit}
+}
+
+func (w *limitedTeeWriter) Write(p []byte) (int, error) {
+	if w.limit > 0 && w.written >= w.limit {
+		return len(p), nil
+	}
+
+	if w.limit > 0 {
+		remaining := w.limit - w.written
+		if int64(len(p)) > remaining {
+			p = p[:remaining]
+		}
+	}
+	n, err := w.buf.Write(p)
+	w.written += int64(n)
+	if err != nil {
+		return n, fmt.Errorf("limitedTeeWriter: %w", err)
+	}
+	return len(p), nil
+}
+
+func (w *limitedTeeWriter) Read(p []byte) (int, error) {
+	return 0, io.EOF
+}
+
+func isServerFirstPort(serverFirstPorts map[uint16]string, port uint16) bool {
+	_, ok := serverFirstPorts[port]
+	return ok
+}
+
+// isExpectedTLSError returns true for TLS handshake failures that are routine
+// in a honeypot: old-version scanners, incompatible cipher suites, and probes
+// that reset the connection immediately. These are logged at Warn instead of Error.
+func isExpectedTLSError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unsupported versions") ||
+		strings.Contains(msg, "no cipher suite") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "EOF")
+}
+
+func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8) string {
+	srcIP4 := srcIP.To4()
+	dstIP4 := dstIP.To4()
+
+	if srcIP4 == nil {
+		srcIP4 = srcIP
+	}
+	if dstIP4 == nil {
+		dstIP4 = dstIP
+	}
+
+	src := fmt.Sprintf("%s:%d", srcIP4.String(), srcPort)
+	dst := fmt.Sprintf("%s:%d", dstIP4.String(), dstPort)
+
+	if bytes.Compare(srcIP4, dstIP4) > 0 || (bytes.Equal(srcIP4, dstIP4) && srcPort > dstPort) {
+		src, dst = dst, src
+	}
+
+	return fmt.Sprintf("%s-%s-%d", src, dst, protocol)
+}
+// trigger rebuild
