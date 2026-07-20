@@ -50,7 +50,7 @@ COPY --from=builder /usr/local/lib/libndpi.so.4.12.0 /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so.4       /usr/local/lib/libndpi.so.4
 COPY --from=builder /usr/local/lib/libndpi.so         /usr/local/lib/libndpi.so
 
-ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:/usr/lib/x86_64-linux-gnu
 
 RUN groupadd -r dpipot && useradd -r -g dpipot dpipot
 
