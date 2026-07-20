@@ -30,7 +30,7 @@ WORKDIR /build
 
 COPY . .
 
-RUN CGO_ENABLED=1 \
+RUN GOWORK=off CGO_ENABLED=1 \
     CGO_CFLAGS="-I/usr/local/include" \
     CGO_LDFLAGS="-L/usr/local/lib -lndpi -lpcap -lpthread -lm -lrdkafka" \
     GOOS=linux \
