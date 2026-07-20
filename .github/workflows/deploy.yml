@@ -1,14 +1,13 @@
 name: deploy
 
 on:
-  # roda automaticamente após o build terminar com sucesso na main ou dev
+  # roda automaticamente após o build terminar com sucesso na main
   workflow_run:
     workflows: ["build and push images"]
     types:
       - completed
     branches:
       - main
-      - dev
 
   # permite rodar manualmente pelo GitHub UI
   workflow_dispatch:
