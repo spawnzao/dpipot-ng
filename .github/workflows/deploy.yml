@@ -17,8 +17,8 @@ jobs:
     name: deploy no microk8s
     runs-on: self-hosted   # runner rodando na máquina com microk8s ou k3s
     if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion == 'success')
 
     steps:
       - name: checkout
