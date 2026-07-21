@@ -16,6 +16,7 @@ proxy/certs/
 venv/
 
 # binários compilados
+/dpipot
 proxy/classifier
 proxy/dpipot-proxy
 proxy/proxy-bin
