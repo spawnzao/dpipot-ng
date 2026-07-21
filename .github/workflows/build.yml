@@ -131,6 +131,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      actions: write
 
     steps:
       - name: checkout
@@ -165,3 +166,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: trigger deploy
+        run: gh workflow run deploy.yml --ref dev
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
