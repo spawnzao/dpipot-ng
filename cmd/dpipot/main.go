@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"sync"
@@ -197,6 +199,14 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	// Health server (port 8081) — liveness and readiness probes
+	healthServer := proxy.NewHealthServer("0.0.0.0:8081", producer, logger)
+	go func() {
+		if err := healthServer.Start(); err != nil && err != http.ErrServerClosed {
+			logger.Error("health server error", zap.Error(err))
+		}
+	}()
+
 	// Start proxy server in background
 	serverErr := make(chan error, 1)
 	go func() {
@@ -215,6 +225,9 @@ func main() {
 	}
 
 	logger.Info("shutting down")
+	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer hcancel()
+	healthServer.Shutdown(hctx)
 	server.Stop()
 	af.Close()
 	captureWg.Wait()
