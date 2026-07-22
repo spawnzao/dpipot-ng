@@ -298,7 +298,7 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 	}
 
 	var tcpFlagsStr string
-	payloadLen := len(ipPacket) // tamanho total do pacote IP (igual ao formato da instância anterior)
+	var payloadLen int
 	if len(ipPacket) > 0 {
 		var transportOffset int
 		if ipVersion == 4 {
@@ -306,8 +306,17 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 		} else {
 			transportOffset = 40
 		}
-		if protocol == 6 && len(ipPacket) > transportOffset+13 {
+		switch {
+		case protocol == 6 && len(ipPacket) > transportOffset+13:
 			tcpFlagsStr = decodeTCPFlags(ipPacket[transportOffset+13])
+			if len(ipPacket) > transportOffset+12 {
+				dataOff := int((ipPacket[transportOffset+12]>>4)&0xF) * 4
+				if appStart := transportOffset + dataOff; appStart <= len(ipPacket) {
+					payloadLen = len(ipPacket) - appStart
+				}
+			}
+		case protocol == 17 && len(ipPacket) > transportOffset+8:
+			payloadLen = len(ipPacket) - (transportOffset + 8)
 		}
 	}
 
