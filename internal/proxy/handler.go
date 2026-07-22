@@ -1284,7 +1284,7 @@ publish:
 		HoneypotError: honeypotError,
 		PayloadSrc:    append([]byte(nil), bufSrc.Bytes()...),
 		PayloadDst:    append([]byte(nil), bufDst.Bytes()...),
-		PayloadSize:   int64(bufSrc.Len() + bufDst.Len()),
+		PayloadLen:    kafka.IntPtr(bufSrc.Len() + bufDst.Len()),
 		DurationMs:    durationMs,
 		Instance:      "proxy",
 		PortMismatch:  portMismatch,
