@@ -35,6 +35,7 @@ type Handler struct {
 	ndpiEventsEnabled bool
 	nodeName         string
 	podName          string
+	localIP          net.IP
 	// pendingFree armazena flows removidos do ndpiFlows no ciclo anterior de
 	// cleanup. São liberados no próximo ciclo (2 min depois), garantindo que
 	// nenhum PacketProcessing em curso ainda segure o ponteiro C.
@@ -50,6 +51,7 @@ type HandlerConfig struct {
 	NdpiEventsEnabled bool
 	NodeName          string
 	PodName           string
+	LocalIP           net.IP
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -76,6 +78,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		ndpiEventsEnabled: cfg.NdpiEventsEnabled,
 		nodeName:          cfg.NodeName,
 		podName:           cfg.PodName,
+		localIP:           cfg.LocalIP,
 	}
 
 	h.startNdpiFlowsCleanup(30 * time.Second)
@@ -277,6 +280,12 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 }
 
 func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
+	// Normaliza direção: dst_ip deve ser sempre o IP do servidor (honeypot).
+	// Para pacotes de retorno (srcIP == IP local), inverte src/dst.
+	if h.localIP != nil && srcIP.Equal(h.localIP) {
+		srcIP, dstIP = dstIP, srcIP
+		srcPort, dstPort = dstPort, srcPort
+	}
 	h.producer.Publish(&kafka.Event{
 		Instance:  "classifier",
 		EventType: "ndpi",

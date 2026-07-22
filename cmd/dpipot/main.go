@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -83,6 +84,7 @@ func main() {
 		NdpiEventsEnabled: cfg.NdpiEventsEnabled,
 		NodeName:          os.Getenv("NODE_NAME"),
 		PodName:           os.Getenv("POD_NAME"),
+		LocalIP:           interfaceIP(cfg.ClassifierInterface, logger),
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler", zap.Error(err))
@@ -246,6 +248,34 @@ func main() {
 	ndpiHandler.Close()
 
 	logger.Info("dpipot stopped")
+}
+
+func interfaceIP(ifname string, logger *zap.Logger) net.IP {
+	iface, err := net.InterfaceByName(ifname)
+	if err != nil {
+		logger.Warn("interfaceIP: interface not found", zap.String("iface", ifname), zap.Error(err))
+		return nil
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		logger.Warn("interfaceIP: failed to get addrs", zap.String("iface", ifname), zap.Error(err))
+		return nil
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip4 := ip.To4(); ip4 != nil {
+			logger.Info("interfaceIP resolved", zap.String("iface", ifname), zap.String("ip", ip4.String()))
+			return ip4
+		}
+	}
+	logger.Warn("interfaceIP: no IPv4 address found", zap.String("iface", ifname))
+	return nil
 }
 
 func newLogger(level string) (*zap.Logger, error) {
