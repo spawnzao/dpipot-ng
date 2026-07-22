@@ -330,7 +330,7 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 		IPVersion:  ipVersion,
 		Transport:  transport,
 		TCPFlags:   tcpFlagsStr,
-		PayloadLen: payloadLen,
+		PayloadLen: kafka.IntPtr(payloadLen),
 		Ethertype:  ethertype,
 		IPProto:    int(protocol),
 		NodeName:   h.nodeName,

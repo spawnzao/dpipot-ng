@@ -49,7 +49,7 @@ type Event struct {
 	Category  uint32 `json:"category,omitempty"`   // nDPI category ID
 	TCPFlags  string `json:"tcp_flags,omitempty"`  // flags legíveis: "SYN ACK PSH …"
 	Transport string `json:"transport,omitempty"`  // "tcp" ou "udp"
-	PayloadLen int   `json:"payload_len,omitempty"` // bytes de payload de aplicação
+	PayloadLen *int  `json:"payload_len,omitempty"` // tamanho do pacote IP; nil=omitido (proxy), 0+=sempre enviado (nDPI)
 	Ethertype string `json:"ethertype,omitempty"`  // "0x0800" (IPv4) | "0x86DD" (IPv6)
 	IPProto   int    `json:"ip_proto,omitempty"`   // 6=TCP 17=UDP
 
