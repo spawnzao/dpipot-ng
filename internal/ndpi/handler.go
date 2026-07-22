@@ -278,7 +278,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 
 func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
 	h.producer.Publish(&kafka.Event{
-		Instance:  "ndpi",
+		Instance:  "classifier",
 		EventType: "ndpi",
 		FlowID:    flowUUID,
 		TupleID:   tupleID,
