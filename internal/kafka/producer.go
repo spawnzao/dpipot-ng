@@ -107,6 +107,7 @@ type Producer struct {
 
 	topicDebug string
 	topicApp   string
+	topicNdpi  string
 	brokers    string
 	log        *zap.Logger
 
@@ -152,6 +153,7 @@ func NewProducer(brokers, topic string, log *zap.Logger, payloadB64, payloadHex 
 		inner:             p,
 		topicDebug:        topic + "-debug",
 		topicApp:          topic + "-application",
+		topicNdpi:         topic + "-ndpi",
 		brokers:           brokers,
 		log:               log,
 		events:            make(chan *Event, 100000),
@@ -261,8 +263,11 @@ func (p *Producer) drain() {
 		}
 
 		topic := p.topicApp
-		if event.Instance == "debug" {
+		switch event.Instance {
+		case "debug":
 			topic = p.topicDebug
+		case "ndpi":
+			topic = p.topicNdpi
 		}
 
 		p.mu.RLock()

@@ -32,9 +32,10 @@ type Config struct {
 	PortProtocolMap     map[uint16]string
 
 	// kafka (compartilhado)
-	KafkaEnabled bool
-	KafkaBrokers string
-	KafkaTopic   string
+	KafkaEnabled      bool
+	KafkaBrokers      string
+	KafkaTopic        string
+	NdpiEventsEnabled bool // publica eventos nDPI por pacote em <topic>-ndpi
 
 	LogLevel string
 }
@@ -63,9 +64,10 @@ func Load() (*Config, error) {
 		FlowTableTTL:        getDuration("FLOWTRACKER_TTL", 60*time.Second),
 		PortProtocolMap:     parsePortProtocolMap(serverFirstPortsRaw),
 
-		KafkaEnabled: parseBoolEnv("KAFKA", true),
-		KafkaBrokers: getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
-		KafkaTopic:   getEnv("KAFKA_TOPIC", "dpipot.events"),
+		KafkaEnabled:      parseBoolEnv("KAFKA", true),
+		KafkaBrokers:      getEnv("KAFKA_BROKERS", "kafka-svc:9092"),
+		KafkaTopic:        getEnv("KAFKA_TOPIC", "dpipot.events"),
+		NdpiEventsEnabled: parseBoolEnv("NDPI_EVENTS_ENABLED", false),
 
 		LogLevel: getEnv("LOG_LEVEL", "info"),
 	}

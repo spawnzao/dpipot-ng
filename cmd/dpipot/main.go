@@ -74,11 +74,15 @@ func main() {
 	}
 
 	// nDPI handler — classifies packets and writes to flowTable
+	// producer is nil here (created below); passed after construction if NdpiEventsEnabled
 	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{
-		FlowTable:        flowTable,
-		Logger:           logger,
-		ServerFirstPorts: serverFirstSlice,
-		PortProtocolMap:  cfg.PortProtocolMap,
+		FlowTable:         flowTable,
+		Logger:            logger,
+		ServerFirstPorts:  serverFirstSlice,
+		PortProtocolMap:   cfg.PortProtocolMap,
+		NdpiEventsEnabled: cfg.NdpiEventsEnabled,
+		NodeName:          os.Getenv("NODE_NAME"),
+		PodName:           os.Getenv("POD_NAME"),
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler", zap.Error(err))
@@ -93,10 +97,18 @@ func main() {
 			logger.Warn("failed to create kafka producer, continuing without it", zap.Error(err))
 		} else {
 			defer producer.Close()
-			logger.Info("Kafka producer initialized", zap.String("topic", cfg.KafkaTopic))
+			logger.Info("Kafka producer initialized",
+				zap.String("topic", cfg.KafkaTopic),
+				zap.Bool("ndpi_events", cfg.NdpiEventsEnabled),
+			)
 		}
 	} else {
 		logger.Info("Kafka disabled (KAFKA=false)")
+	}
+
+	// Wire producer into nDPI handler after it's created (avoids circular init)
+	if cfg.NdpiEventsEnabled && producer != nil {
+		ndpiHandler.SetProducer(producer)
 	}
 
 	// Router

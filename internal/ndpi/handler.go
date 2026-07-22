@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/spawnzao/dpipot-ng/internal/flow"
+	"github.com/spawnzao/dpipot-ng/internal/kafka"
 	"github.com/spawnzao/dpipot-ng/internal/ndpi/gondpi"
 )
 
@@ -30,6 +31,10 @@ type Handler struct {
 	cancel           context.CancelFunc
 	serverFirstPorts []uint16
 	portProtocolMap  map[uint16]string
+	producer         *kafka.Producer
+	ndpiEventsEnabled bool
+	nodeName         string
+	podName          string
 	// pendingFree armazena flows removidos do ndpiFlows no ciclo anterior de
 	// cleanup. São liberados no próximo ciclo (2 min depois), garantindo que
 	// nenhum PacketProcessing em curso ainda segure o ponteiro C.
@@ -37,10 +42,14 @@ type Handler struct {
 }
 
 type HandlerConfig struct {
-	FlowTable        *flow.Table
-	Logger           *zap.Logger
-	ServerFirstPorts []uint16
-	PortProtocolMap  map[uint16]string
+	FlowTable         *flow.Table
+	Logger            *zap.Logger
+	ServerFirstPorts  []uint16
+	PortProtocolMap   map[uint16]string
+	Producer          *kafka.Producer
+	NdpiEventsEnabled bool
+	NodeName          string
+	PodName           string
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -55,14 +64,18 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	h := &Handler{
-		ndpiDM:           ndpiDM,
-		flowTable:        cfg.FlowTable,
-		ndpiFlows:        &sync.Map{},
-		logger:           cfg.Logger,
-		ctx:              ctx,
-		cancel:           cancel,
-		serverFirstPorts: cfg.ServerFirstPorts,
-		portProtocolMap:  cfg.PortProtocolMap,
+		ndpiDM:            ndpiDM,
+		flowTable:         cfg.FlowTable,
+		ndpiFlows:         &sync.Map{},
+		logger:            cfg.Logger,
+		ctx:               ctx,
+		cancel:            cancel,
+		serverFirstPorts:  cfg.ServerFirstPorts,
+		portProtocolMap:   cfg.PortProtocolMap,
+		producer:          cfg.Producer,
+		ndpiEventsEnabled: cfg.NdpiEventsEnabled,
+		nodeName:          cfg.NodeName,
+		podName:           cfg.PodName,
 	}
 
 	h.startNdpiFlowsCleanup(30 * time.Second)
@@ -198,6 +211,10 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			TCPWindow:      tcpWindow,
 			IPVersion:      ipVersion,
 		})
+
+		if h.ndpiEventsEnabled && h.producer != nil {
+			h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, proto, proto, ttl, tos, tcpWindow, ipVersion)
+		}
 		return
 	}
 
@@ -253,6 +270,38 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		TCPWindow:      tcpWindow,
 		IPVersion:      ipVersion,
 	})
+
+	if h.ndpiEventsEnabled && h.producer != nil {
+		h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, masterProto, appProto, ttl, tos, tcpWindow, ipVersion)
+	}
+}
+
+func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
+	h.producer.Publish(&kafka.Event{
+		Instance:  "ndpi",
+		EventType: "ndpi",
+		FlowID:    flowUUID,
+		TupleID:   tupleID,
+		Timestamp: time.Now(),
+		SrcIP:     srcIP.String(),
+		SrcPort:   int(srcPort),
+		DstIP:     dstIP.String(),
+		DstPort:   int(dstPort),
+		NDPIProto: masterProto,
+		NDPIApp:   appProto,
+		TTL:       ttl,
+		TOS:       tos,
+		TCPWindow: tcpWindow,
+		IPVersion: ipVersion,
+		NodeName:  h.nodeName,
+		PodName:   h.podName,
+	})
+}
+
+// SetProducer injects the Kafka producer after construction.
+// Used to avoid a circular dependency when NdpiEventsEnabled=true.
+func (h *Handler) SetProducer(p *kafka.Producer) {
+	h.producer = p
 }
 
 func (h *Handler) Close() {
