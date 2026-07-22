@@ -216,7 +216,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		})
 
 		if h.ndpiEventsEnabled && h.producer != nil {
-			h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, proto, proto, ttl, tos, tcpWindow, ipVersion)
+			h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, proto, proto, 0, ttl, tos, tcpWindow, ipVersion, protocol, payload)
 		}
 		return
 	}
@@ -275,36 +275,99 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 	})
 
 	if h.ndpiEventsEnabled && h.producer != nil {
-		h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, masterProto, appProto, ttl, tos, tcpWindow, ipVersion)
+		h.publishNdpiEvent(flowUUID, tupleID, srcIP, dstIP, srcPort, dstPort, masterProto, appProto, category, ttl, tos, tcpWindow, ipVersion, protocol, payload)
 	}
 }
 
-func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
+func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, category uint32, ttl, tos uint8, tcpWindow uint16, ipVersion uint8, protocol uint8, ipPacket []byte) {
 	// Normaliza direção: dst_ip deve ser sempre o IP do servidor (honeypot).
 	// Para pacotes de retorno (srcIP == IP local), inverte src/dst.
 	if h.localIP != nil && srcIP.Equal(h.localIP) {
 		srcIP, dstIP = dstIP, srcIP
 		srcPort, dstPort = dstPort, srcPort
 	}
+
+	transport := "tcp"
+	if protocol == 17 {
+		transport = "udp"
+	}
+
+	ethertype := "0x0800"
+	if ipVersion == 6 {
+		ethertype = "0x86DD"
+	}
+
+	var tcpFlagsStr string
+	var payloadLen int
+	if len(ipPacket) > 0 {
+		var transportOffset int
+		if ipVersion == 4 {
+			transportOffset = int(ipPacket[0]&0x0F) * 4
+		} else {
+			transportOffset = 40
+		}
+		if protocol == 6 && len(ipPacket) > transportOffset+13 {
+			tcpFlagsStr = decodeTCPFlags(ipPacket[transportOffset+13])
+			if len(ipPacket) > transportOffset+12 {
+				dataOff := int((ipPacket[transportOffset+12]>>4)&0xF) * 4
+				appStart := transportOffset + dataOff
+				if appStart < len(ipPacket) {
+					payloadLen = len(ipPacket) - appStart
+				}
+			}
+		} else if protocol == 17 && len(ipPacket) > transportOffset+8 {
+			payloadLen = len(ipPacket) - (transportOffset + 8)
+		}
+	}
+
 	h.producer.Publish(&kafka.Event{
-		Instance:  "classifier",
-		EventType: "ndpi",
-		FlowID:    flowUUID,
-		TupleID:   tupleID,
-		Timestamp: time.Now(),
-		SrcIP:     srcIP.String(),
-		SrcPort:   int(srcPort),
-		DstIP:     dstIP.String(),
-		DstPort:   int(dstPort),
-		NDPIProto: masterProto,
-		NDPIApp:   appProto,
-		TTL:       ttl,
-		TOS:       tos,
-		TCPWindow: tcpWindow,
-		IPVersion: ipVersion,
-		NodeName:  h.nodeName,
-		PodName:   h.podName,
+		Instance:   "classifier",
+		EventType:  "ndpi",
+		FlowID:     flowUUID,
+		TupleID:    tupleID,
+		Timestamp:  time.Now(),
+		SrcIP:      srcIP.String(),
+		SrcPort:    int(srcPort),
+		DstIP:      dstIP.String(),
+		DstPort:    int(dstPort),
+		NDPIProto:  masterProto,
+		NDPIApp:    appProto,
+		Category:   category,
+		TTL:        ttl,
+		TOS:        tos,
+		TCPWindow:  tcpWindow,
+		IPVersion:  ipVersion,
+		Transport:  transport,
+		TCPFlags:   tcpFlagsStr,
+		PayloadLen: payloadLen,
+		Ethertype:  ethertype,
+		IPProto:    int(protocol),
+		NodeName:   h.nodeName,
+		PodName:    h.podName,
 	})
+}
+
+func decodeTCPFlags(flags uint8) string {
+	var s string
+	if flags&0x02 != 0 {
+		s += "SYN "
+	}
+	if flags&0x10 != 0 {
+		s += "ACK "
+	}
+	if flags&0x08 != 0 {
+		s += "PSH "
+	}
+	if flags&0x01 != 0 {
+		s += "FIN "
+	}
+	if flags&0x04 != 0 {
+		s += "RST "
+	}
+	if flags&0x20 != 0 {
+		s += "URG "
+	}
+	return s
 }
 
 // SetProducer injects the Kafka producer after construction.

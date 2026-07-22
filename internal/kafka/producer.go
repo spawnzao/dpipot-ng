@@ -46,6 +46,12 @@ type Event struct {
 	TOS       uint8  `json:"tos,omitempty"`        // IP TOS / Traffic Class
 	TCPWindow uint16 `json:"tcp_window,omitempty"` // TCP window size inicial
 	IPVersion uint8  `json:"ip_version,omitempty"` // 4 ou 6
+	Category  uint32 `json:"category,omitempty"`   // nDPI category ID
+	TCPFlags  string `json:"tcp_flags,omitempty"`  // flags legíveis: "SYN ACK PSH …"
+	Transport string `json:"transport,omitempty"`  // "tcp" ou "udp"
+	PayloadLen int   `json:"payload_len,omitempty"` // bytes de payload de aplicação
+	Ethertype string `json:"ethertype,omitempty"`  // "0x0800" (IPv4) | "0x86DD" (IPv6)
+	IPProto   int    `json:"ip_proto,omitempty"`   // 6=TCP 17=UDP
 
 	// métricas TCP da conexão cliente→proxy (getsockopt TCP_INFO)
 	RttMs          float64 `json:"rtt_ms,omitempty"`          // RTT suavizado (µs→ms)
@@ -266,7 +272,8 @@ func (p *Producer) drain() {
 		switch event.Instance {
 		case "debug":
 			topic = p.topicDebug
-		case "ndpi":
+		}
+		if event.EventType == "ndpi" {
 			topic = p.topicNdpi
 		}
 
