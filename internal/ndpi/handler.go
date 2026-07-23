@@ -320,6 +320,11 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 		}
 	}
 
+	var tcpWindowPtr *uint16
+	if protocol == 6 {
+		tcpWindowPtr = kafka.Uint16Ptr(tcpWindow)
+	}
+
 	h.producer.Publish(&kafka.Event{
 		Instance:   "classifier",
 		EventType:  "ndpi",
@@ -334,8 +339,8 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 		NDPIApp:    appProto,
 		Category:   category,
 		TTL:        ttl,
-		TOS:        tos,
-		TCPWindow:  tcpWindow,
+		TOS:        kafka.Uint8Ptr(tos),
+		TCPWindow:  tcpWindowPtr,
 		IPVersion:  ipVersion,
 		Transport:  transport,
 		TCPFlags:   tcpFlagsStr,

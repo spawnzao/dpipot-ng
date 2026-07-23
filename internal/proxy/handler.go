@@ -332,8 +332,8 @@ func (h *Handler) Handle() {
 		refined          string
 		trackerFound       bool
 		clientTTL          uint8
-		clientTOS          uint8
-		clientTCPWindow    uint16
+		clientTOS          *uint8
+		clientTCPWindow    *uint16
 		clientIPVersion    uint8
 		clientRttMs        float64
 		clientRttVarMs     float64
@@ -729,12 +729,14 @@ greetingBuf = greetingBuf[:n]
 				h.classifierFlowID = entry.FlowUUID
 				log = log.With(zap.String("flow_id", h.classifierFlowID))
 			}
+			// Captura TTL/TOS/TCPWindow/IPVersion do header IP/TCP sempre que o entry existe,
+			// independente de o protocolo ter sido classificado. TOS=0 é valor legítimo.
+			clientTTL = entry.TTL
+			clientTOS = kafka.Uint8Ptr(entry.TOS)
+			clientTCPWindow = kafka.Uint16Ptr(entry.TCPWindow)
+			clientIPVersion = entry.IPVersion
 			if masterProtoFlow != "" && strings.ToUpper(masterProtoFlow) != "UNKNOWN" {
 				trackerFound = true
-				clientTTL = entry.TTL
-				clientTOS = entry.TOS
-				clientTCPWindow = entry.TCPWindow
-				clientIPVersion = entry.IPVersion
 				ndpiLabel = masterProtoFlow
 				if ndpiLabel == "" {
 					ndpiLabel = appProtoFlow
@@ -743,7 +745,7 @@ greetingBuf = greetingBuf[:n]
 					zap.String("ndpi_proto", masterProtoFlow),
 					zap.String("ndpi_app", appProtoFlow),
 					zap.Uint8("ttl", clientTTL),
-					zap.Uint16("tcp_window", clientTCPWindow),
+					zap.Uint16("tcp_window", entry.TCPWindow),
 				)
 			} else {
 				if h.flowTableUnknown != nil {

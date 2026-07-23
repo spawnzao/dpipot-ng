@@ -41,10 +41,10 @@ type Event struct {
 	TrackerFound  bool      `json:"tracker_found,omitempty"`  // true: FlowTracker respondeu com protocolo conhecido
 
 	// campos de rede extraídos via FlowTracker (origem: cabeçalhos IP/TCP do atacante)
-	TTL       uint8  `json:"ttl,omitempty"`        // IP TTL / IPv6 Hop Limit do cliente
-	TOS       uint8  `json:"tos,omitempty"`        // IP TOS / Traffic Class
-	TCPWindow uint16 `json:"tcp_window,omitempty"` // TCP window size inicial
-	IPVersion uint8  `json:"ip_version,omitempty"` // 4 ou 6
+	TTL       uint8   `json:"ttl,omitempty"`        // IP TTL / IPv6 Hop Limit do cliente
+	TOS       *uint8  `json:"tos,omitempty"`         // IP TOS / Traffic Class; ponteiro para serializar 0
+	TCPWindow *uint16 `json:"tcp_window,omitempty"`  // TCP window size; ponteiro para serializar 0
+	IPVersion uint8   `json:"ip_version,omitempty"`  // 4 ou 6
 	Category  uint32 `json:"category,omitempty"`   // nDPI category ID
 	TCPFlags  string `json:"tcp_flags,omitempty"`  // flags legíveis: "SYN ACK PSH …"
 	Transport string `json:"transport,omitempty"`  // "tcp" ou "udp"
@@ -380,7 +380,9 @@ func (p *Producer) reconnect() {
 	p.log.Info("kafka watchdog: novo producer criado, aguardando confirmação de entrega")
 }
 
-// IntPtr e Int64Ptr retornam ponteiros para os valores. Usados em campos com omitempty
-// que precisam aparecer no JSON mesmo quando o valor é zero (ex: campos do heartbeat).
-func IntPtr(n int) *int       { return &n }
-func Int64Ptr(n int64) *int64 { return &n }
+// IntPtr, Int64Ptr, Uint8Ptr e Uint16Ptr retornam ponteiros para os valores.
+// Usados em campos com omitempty que precisam aparecer no JSON mesmo quando zero.
+func IntPtr(n int) *int         { return &n }
+func Int64Ptr(n int64) *int64   { return &n }
+func Uint8Ptr(n uint8) *uint8   { return &n }
+func Uint16Ptr(n uint16) *uint16 { return &n }
