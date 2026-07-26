@@ -28,6 +28,7 @@ data:
         group_id => "logstash-consumer"
         auto_offset_reset => "earliest"
         codec => "json"
+        decorate_events => "extended"
       }
     }
     filter {
@@ -36,6 +37,11 @@ data:
           match => ["timestamp", "ISO8601"]
           target => "@timestamp"
           remove_field => ["timestamp"]
+        }
+      }
+      mutate {
+        add_field => {
+          "[@metadata][doc_id]" => "%{[@metadata][kafka][topic]}|%{[@metadata][kafka][partition]}|%{[@metadata][kafka][offset]}"
         }
       }
       if [port_mismatch] {
@@ -59,7 +65,8 @@ data:
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "dpipot-proxy-%{+YYYY.MM.dd}"
-          action => "create"
+          action => "index"
+          document_id => "%{[@metadata][doc_id]}"
           manage_template => false
           user => "${ELASTICSEARCH_USER}"
           password => "${ELASTIC_PASSWORD}"
@@ -70,7 +77,8 @@ data:
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "dpipot-classifier-%{+YYYY.MM.dd}"
-          action => "create"
+          action => "index"
+          document_id => "%{[@metadata][doc_id]}"
           manage_template => false
           user => "${ELASTICSEARCH_USER}"
           password => "${ELASTIC_PASSWORD}"
@@ -81,7 +89,8 @@ data:
         elasticsearch {
           hosts => ["${ELASTICSEARCH_HOST}"]
           index => "dpipot-unknown-%{+YYYY.MM.dd}"
-          action => "create"
+          action => "index"
+          document_id => "%{[@metadata][doc_id]}"
           manage_template => false
           user => "${ELASTICSEARCH_USER}"
           password => "${ELASTIC_PASSWORD}"
