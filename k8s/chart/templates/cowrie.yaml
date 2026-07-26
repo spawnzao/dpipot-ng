@@ -30,7 +30,7 @@ spec:
               value: "yes"
           volumeMounts:
             - name: cowrie-logs
-              mountPath: /home/cowrie/var/log/cowrie
+              mountPath: /cowrie/cowrie-git/var/log/cowrie
           resources:
             requests:
               cpu: {{ .Values.resources.cowrie.requests.cpu }}

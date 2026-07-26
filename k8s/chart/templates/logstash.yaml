@@ -123,9 +123,34 @@ data:
       if [level] {
         mutate { lowercase => ["level"] }
       }
+      if [kubernetes][container][name] == "cowrie-logs" {
+        json {
+          source => "message"
+          target => "cowrie"
+          skip_on_invalid_json => true
+        }
+        if [cowrie][timestamp] {
+          date {
+            match => ["[cowrie][timestamp]", "ISO8601"]
+            target => "@timestamp"
+          }
+        }
+        mutate { remove_field => ["message"] }
+      }
     }
     output {
-      if [kubernetes][container][name] in ["proxy", "classifier"] {
+      if [kubernetes][container][name] == "cowrie-logs" {
+        elasticsearch {
+          hosts           => ["${ELASTICSEARCH_HOST}"]
+          index           => "dpipot-cowrie-%{+YYYY.MM.dd}"
+          action          => "create"
+          manage_template => false
+          user            => "${ELASTICSEARCH_USER}"
+          password        => "${ELASTIC_PASSWORD}"
+          ssl             => true
+          cacert          => "/usr/share/logstash/config/certs/ca.crt"
+        }
+      } else if [kubernetes][container][name] in ["proxy", "classifier"] {
         elasticsearch {
           hosts           => ["${ELASTICSEARCH_HOST}"]
           index           => "dpipot-app-%{+YYYY.MM.dd}"
