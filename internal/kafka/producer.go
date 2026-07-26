@@ -154,8 +154,13 @@ type Producer struct {
 func newKafkaConfig(brokers string) *kafka.ConfigMap {
 	return &kafka.ConfigMap{
 		"bootstrap.servers":            brokers,
-		"acks":                         "1",
-		"retries":                      3,
+		// enable.idempotence garante exactly-once na entrega ao broker:
+		// librdkafka atribui (epoch, sequence_number) a cada mensagem e o broker
+		// rejeita duplicatas com o mesmo número de sequência, mesmo sob retries.
+		// Requer acks=all; com Kafka single-node (min.insync.replicas=1) a
+		// performance é equivalente a acks=1.
+		"enable.idempotence":           "true",
+		"acks":                         "all",
 		"retry.backoff.ms":             100,
 		"queue.buffering.max.messages": 100000,
 		"queue.buffering.max.kbytes":   1048576,
@@ -296,13 +301,20 @@ func (p *Producer) drain() {
 			topic = p.topicNdpi
 		}
 
+		// flow events usam flow_id como key; para heartbeat/rejected sem flow_id,
+		// usa pod_name|event_type para key estável — permite dedup no ES via _id.
+		key := event.FlowID
+		if key == "" {
+			key = event.PodName + "|" + event.EventType
+		}
+
 		p.mu.RLock()
 		err = p.inner.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
 				Topic:     &topic,
 				Partition: kafka.PartitionAny,
 			},
-			Key:   []byte(event.FlowID),
+			Key:   []byte(key),
 			Value: data,
 		}, nil)
 		p.mu.RUnlock()
