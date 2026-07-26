@@ -73,6 +73,12 @@ type Event struct {
 	KafkaChanLen  *int    `json:"kafka_chan_len,omitempty"`  // eventos no canal Go aguardando drain
 	KafkaQueueLen *int    `json:"kafka_queue_len,omitempty"` // mensagens no librdkafka aguardando entrega
 
+	// erros de entrega librdkafka — preenchido no heartbeat; reset por intervalo
+	// kafka_delivery_errors: callbacks com qualquer erro (broker indisponível, auth, etc.)
+	// kafka_delivery_dropped: subconjunto — perdas definitivas por delivery.timeout.ms expirado
+	KafkaDeliveryErrors  *int64 `json:"kafka_delivery_errors,omitempty"`
+	KafkaDeliveryDropped *int64 `json:"kafka_delivery_dropped,omitempty"`
+
 	// tamanho atual da flow table in-process — preenchido no heartbeat
 	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
 	FlowTableNotFound *int64 `json:"flow_table_not_found,omitempty"` // lookups sem entrada (nDPI ainda não classificou)
@@ -122,11 +128,13 @@ type Producer struct {
 	wg         sync.WaitGroup // tracks drain + watchdog goroutines
 	deliveryWg sync.WaitGroup // tracks all handleDeliveryFor goroutines
 
-	healthy  atomic.Bool
-	closed   atomic.Bool
-	lastOK   atomic.Int64 // Unix timestamp of last confirmed delivery
-	errCount atomic.Int64 // consecutive delivery errors; reset on success
-	dropped  atomic.Int64 // eventos descartados por buffer cheio; reportado no heartbeat
+	healthy          atomic.Bool
+	closed           atomic.Bool
+	lastOK           atomic.Int64 // Unix timestamp of last confirmed delivery
+	errCount         atomic.Int64 // consecutive delivery errors; reset on success
+	dropped          atomic.Int64 // eventos descartados por buffer cheio; reportado no heartbeat
+	deliveryErrors   atomic.Int64 // callbacks de entrega com erro (qualquer tipo); reset por heartbeat
+	deliveryDropped  atomic.Int64 // mensagens perdidas definitivamente (ErrMsgTimedOut); reset por heartbeat
 
 	payloadB64Enabled bool
 	payloadHexEnabled bool
@@ -304,12 +312,24 @@ func (p *Producer) handleDeliveryFor(inner *kafka.Producer) {
 		switch ev := e.(type) {
 		case *kafka.Message:
 			if ev.TopicPartition.Error != nil {
-				p.log.Error("kafka delivery error",
-					zap.Error(ev.TopicPartition.Error),
-					zap.String("key", string(ev.Key)),
-				)
+				p.deliveryErrors.Add(1)
+				isTimeout := false
+				if kerr, ok := ev.TopicPartition.Error.(kafka.Error); ok && kerr.Code() == kafka.ErrMsgTimedOut {
+					isTimeout = true
+					p.deliveryDropped.Add(1)
+					p.log.Warn("kafka: mensagem perdida definitivamente (delivery.timeout.ms expirou)",
+						zap.String("key", string(ev.Key)),
+					)
+				} else {
+					p.log.Error("kafka delivery error",
+						zap.Error(ev.TopicPartition.Error),
+						zap.String("key", string(ev.Key)),
+					)
+				}
 				p.healthy.Store(false)
-				p.errCount.Add(1)
+				if !isTimeout {
+					p.errCount.Add(1)
+				}
 			} else {
 				p.healthy.Store(true)
 				p.errCount.Store(0)
@@ -378,6 +398,25 @@ func (p *Producer) reconnect() {
 	old.Close()
 
 	p.log.Info("kafka watchdog: novo producer criado, aguardando confirmação de entrega")
+}
+
+// DeliveryErrorsAndReset retorna o número de callbacks de entrega com erro desde o último reset
+// e zera o contador atomicamente. Conta qualquer tipo de erro de entrega do librdkafka.
+func (p *Producer) DeliveryErrorsAndReset() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.deliveryErrors.Swap(0)
+}
+
+// DeliveryDroppedAndReset retorna o número de mensagens perdidas definitivamente por timeout
+// (delivery.timeout.ms expirou no librdkafka) desde o último reset e zera o contador.
+// Essas perdas NÃO aparecem em kafka_drops (que cobre apenas overflow do canal Go).
+func (p *Producer) DeliveryDroppedAndReset() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.deliveryDropped.Swap(0)
 }
 
 // IntPtr, Int64Ptr, Uint8Ptr e Uint16Ptr retornam ponteiros para os valores.

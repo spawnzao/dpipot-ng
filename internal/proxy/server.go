@@ -258,6 +258,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			return
 		case <-ticker.C:
 			drops := s.producer.DroppedAndReset()
+			deliveryErrors := s.producer.DeliveryErrorsAndReset()
+			deliveryDropped := s.producer.DeliveryDroppedAndReset()
 			kafkaStatus := "ok"
 			if !s.producer.IsHealthy() {
 				kafkaStatus = "error"
@@ -274,6 +276,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				SlotsUsed:                   kafka.IntPtr(len(s.sem)),
 				SlotsMax:                    cap(s.sem),
 				KafkaDrops:                  kafka.Int64Ptr(drops),
+				KafkaDeliveryErrors:         kafka.Int64Ptr(deliveryErrors),
+				KafkaDeliveryDropped:        kafka.Int64Ptr(deliveryDropped),
 				KafkaStatus:                 kafkaStatus,
 				UptimeSec:                   time.Since(startTime).Seconds(),
 				KafkaChanLen:                kafka.IntPtr(s.producer.ChanLen()),
