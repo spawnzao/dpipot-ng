@@ -298,6 +298,25 @@ spec:
               port: 21
             initialDelaySeconds: 10
             periodSeconds: 5
+        - name: heralding-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/log_session.json ]; do sleep 1; done
+              exec tail -n 0 -F /logs/log_session.json
+          volumeMounts:
+            - name: logs
+              mountPath: /logs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
       volumes:
         - name: config
           configMap:
