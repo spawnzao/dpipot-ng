@@ -18,6 +18,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// ClassifierTelemetry abstrai as métricas do AF_PACKET e do nDPI handler para
+// o heartbeat do proxy, sem criar dependência direta dos pacotes capture/ndpi.
+// Implementada em main.go como glue entre os dois componentes.
+type ClassifierTelemetry interface {
+	AFPacketKernelDropsAndReset() int64
+	AFPacketChanDropsAndReset() int64
+	NDPIPacketsProcessedAndReset() int64
+	NDPIFlowsActive() int
+	NDPICleanupEvictedAndReset() int64
+}
+
 // Server aceita conexões TCP e cria um Handler por conexão.
 // Cada Handler roda em goroutine separada — o server nunca bloqueia.
 type Server struct {
@@ -52,6 +63,14 @@ type Server struct {
 	// diagnóstico da flow table — acumulados por connection e zerados a cada heartbeat
 	flowTableNotFound atomic.Int64 // lookup sem entrada (nDPI ainda não classificou)
 	flowTableUnknown  atomic.Int64 // entrada existe mas protocolo é Unknown
+
+	classifier ClassifierTelemetry // opcional — nil se não configurado
+}
+
+// SetClassifier registra a implementação de ClassifierTelemetry para que o heartbeat
+// inclua métricas de AF_PACKET e nDPI sem importar os pacotes capture/ndpi diretamente.
+func (s *Server) SetClassifier(c ClassifierTelemetry) {
+	s.classifier = c
 }
 
 func NewServer(
@@ -260,6 +279,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			drops := s.producer.DroppedAndReset()
 			deliveryErrors := s.producer.DeliveryErrorsAndReset()
 			deliveryDropped := s.producer.DeliveryDroppedAndReset()
+			marshalErrors := s.producer.MarshalErrorsAndReset()
+			produceErrors := s.producer.ProduceErrorsAndReset()
 			kafkaStatus := "ok"
 			if !s.producer.IsHealthy() {
 				kafkaStatus = "error"
@@ -270,6 +291,16 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				flowTableSize = s.flowTable.Size()
 			}
 
+			var afKernelDrops, afChanDrops, ndpiPackets, ndpiEvicted int64
+			var ndpiFlowsActive int
+			if s.classifier != nil {
+				afKernelDrops = s.classifier.AFPacketKernelDropsAndReset()
+				afChanDrops = s.classifier.AFPacketChanDropsAndReset()
+				ndpiPackets = s.classifier.NDPIPacketsProcessedAndReset()
+				ndpiFlowsActive = s.classifier.NDPIFlowsActive()
+				ndpiEvicted = s.classifier.NDPICleanupEvictedAndReset()
+			}
+
 			s.producer.Publish(&kafka.Event{
 				Timestamp:                   time.Now(),
 				EventType:                   "heartbeat",
@@ -278,6 +309,8 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				KafkaDrops:                  kafka.Int64Ptr(drops),
 				KafkaDeliveryErrors:         kafka.Int64Ptr(deliveryErrors),
 				KafkaDeliveryDropped:        kafka.Int64Ptr(deliveryDropped),
+				KafkaMarshalErrors:          kafka.Int64Ptr(marshalErrors),
+				KafkaProduceErrors:          kafka.Int64Ptr(produceErrors),
 				KafkaStatus:                 kafkaStatus,
 				UptimeSec:                   time.Since(startTime).Seconds(),
 				KafkaChanLen:                kafka.IntPtr(s.producer.ChanLen()),
@@ -292,6 +325,11 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				TCPRetransmitsHoneypotTotal: kafka.Int64Ptr(s.retransmitsHoneypot.Swap(0)),
 				FlowsClientTotal:            kafka.Int64Ptr(s.flowsClient.Swap(0)),
 				FlowsHoneypotTotal:          kafka.Int64Ptr(s.flowsHoneypot.Swap(0)),
+				AFPacketKernelDrops:         kafka.Int64Ptr(afKernelDrops),
+				AFPacketChanDrops:           kafka.Int64Ptr(afChanDrops),
+				NDPIPackets:                 kafka.Int64Ptr(ndpiPackets),
+				NDPIFlowsActive:             kafka.IntPtr(ndpiFlowsActive),
+				NDPICleanupEvicted:          kafka.Int64Ptr(ndpiEvicted),
 			})
 		}
 	}

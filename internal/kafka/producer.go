@@ -78,6 +78,15 @@ type Event struct {
 	// kafka_delivery_dropped: subconjunto — perdas definitivas por delivery.timeout.ms expirado
 	KafkaDeliveryErrors  *int64 `json:"kafka_delivery_errors,omitempty"`
 	KafkaDeliveryDropped *int64 `json:"kafka_delivery_dropped,omitempty"`
+	KafkaMarshalErrors   *int64 `json:"kafka_marshal_errors,omitempty"`  // eventos perdidos por json.Marshal falhou
+	KafkaProduceErrors   *int64 `json:"kafka_produce_errors,omitempty"`  // eventos perdidos por Produce() rejeitou (fila librdkafka cheia)
+
+	// telemetria do classifier (AF_PACKET + nDPI) — preenchido no heartbeat via ClassifierTelemetry
+	AFPacketKernelDrops *int64 `json:"afpacket_drops,omitempty"`           // drops no kernel (PACKET_STATISTICS); auto-reset pelo kernel
+	AFPacketChanDrops   *int64 `json:"afpacket_chan_drops,omitempty"`      // drops no canal Go interno (1.000 slots)
+	NDPIPackets         *int64 `json:"ndpi_packets_processed,omitempty"`   // pacotes processados pelo nDPI no intervalo
+	NDPIFlowsActive     *int   `json:"ndpi_flows_active,omitempty"`        // flows ativos no sync.Map do nDPI (snapshot)
+	NDPICleanupEvicted  *int64 `json:"ndpi_cleanup_evicted,omitempty"`     // flows removidos pelo cleanup no intervalo
 
 	// tamanho atual da flow table in-process — preenchido no heartbeat
 	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
@@ -135,6 +144,8 @@ type Producer struct {
 	dropped          atomic.Int64 // eventos descartados por buffer cheio; reportado no heartbeat
 	deliveryErrors   atomic.Int64 // callbacks de entrega com erro (qualquer tipo); reset por heartbeat
 	deliveryDropped  atomic.Int64 // mensagens perdidas definitivamente (ErrMsgTimedOut); reset por heartbeat
+	marshalErrors    atomic.Int64 // falhas de json.Marshal em drain(); reset por heartbeat
+	produceErrors    atomic.Int64 // falhas de Produce() (fila librdkafka cheia); reset por heartbeat
 
 	payloadB64Enabled bool
 	payloadHexEnabled bool
@@ -272,6 +283,7 @@ func (p *Producer) drain() {
 		data, err := json.Marshal(event)
 		if err != nil {
 			p.log.Error("marshal evento kafka", zap.Error(err))
+			p.marshalErrors.Add(1)
 			continue
 		}
 
@@ -300,6 +312,7 @@ func (p *Producer) drain() {
 				zap.String("flow_id", event.FlowID),
 			)
 			p.healthy.Store(false)
+			p.produceErrors.Add(1)
 		}
 	}
 }
@@ -407,6 +420,24 @@ func (p *Producer) DeliveryErrorsAndReset() int64 {
 		return 0
 	}
 	return p.deliveryErrors.Swap(0)
+}
+
+// MarshalErrorsAndReset retorna o número de eventos perdidos por falha de json.Marshal
+// desde o último reset e zera o contador.
+func (p *Producer) MarshalErrorsAndReset() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.marshalErrors.Swap(0)
+}
+
+// ProduceErrorsAndReset retorna o número de eventos perdidos por falha de Produce()
+// (fila interna do librdkafka cheia) desde o último reset e zera o contador.
+func (p *Producer) ProduceErrorsAndReset() int64 {
+	if p == nil {
+		return 0
+	}
+	return p.produceErrors.Swap(0)
 }
 
 // DeliveryDroppedAndReset retorna o número de mensagens perdidas definitivamente por timeout

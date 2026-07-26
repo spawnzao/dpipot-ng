@@ -163,6 +163,10 @@ func main() {
 		cfg.ProxyTimeout,
 	)
 
+	// Wire classifier telemetry — combina AF_PACKET e nDPI num único provider
+	// para que o heartbeat do proxy inclua todas as métricas de captura.
+	server.SetClassifier(&classifierTelemetry{af: af, handler: ndpiHandler})
+
 	// Start AF_PACKET capture
 	af.Start()
 
@@ -249,6 +253,21 @@ func main() {
 
 	logger.Info("dpipot stopped")
 }
+
+// classifierTelemetry implementa proxy.ClassifierTelemetry combinando as métricas
+// do AF_PACKET capturer e do nDPI handler num único provider para o heartbeat.
+type classifierTelemetry struct {
+	af      *capture.AFPacket
+	handler *ndpi.Handler
+}
+
+func (c *classifierTelemetry) AFPacketKernelDropsAndReset() int64 { return c.af.KernelDropsAndReset() }
+func (c *classifierTelemetry) AFPacketChanDropsAndReset() int64   { return c.af.ChanDropsAndReset() }
+func (c *classifierTelemetry) NDPIPacketsProcessedAndReset() int64 {
+	return c.handler.PacketsProcessedAndReset()
+}
+func (c *classifierTelemetry) NDPIFlowsActive() int              { return c.handler.ActiveFlows() }
+func (c *classifierTelemetry) NDPICleanupEvictedAndReset() int64 { return c.handler.CleanupEvictedAndReset() }
 
 func interfaceIP(ifname string, logger *zap.Logger) net.IP {
 	iface, err := net.InterfaceByName(ifname)

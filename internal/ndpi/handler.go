@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,6 +41,11 @@ type Handler struct {
 	// cleanup. São liberados no próximo ciclo (2 min depois), garantindo que
 	// nenhum PacketProcessing em curso ainda segure o ponteiro C.
 	pendingFree []*gondpi.NdpiFlow
+
+	// contadores de telemetria — lidos pelo heartbeat do proxy via ClassifierTelemetry
+	packetsProcessed atomic.Int64 // pacotes recebidos pelo ProcessPacket; reset por heartbeat
+	activeFlows      atomic.Int64 // flows ativos no ndpiFlows sync.Map (snapshot via Add/Sub)
+	cleanupEvicted   atomic.Int64 // flows removidos pelo cleanup; reset por heartbeat
 }
 
 type HandlerConfig struct {
@@ -91,6 +97,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 }
 
 func (h *Handler) ProcessPacket(data []byte) {
+	h.packetsProcessed.Add(1)
 	if len(data) < EthernetHeaderSize+20 {
 		return
 	}
@@ -233,7 +240,11 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 			return
 		}
 		newFlow.SetupFlow(srcIP, dstIP, protocol, srcPort, dstPort)
-		ndpiFlowI, _ = h.ndpiFlows.LoadOrStore(tupleID, newFlow)
+		actual, existedAlready := h.ndpiFlows.LoadOrStore(tupleID, newFlow)
+		if !existedAlready {
+			h.activeFlows.Add(1)
+		}
+		ndpiFlowI = actual
 	}
 
 	ndpiFlow, ok := ndpiFlowI.(*gondpi.NdpiFlow)
@@ -375,6 +386,23 @@ func decodeTCPFlags(flags uint8) string {
 	return s
 }
 
+// PacketsProcessedAndReset retorna pacotes recebidos pelo ProcessPacket desde o último reset
+// e zera o contador.
+func (h *Handler) PacketsProcessedAndReset() int64 {
+	return h.packetsProcessed.Swap(0)
+}
+
+// ActiveFlows retorna o número atual de flows ativos no sync.Map do nDPI.
+func (h *Handler) ActiveFlows() int {
+	return int(h.activeFlows.Load())
+}
+
+// CleanupEvictedAndReset retorna flows removidos pelo cleanup desde o último reset
+// e zera o contador.
+func (h *Handler) CleanupEvictedAndReset() int64 {
+	return h.cleanupEvicted.Swap(0)
+}
+
 // SetProducer injects the Kafka producer after construction.
 // Used to avoid a circular dependency when NdpiEventsEnabled=true.
 func (h *Handler) SetProducer(p *kafka.Producer) {
@@ -426,6 +454,8 @@ func (h *Handler) cleanupNdpiFlows() {
 			h.flowUUIDs.Delete(tupleID)
 			h.pendingFree = append(h.pendingFree, value.(*gondpi.NdpiFlow))
 			evicted++
+			h.activeFlows.Add(-1)
+			h.cleanupEvicted.Add(1)
 		}
 		return true
 	})

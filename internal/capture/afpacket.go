@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unsafe"
 
@@ -27,14 +28,15 @@ type Packet struct {
 }
 
 type AFPacket struct {
-	iface   string
-	fd      int
-	closed  bool
-	mu      sync.RWMutex
-	wg      sync.WaitGroup
-	packets chan *Packet
-	errors  chan error
-	done    chan struct{}
+	iface     string
+	fd        int
+	closed    bool
+	mu        sync.RWMutex
+	wg        sync.WaitGroup
+	packets   chan *Packet
+	errors    chan error
+	done      chan struct{}
+	chanDrops atomic.Int64 // pacotes descartados por canal Go cheio (1.000 slots)
 }
 
 type Config struct {
@@ -184,6 +186,9 @@ func (a *AFPacket) readLoop() {
 		case a.packets <- packet:
 		case <-a.done:
 			return
+		default:
+			// canal cheio: descartar para não bloquear Recvfrom e causar drops no kernel
+			a.chanDrops.Add(1)
 		}
 	}
 }
@@ -216,10 +221,47 @@ func (a *AFPacket) Close() error {
 	return nil
 }
 
+// ChanDropsAndReset retorna o número de pacotes descartados por canal Go cheio
+// desde o último reset e zera o contador.
+func (a *AFPacket) ChanDropsAndReset() int64 {
+	return a.chanDrops.Swap(0)
+}
+
+// KernelDropsAndReset lê o contador de drops do kernel via PACKET_STATISTICS e
+// o reseta atomicamente (o kernel zera o contador a cada leitura).
+// Retorna o número de pacotes descartados pelo kernel desde a última chamada.
+func (a *AFPacket) KernelDropsAndReset() int64 {
+	a.mu.RLock()
+	fd := a.fd
+	closed := a.closed
+	a.mu.RUnlock()
+
+	if closed || fd < 0 {
+		return 0
+	}
+
+	// struct tpacket_stats: { uint32 tp_packets; uint32 tp_drops }
+	// PACKET_STATISTICS auto-reseta os contadores no kernel após a leitura.
+	var stats [2]uint32
+	size := uint32(unsafe.Sizeof(stats))
+	_, _, errno := unix.Syscall6(
+		unix.SYS_GETSOCKOPT,
+		uintptr(fd),
+		unix.SOL_PACKET,
+		6, // PACKET_STATISTICS
+		uintptr(unsafe.Pointer(&stats)),
+		uintptr(unsafe.Pointer(&size)),
+		0,
+	)
+	if errno != 0 {
+		return 0
+	}
+	return int64(stats[1]) // stats[1] = tp_drops
+}
+
 func htons(i uint16) uint16 {
 	b := make([]byte, 2)
 	binary.BigEndian.PutUint16(b, i)
 	return binary.LittleEndian.Uint16(b)
 }
 
-var _ unsafe.Pointer
