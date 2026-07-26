@@ -33,11 +33,11 @@ spec:
               mountPath: /home/cowrie/var/log/cowrie
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: {{ .Values.resources.cowrie.requests.cpu }}
+              memory: {{ .Values.resources.cowrie.requests.memory }}
             limits:
-              cpu: 500m
-              memory: 512Mi
+              cpu: {{ .Values.resources.cowrie.limits.cpu }}
+              memory: {{ .Values.resources.cowrie.limits.memory }}
         - name: cowrie-logs
           image: busybox:stable
           command:

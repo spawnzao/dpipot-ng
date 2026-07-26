@@ -68,6 +68,13 @@ resources:
     limits:
       cpu: 500m
       memory: 400Mi
+  cowrie:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
 
 config:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"
