@@ -305,17 +305,29 @@ spec:
             - -c
             - |
               until [ -f /logs/log_session.json ]; do sleep 1; done
-              exec tail -n 0 -F /logs/log_session.json
+              tail -n 0 -F /logs/log_session.json &
+              TAIL_PID=$!
+              while true; do
+                now=$(date +%s)
+                sleep $(( (now / 86400 + 1) * 86400 - now ))
+                yday=$(date -u -d @$(( $(date +%s) - 43200 )) +%Y%m%d)
+                for f in log_session.json heralding.log session.csv auth.csv; do
+                  [ -f /logs/$f ] && \
+                    gzip -c /logs/$f > /logs/${f}.${yday}.gz && \
+                    : > /logs/$f
+                done
+                find /logs -name '*.????????.gz' -mtime +6 -delete 2>/dev/null
+              done &
+              wait $TAIL_PID
           volumeMounts:
             - name: logs
               mountPath: /logs
-              readOnly: true
           resources:
             requests:
               cpu: 10m
               memory: 16Mi
             limits:
-              cpu: 50m
+              cpu: 100m
               memory: 32Mi
       volumes:
         - name: config

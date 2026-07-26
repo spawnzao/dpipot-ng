@@ -181,51 +181,7 @@ data:
       }
     }
     output {
-      if [kubernetes][container][name] == "cowrie-logs" {
-        elasticsearch {
-          hosts           => ["${ELASTICSEARCH_HOST}"]
-          index           => "dpipot-cowrie-%{+YYYY.MM.dd}"
-          action          => "create"
-          manage_template => false
-          user            => "${ELASTICSEARCH_USER}"
-          password        => "${ELASTIC_PASSWORD}"
-          ssl             => true
-          cacert          => "/usr/share/logstash/config/certs/ca.crt"
-        }
-      } else if [kubernetes][container][name] == "wordpot-logs" {
-        elasticsearch {
-          hosts           => ["${ELASTICSEARCH_HOST}"]
-          index           => "dpipot-wordpot-%{+YYYY.MM.dd}"
-          action          => "create"
-          manage_template => false
-          user            => "${ELASTICSEARCH_USER}"
-          password        => "${ELASTIC_PASSWORD}"
-          ssl             => true
-          cacert          => "/usr/share/logstash/config/certs/ca.crt"
-        }
-      } else if [kubernetes][container][name] == "heralding-logs" {
-        elasticsearch {
-          hosts           => ["${ELASTICSEARCH_HOST}"]
-          index           => "dpipot-heralding-%{+YYYY.MM.dd}"
-          action          => "create"
-          manage_template => false
-          user            => "${ELASTICSEARCH_USER}"
-          password        => "${ELASTIC_PASSWORD}"
-          ssl             => true
-          cacert          => "/usr/share/logstash/config/certs/ca.crt"
-        }
-      } else if [kubernetes][container][name] == "galah-logs" {
-        elasticsearch {
-          hosts           => ["${ELASTICSEARCH_HOST}"]
-          index           => "dpipot-galah-%{+YYYY.MM.dd}"
-          action          => "create"
-          manage_template => false
-          user            => "${ELASTICSEARCH_USER}"
-          password        => "${ELASTIC_PASSWORD}"
-          ssl             => true
-          cacert          => "/usr/share/logstash/config/certs/ca.crt"
-        }
-      } else if [kubernetes][container][name] in ["proxy", "classifier"] {
+      if [kubernetes][container][name] in ["proxy", "classifier"] {
         elasticsearch {
           hosts           => ["${ELASTICSEARCH_HOST}"]
           index           => "dpipot-app-%{+YYYY.MM.dd}"

@@ -141,17 +141,25 @@ spec:
             - -c
             - |
               until [ -f /logs/event_log.json ]; do sleep 1; done
-              exec tail -n 0 -F /logs/event_log.json
+              tail -n 0 -F /logs/event_log.json &
+              TAIL_PID=$!
+              while true; do
+                now=$(date +%s)
+                sleep $(( (now / 86400 + 1) * 86400 - now ))
+                yday=$(date -u -d @$(( $(date +%s) - 43200 )) +%Y%m%d)
+                gzip -c /logs/event_log.json > /logs/event_log.json.${yday}.gz && : > /logs/event_log.json
+                find /logs -name 'event_log.json.????????.gz' -mtime +6 -delete 2>/dev/null
+              done &
+              wait $TAIL_PID
           volumeMounts:
             - name: galah-data
               mountPath: /logs
-              readOnly: true
           resources:
             requests:
               cpu: 10m
               memory: 16Mi
             limits:
-              cpu: 50m
+              cpu: 100m
               memory: 32Mi
       volumes:
         - name: galah-config
