@@ -43,6 +43,7 @@ data:
         add_field => {
           "[@metadata][doc_id]" => "%{[@metadata][kafka][topic]}|%{[@metadata][kafka][partition]}|%{[@metadata][kafka][offset]}"
         }
+        remove_field => ["[event][original]"]
       }
       if [port_mismatch] {
         mutate {
