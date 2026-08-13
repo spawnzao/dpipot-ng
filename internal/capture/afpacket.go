@@ -110,7 +110,7 @@ func NewAFPacket(cfg Config) (*AFPacket, error) {
 	af := &AFPacket{
 		iface:   cfg.Interface,
 		fd:      fd,
-		packets: make(chan *Packet, 1000),
+		packets: make(chan *Packet, 100000),
 		errors:  make(chan error, 10),
 		done:    make(chan struct{}),
 	}
