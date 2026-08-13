@@ -167,7 +167,7 @@ func newKafkaConfig(brokers string) *kafka.ConfigMap {
 		"linger.ms":                    5,
 		// Fail undelivered messages after 30s so delivery errors surface quickly
 		// rather than silently accumulating for the default 5 minutes.
-		"delivery.timeout.ms":      30000,
+		"delivery.timeout.ms":      60000,
 		"allow.auto.create.topics": "true",
 	}
 }
