@@ -46,6 +46,10 @@ func main() {
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 	)
 
+	// Verifica se o OS está configurado corretamente para AF_PACKET.
+	// Em modo interativo oferece criar o arquivo sysctl e aplicar imediatamente.
+	checkRmemMax(logger)
+
 	// Shared in-memory flow table — written by nDPI goroutine, read by proxy handlers.
 	flowTable := flow.NewTable(flow.TableConfig{
 		TTL:          cfg.FlowTableTTL,
