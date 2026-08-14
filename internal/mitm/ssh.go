@@ -239,7 +239,7 @@ func (s *SSHSession) emitResponse() {
 		DstPort:    s.dstPort,
 		NDPIProto:  "SSH",
 		NDPIApp:    "response",
-		CVE:        strings.TrimSpace(s.pendingResp),
+		SSHResponse: strings.TrimSpace(s.pendingResp),
 		Honeypot:   s.honeypot,
 		Instance:   "proxy",
 	})
