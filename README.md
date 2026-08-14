@@ -5,14 +5,12 @@
 DPIpot-NG intercepts all TCP connections arriving at a node — without touching firewall rules on the attacker's path — classifies each flow at Layer 2 using nDPI deep packet inspection, routes the connection to the appropriate honeypot service, and emits structured events to Kafka for ingestion into Elasticsearch/Kibana. The system operates completely transparently: attackers connect to the real node IP and port, unaware they are being redirected.
 
 > **Branch status:**
-> - `main` (v0.3 — stable): two-container design — `dpipot-proxy` + `dpipot-classifier` sidecar communicating via FlowTracker gRPC
-> - `dev` (current): **unified binary** — AF_PACKET capture and TPROXY proxy run in the same process, sharing an in-memory flow table (no IPC)
+> - `main` (v0.4 — stable): unified binary — AF_PACKET capture and TPROXY proxy run in the same process, sharing an in-memory flow table (no IPC). Tested in production and approved.
+> - `dev`: active development — next improvements in progress
 
 ---
 
 ## Architecture
-
-### dev branch — Unified binary (`dpipot`)
 
 ```
                         ┌────────────────────────────────────────────────────┐
@@ -77,7 +75,7 @@ The proxy retrieves the original destination IP and port via `SO_ORIGINAL_DST` (
 
 ## The dpipot Binary
 
-The `dev` branch merges the former classifier and proxy into a **single Go binary** that runs both responsibilities in the same process.
+The proxy and classifier run as a **single Go binary** in the same process.
 
 **AF_PACKET goroutine** — opens a raw `AF_PACKET` socket on the configured network interface (`ETH_P_ALL`, promiscuous mode) and feeds every frame to **nDPI 4.12** (C library compiled from source, wrapped with CGO). nDPI performs stateful deep packet inspection across the full flow lifecycle and writes the result to an **in-memory flow table** keyed by 5-tuple (src IP, dst IP, src port, dst port, protocol).
 
@@ -169,7 +167,7 @@ kubectl apply -f k8s/secrets/galah-secrets.yaml
 
 ```bash
 # Production (pinned tags, persistent Kafka, higher resource requests)
-helm upgrade --install dpipot k8s/chart/ \
+microk8s helm3 upgrade --install dpipot k8s/chart/ \
   -f k8s/chart/values-prod.yaml \
   --namespace dpipot --create-namespace
 
@@ -178,7 +176,7 @@ kubectl rollout status daemonset/dpipot-proxy -n dpipot
 kubectl get pods -n dpipot
 ```
 
-**Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` in `values.yaml` (or override per profile) to match your node's interface name before deploying.
+**Note:** The network interface used by TPROXY defaults to `ens192`. Change `CLASSIFIER_INTERFACE` in `values.yaml` (or override per node) to match your node's interface name before deploying.
 
 ### Per-Node Values File (required for multi-node deployments)
 
@@ -223,9 +221,8 @@ Settings you almost always need to override per node:
 
 ```bash
 # MicroK8s
-microk8s helm upgrade --install dpipot k8s/chart/ \
-  -f k8s/chart/values-$(hostname -s).yaml \
-  --namespace dpipot --create-namespace
+microk8s helm3 -n dpipot upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-$(hostname -s).yaml --create-namespace
 
 # k3s
 helm upgrade --install dpipot k8s/chart/ \
@@ -237,8 +234,8 @@ helm upgrade --install dpipot k8s/chart/ \
 
 The repository includes a self-hosted GitHub Actions runner workflow that builds and deploys automatically:
 
-- **`main` branch** → builds `dpipot-proxy` + `dpipot-classifier` images → deploys automatically via `workflow_run`
-- **`dev` branch** → builds unified `dpipot` image → deploys automatically (triggered from the build job via `gh workflow run`)
+- **`main` branch** → builds `ghcr.io/spawnzao/dpipot:main` (stable)
+- **`dev` branch** → builds `ghcr.io/spawnzao/dpipot:dev` → triggers deploy automatically via `gh workflow run deploy.yml`
 
 **Orchestrator detection:** the workflow detects whether the host runs k3s or MicroK8s and selects the right commands automatically.
 
@@ -249,8 +246,6 @@ The repository includes a self-hosted GitHub Actions runner workflow that builds
 ## Configuration Reference
 
 All configuration is done via environment variables, loaded from the `dpipot-config` ConfigMap.
-
-### dpipot (unified binary — dev branch)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -273,6 +268,7 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 | `PORT_PROTOCOL_MAP` | _(empty)_ | Override protocol for specific ports: `port:proto,...` |
 | `SSH_INPUT_BUF_SIZE` | `4096` | SSH input buffer size in bytes |
 | `SSH_OUTPUT_BUF_SIZE` | `65536` | SSH output buffer size in bytes |
+| `NDPI_EVENTS_ENABLED` | `false` | Publish per-packet nDPI classification events to Kafka |
 
 **Kafka**
 
@@ -280,7 +276,7 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 |----------|---------|-------------|
 | `KAFKA` | `true` | Enable Kafka publishing |
 | `KAFKA_BROKERS` | `kafka-svc:9092` | Comma-separated Kafka broker addresses |
-| `KAFKA_TOPIC` | `dpipot.events` | Topic for flow events |
+| `KAFKA_TOPIC` | `dpipot.events` | Base topic for flow events |
 | `PAYLOAD_B64_ENABLED` | `true` | Include base64-encoded payload in events |
 | `PAYLOAD_HEX_ENABLED` | `true` | Include hex-encoded payload in events |
 
@@ -291,7 +287,7 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 | Profile | Kafka | Filebeat | Logstash | Image tags | Kafka PVC |
 |---------|-------|----------|----------|------------|-----------|
 | _(default)_ | ✅ | ✅ | ✅ | `latest` | emptyDir |
-| `prod` | ✅ | ✅ | ✅ | `release-0.3` | 100Gi |
+| `prod` | ✅ | ✅ | ✅ | `main` | 100Gi |
 | `sensor` | ✅ | ❌ | kafka only | `latest` | emptyDir |
 | `light` | ❌ | ❌ | ❌ | `latest` | — |
 | `debug` | ❌ | ✅ | filebeat only | `latest` | — |
@@ -340,6 +336,7 @@ Any protocol label not in `HONEYPOT_ROUTES` is forwarded to `DEFAULT_ROUTE`.
   "flow_id":              "550e8400-e29b-41d4-a716-446655440000",
   "tuple_id":             "192.168.1.10:54321->10.0.0.5:22",
   "timestamp":            "2024-01-15T14:32:01.123Z",
+  "event_type":           "flow",
   "src_ip":               "192.168.1.10",
   "src_port":             54321,
   "dst_ip":               "10.0.0.5",
@@ -348,25 +345,49 @@ Any protocol label not in `HONEYPOT_ROUTES` is forwarded to `DEFAULT_ROUTE`.
   "ndpi_app":             "SSH",
   "attack_type":          "ssh_password",
   "honeypot":             "cowrie-svc:22",
-  "event_type":           "flow",
   "ttl":                  64,
+  "tos":                  0,
   "tcp_window":           65535,
+  "ip_version":           4,
   "rtt_ms":               12.4,
+  "rtt_var_ms":           1.2,
   "duration_ms":          4821,
+  "payload_size":         1024,
   "node_name":            "dpipot",
   "pod_name":             "dpipot-proxy-whv5w"
 }
 ```
 
+**nDPI events** (`event_type: "ndpi"`, published per-packet when `NDPI_EVENTS_ENABLED=true`, topic `dpipot.events-ndpi`) additionally include:
+
+| Field | Description |
+|---|---|
+| `transport` | `"tcp"` or `"udp"` |
+| `tcp_flags` | Decoded TCP flags: `"SYN ACK PSH ..."` |
+| `payload_len` | Application-layer bytes in this packet |
+| `ethertype` | `"0x0800"` (IPv4) or `"0x86DD"` (IPv6) |
+| `ip_proto` | `6` (TCP) or `17` (UDP) |
+| `category` | nDPI category ID |
+
 **Heartbeat events** (`event_type: "heartbeat"`, emitted every 60 s) include:
 
 | Field | Description |
 |---|---|
-| `flow_table_size` | Current number of entries in the in-memory nDPI flow table |
-| `flow_table_not_found` | Lookups where the flow wasn't in the table yet (nDPI hadn't classified) |
-| `flow_table_unknown` | Lookups where the entry existed but the protocol was still Unknown |
-| `kafka_drops` | Events dropped since last heartbeat (buffer full) |
+| `flow_table_size` | Current entries in the in-memory nDPI flow table |
+| `flow_table_not_found` | Lookups where flow wasn't in the table yet |
+| `flow_table_unknown` | Lookups where entry existed but protocol was still Unknown |
+| `afpacket_drops` | Packets dropped by the kernel AF_PACKET buffer since last heartbeat |
+| `afpacket_chan_drops` | Packets dropped by the internal Go channel (100k slots) |
+| `ndpi_packets_processed` | Packets processed by nDPI in the interval |
+| `ndpi_flows_active` | Active flows in the nDPI sync.Map (snapshot) |
+| `kafka_drops` | Events dropped since last heartbeat (channel full) |
+| `kafka_delivery_errors` | librdkafka delivery callbacks with errors |
+| `kafka_delivery_dropped` | Messages definitively lost (delivery.timeout.ms expired) |
+| `kafka_chan_len` | Events queued in Go channel awaiting drain |
+| `kafka_queue_len` | Messages queued in librdkafka awaiting delivery |
 | `uptime_sec` | Process uptime in seconds |
+
+**SSH MITM response events** include `ssh_response` (server output captured during the session) alongside `attack_type` (the command typed by the attacker).
 
 ---
 
@@ -418,18 +439,20 @@ Step-by-step deployment guides for specific platforms:
 
 Images are built automatically by GitHub Actions on every push and pushed to `ghcr.io`:
 
-- **`main`** → `ghcr.io/spawnzao/dpipot-proxy:latest` + `ghcr.io/spawnzao/dpipot-classifier:latest`
-- **`dev`** → `ghcr.io/spawnzao/dpipot:latest` (unified binary)
+- **`main`** → `ghcr.io/spawnzao/dpipot:main`
+- **`dev`** → `ghcr.io/spawnzao/dpipot:dev` (triggers automatic deploy)
 
 To build locally:
 
 ```bash
-# Unified binary — dev branch (compiles nDPI 4.12 from source, ~5 min)
+# Compiles nDPI 4.12 from source (~5 min on first run)
 docker build -t dpipot:local .
+```
 
-# Legacy — main branch
-docker build -t dpipot-proxy:local ./proxy
-docker build -t dpipot-classifier:local ./classifier
+To build and run directly without Docker:
+
+```bash
+CGO_ENABLED=1 go build -o dpipot ./cmd/dpipot
 ```
 
 All images use multi-stage builds. The final runtime image is based on `debian:bookworm` with only the required shared libraries (`librdkafka1`, `libpcap0.8`, `libjson-c5`, `libndpi.so`).
@@ -440,28 +463,27 @@ All images use multi-stage builds. The final runtime image is based on `debian:b
 
 ```
 dpipot-ng/
-├── cmd/dpipot/             # Unified binary entry point (dev branch)
-│   └── main.go
-├── internal/               # Shared packages (dev branch)
-│   ├── capture/            # AF_PACKET raw socket
-│   ├── config/             # Merged environment variable loader
+├── cmd/dpipot/             # Unified binary entry point
+│   ├── main.go
+│   └── sysctl_check.go     # rmem_max startup check with interactive sysctl fix
+├── internal/               # All shared packages
+│   ├── capture/            # AF_PACKET raw socket (100k-slot Go channel)
+│   ├── config/             # Environment variable loader
 │   ├── flow/               # In-memory flow table (shared between goroutines)
 │   ├── httpclassifier/     # HTTP path whitelist
-│   ├── kafka/              # Kafka producer
+│   ├── kafka/              # Kafka producer with self-healing watchdog
 │   ├── mitm/               # MITM handlers: SSH, RDP, HTTP, TLS, parsers
-│   ├── ndpi/               # nDPI 4.12 CGO bindings (gondpi)
+│   ├── ndpi/               # nDPI 4.12 CGO bindings (gondpi) + handler
 │   ├── proxy/              # TCP server, connection handler, health server
 │   └── router/             # Protocol→honeypot routing table
-├── classifier/             # Legacy: standalone classifier module (main branch)
-│   ├── cmd/
-│   └── internal/
-├── proxy/                  # Legacy: standalone proxy module (main branch)
-│   ├── cmd/proxy/
-│   └── internal/
-├── Dockerfile              # Unified dpipot image (dev branch)
+├── tools/
+│   ├── debug_afpacket/     # Standalone AF_PACKET debug tool
+│   └── kafka-consumer/     # Standalone Kafka consumer tool
+├── Dockerfile              # Multi-stage build; compiles nDPI from source
 ├── go.mod                  # Root module: github.com/spawnzao/dpipot-ng
-├── go.work                 # Workspace: root + classifier + proxy modules
-└── k8s/                    # Kubernetes manifests (Helm)
-    ├── chart/              # Helm chart
-    └── secrets/            # .example files — copy and fill before helm install
+├── go.work                 # Workspace: root + tools modules
+├── k8s/                    # Kubernetes manifests (Helm)
+│   ├── chart/              # Helm chart
+│   └── secrets/            # .example files — copy and fill before helm install
+└── docs/                   # Deployment guides (en + pt-br)
 ```
