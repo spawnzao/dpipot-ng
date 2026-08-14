@@ -6,8 +6,6 @@ on:
       - main
       - dev
     paths:
-      - 'proxy/**'
-      - 'classifier/**'
       - 'cmd/**'
       - 'internal/**'
       - 'Dockerfile'
@@ -21,112 +19,11 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  PROXY_IMAGE: ghcr.io/${{ github.repository_owner }}/dpipot-proxy
-  CLASSIFIER_IMAGE: ghcr.io/${{ github.repository_owner }}/dpipot-classifier
   DPIPOT_IMAGE: ghcr.io/${{ github.repository_owner }}/dpipot
 
 jobs:
-  # ── main branch: builds the separate proxy and classifier images ────────────
-  build-proxy:
-    name: build proxy
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4.2.2
-
-      - name: login no ghcr.io
-        uses: docker/login-action@v3.3.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: extrai metadata
-        id: meta
-        uses: docker/metadata-action@v5.6.1
-        with:
-          images: ${{ env.PROXY_IMAGE }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: configura buildx
-        uses: docker/setup-buildx-action@v3.8.0
-
-      - name: setup go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: false
-
-      - name: build e push proxy
-        uses: docker/build-push-action@v6.10.0
-        with:
-          context: ./proxy
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          no-cache-filters: |
-            proxy
-
-  build-classifier:
-    name: build classifier
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-
-    steps:
-      - name: checkout
-        uses: actions/checkout@v4.2.2
-
-      - name: login no ghcr.io
-        uses: docker/login-action@v3.3.0
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: extrai metadata
-        id: meta
-        uses: docker/metadata-action@v5.6.1
-        with:
-          images: ${{ env.CLASSIFIER_IMAGE }}
-          tags: |
-            type=ref,event=branch
-            type=sha,prefix=sha-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-
-      - name: configura buildx
-        uses: docker/setup-buildx-action@v3.8.0
-
-      - name: setup go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: false
-
-      - name: build e push classifier
-        uses: docker/build-push-action@v6.10.0
-        with:
-          context: ./classifier
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ── dev branch: builds the unified dpipot image (Strategy A) ───────────────
-  build-dpipot:
+  build:
     name: build dpipot
-    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -152,7 +49,7 @@ jobs:
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/dev' }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: configura buildx
         uses: docker/setup-buildx-action@v3.8.0
@@ -161,13 +58,14 @@ jobs:
         uses: docker/build-push-action@v6.10.0
         with:
           context: .
-          push: true
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: trigger deploy
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
         run: gh workflow run deploy.yml --ref dev
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
