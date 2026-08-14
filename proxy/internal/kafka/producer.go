@@ -34,7 +34,7 @@ type Event struct {
 	PayloadSize   int64     `json:"payload_size"`
 	DurationMs    float64   `json:"duration_ms,omitempty"`
 	AttackType    string    `json:"attack_type,omitempty"`
-	CVE           string    `json:"cve,omitempty"`
+	SSHResponse   string    `json:"ssh_response,omitempty"` // output do servidor SSH capturado pelo MITM (resposta ao comando do atacante)
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port
