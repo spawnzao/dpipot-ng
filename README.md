@@ -420,6 +420,8 @@ Step-by-step deployment guides for specific platforms:
 | [Rocky Linux 9 — Full Setup](docs/pt-br/rocky-linux-setup.md) | k3s, SELinux, networking, iptables TPROXY, secrets, Helm install | Português |
 | [Ubuntu 24.04 — Full Setup](docs/en/ubuntu-linux-setup.md) | k3s, AppArmor, ufw, SSH socket-activation, secrets, Helm install | English |
 | [Ubuntu 24.04 — Full Setup](docs/pt-br/ubuntu-linux-setup.md) | k3s, AppArmor, ufw, SSH socket-activation, secrets, Helm install | Português |
+| [Debian 13 (trixie) — kubeadm + Calico](docs/en/debian-kubeadm-setup.md) | kubeadm, Calico CNI, containerd, nftables, control/data plane separation, k3s vs kubeadm differences | English |
+| [Debian 13 (trixie) — kubeadm + Calico](docs/pt-br/debian-kubeadm-setup.md) | kubeadm, Calico CNI, containerd, nftables, separação plano de controle/dados, diferenças k3s vs kubeadm | Português |
 
 ---
 
