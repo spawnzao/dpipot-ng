@@ -1,0 +1,12 @@
+apiVersion: v2
+name: dpipot-standalone-honeypots
+description: >
+  Honeypots (cowrie/heralding/wordpot/galah) without a local dpipot-proxy —
+  for standalone hosts that run only honeypots, reached by a remote
+  dpipot-proxy via an isolated WireGuard network. Independent chart
+  from the main chart (k8s/chart/) — shares no templates, so there is
+  no risk of regressing the chart used by standard production nodes.
+  See docs/en/honeypot-standalone-k3s-cilium.md
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

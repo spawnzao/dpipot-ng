@@ -111,12 +111,23 @@ The proxy and classifier run as a **single Go binary** in the same process.
 
 ## Deployment
 
-The system is deployed as a **DaemonSet** — one pod per node — and has been tested on **MicroK8s 1.29** and **k3s**, but should run on any standard Kubernetes distribution that supports:
+The system is deployed as a **DaemonSet** — one pod per node — and has been tested on **MicroK8s 1.29**, **k3s**, and **kubeadm** (Debian 13 trixie), but should run on any standard Kubernetes distribution that supports:
 - `NET_ADMIN` and `NET_RAW` capabilities
 - `hostNetwork: true` or a TPROXY-compatible CNI
 - `iptables` available in init containers
 
-Infrastructure is managed with **Helm**. The chart lives in `k8s/chart/`:
+### Operating modes
+
+Two deployment modes are available depending on whether a node exposes services to the internet or not:
+
+| Mode | Chart | Use case |
+|---|---|---|
+| **Standard** | `k8s/chart/` | Proxy + classifier + honeypots on the same node. The `dpipot-proxy` captures all inbound TCP via TPROXY, classifies it with nDPI, and routes it to honeypots running as `ClusterIP` services on the same cluster. All production nodes today run this mode. |
+| **Standalone honeypots** | `k8s/chart-standalone/` | Honeypots only — no local proxy, no TPROXY, no nDPI. A remote `dpipot-ng` node (running the proxy/classifier) forwards already-classified connections here via an isolated WireGuard network. The node has no data interface exposed to the internet. Useful to separate the public attack surface from honeypot execution, limiting blast radius if a honeypot is compromised. |
+
+The two charts are **completely independent** — they share no templates. Installing or uninstalling the standalone chart never affects a standard node, and vice versa.
+
+Infrastructure is managed with **Helm**. The charts live in `k8s/chart/` (standard) and `k8s/chart-standalone/` (standalone):
 
 ```
 k8s/
@@ -139,9 +150,21 @@ k8s/
 │       ├── galah.yaml
 │       ├── services.yaml
 │       └── network-policy.yaml
+├── chart-standalone/       # Standalone honeypots-only chart (no proxy)
+│   ├── Chart.yaml
+│   ├── values.yaml           # Defaults: all honeypots enabled, Groq LLM
+│   ├── values-honeypots.yaml # Tracked sanitized example — copy per host
+│   └── templates/
+│       ├── cowrie.yaml
+│       ├── galah.yaml        # Includes WireGuard tunnel initContainer
+│       ├── heralding.yaml
+│       ├── wordpot.yaml
+│       └── network-policy.yaml  # Full isolation: deny all, except allowedIngressCIDR
 └── secrets/
     ├── logstash-secrets.yaml.example    ← copy → logstash-secrets.yaml
-    └── galah-secrets.yaml.example       ← copy → galah-secrets.yaml
+    ├── galah-secrets.yaml.example       ← copy → galah-secrets.yaml
+    ├── galah-llm-api-key.yaml.example   ← standalone chart: LLM API key
+    └── galah-wg-secret.yaml.example     ← standalone chart: WireGuard tunnel config
 ```
 
 ### Configuring Secrets Before Deploying
@@ -217,18 +240,84 @@ Settings you almost always need to override per node:
 | `kafka.persistence.storageClass` | Differs between k3s (`local-path`) and MicroK8s (`microk8s-hostpath`) | `kubectl get storageclass` |
 | `resources.*` | requests/limits must fit in actual RAM/CPU | `nproc`, `free -h` |
 
-**Manual deploy:**
+**Manual deploy (standard mode):**
 
 ```bash
 # MicroK8s
 microk8s helm3 -n dpipot upgrade --install dpipot k8s/chart/ \
   -f k8s/chart/values-$(hostname -s).yaml --create-namespace
 
-# k3s
+# k3s / kubeadm
 helm upgrade --install dpipot k8s/chart/ \
   -f k8s/chart/values-$(hostname -s).yaml \
   --namespace dpipot --create-namespace
 ```
+
+### Standalone honeypot node
+
+A standalone node runs only the honeypots — no proxy, no TPROXY, no nDPI — and is reached by a remote `dpipot-proxy` over an isolated WireGuard network. The standalone chart (`k8s/chart-standalone/`) is independent of the main chart and requires its own setup:
+
+**1. Secrets (standalone chart only):**
+
+```bash
+# LLM API key used by galah (Groq or your own backend)
+kubectl -n dpipot create secret generic galah-llm-api-key \
+  --from-literal=api_key=<your-key>
+
+# WireGuard config for galah's isolated LLM tunnel (if wgTunnel.enabled=true)
+kubectl -n dpipot create secret generic galah-wg-secret \
+  --from-file=wg-llm.conf=<path-to-your-galah-wg.conf>
+```
+
+See `k8s/secrets/galah-llm-api-key.yaml.example` and `k8s/secrets/galah-wg-secret.yaml.example` for the expected format.
+
+**2. Pre-build the WireGuard tools image** (standalone chart requires it; the honeypot network has no internet):
+
+```bash
+# Build on any machine with internet access, then import on the honeypot host
+mkdir wg-tools-image && cd wg-tools-image
+cat > Dockerfile <<'EOF'
+FROM alpine:3.19
+RUN apk add --no-cache wireguard-tools iproute2
+EOF
+docker build -t dpipot/wg-tools:3.19 .
+docker save dpipot/wg-tools:3.19 -o wg-tools.tar
+scp wg-tools.tar user@<honeypot-host>:~/
+
+# On the honeypot host (k3s):
+sudo k3s ctr images import ~/wg-tools.tar
+```
+
+**3. Host-specific values file** (copy `values-honeypots.yaml` and fill in the placeholders):
+
+```yaml
+# k8s/chart-standalone/values-<hostname>.yaml  (local only, not committed)
+hostExpose:
+  ip: "<HONEYPOT_WG_IFACE_IP>"        # WireGuard interface IP on the honeypot network
+
+honeypotIsolation:
+  allowedIngressCIDR: "<HONEYPOT_CIDR>"   # only the remote dpipot-proxy may connect in
+  galahWgEndpoint:
+    ip: "<PUBLIC_IP_OF_LLM_WG_ENDPOINT>"  # WireGuard endpoint for galah's LLM tunnel
+    port: 51820
+
+honeypots:
+  galah:
+    model: "<LLM_MODEL>"
+    llmApiBase: "http://<TUNNEL_INTERNAL_IP>:8000/v1"  # or Groq URL if using cloud
+```
+
+**4. Deploy:**
+
+```bash
+cd k8s/chart-standalone/
+helm lint . -f values.yaml -f values-$(hostname -s).yaml
+helm install dpipot-standalone . \
+  -f values.yaml -f values-$(hostname -s).yaml \
+  -n dpipot --create-namespace
+```
+
+> **Note:** The standalone chart uses `hostPort` + `hostIP` (not `ClusterIP`) to expose honeypot ports on the isolated WireGuard interface. `NetworkPolicy` is in full-deny mode — the only allowed inbound traffic is from `allowedIngressCIDR`, and the only allowed outbound is galah's WireGuard tunnel egress. See [the standalone guide](docs/en/honeypot-standalone-k3s-cilium.md) for the full walkthrough including k3s + Cilium setup.
 
 ### CI/CD (GitHub Actions)
 
@@ -422,18 +511,38 @@ Step-by-step deployment guides for specific platforms:
 | [Ubuntu 24.04 — Full Setup](docs/pt-br/ubuntu-linux-setup.md) | k3s, AppArmor, ufw, SSH socket-activation, secrets, Helm install | Português |
 | [Debian 13 (trixie) — kubeadm + Calico](docs/en/debian-kubeadm-setup.md) | kubeadm, Calico CNI, containerd, nftables, control/data plane separation, k3s vs kubeadm differences | English |
 | [Debian 13 (trixie) — kubeadm + Calico](docs/pt-br/debian-kubeadm-setup.md) | kubeadm, Calico CNI, containerd, nftables, separação plano de controle/dados, diferenças k3s vs kubeadm | Português |
+| [Standalone Honeypots — k3s + Cilium](docs/en/honeypot-standalone-k3s-cilium.md) | standalone mode (honeypots only, no local proxy), k3s, Cilium CNI + kube-proxy replacement, WireGuard isolation, full-deny NetworkPolicy, galah LLM tunnel, chart-standalone | English |
+| [Honeypots Standalone — k3s + Cilium](docs/pt-br/honeypot-standalone-k3s-cilium.md) | modo standalone (só honeypots, sem proxy local), k3s, Cilium CNI + substituição do kube-proxy, isolamento WireGuard, NetworkPolicy full-deny, túnel LLM do galah, chart-standalone | Português |
 
 ---
 
 ## Requirements
 
-- Kubernetes ≥ 1.25 (tested on **MicroK8s 1.29** and **k3s**)
+- Kubernetes ≥ 1.25 (tested on **MicroK8s 1.29**, **k3s**, and **kubeadm** on Debian 13 trixie)
 - Nodes running Linux with `iptables` support (TPROXY target in `mangle` table)
 - Helm ≥ 3.0
 - Container registry access to `ghcr.io/spawnzao` (or rebuild images locally)
 - `NET_ADMIN` + `NET_RAW` capabilities allowed by the cluster's admission policy
 
 > **Local testing:** The proxy requires `IP_TRANSPARENT` socket option, which needs `NET_ADMIN` and is blocked in nested container environments (LXC/Docker-in-Docker). Test in a real VM or bare-metal node.
+
+### kubeadm / Debian 13 (trixie) particularities
+
+When deploying on a kubeadm cluster, a few extra steps are required compared to k3s or MicroK8s:
+
+| Topic | Detail |
+|---|---|
+| **Swap** | Must be disabled before `kubeadm init` (`swapoff -a` + remove from `/etc/fstab`) |
+| **Kernel modules** | `br_netfilter` and `overlay` must be loaded manually and added to `/etc/modules-load.d/` |
+| **CNI** | No bundled CNI — install Calico (or another CNI) after `kubeadm init` |
+| **StorageClass** | No default StorageClass — install [local-path-provisioner](https://github.com/rancher/local-path-provisioner) for PVC support |
+| **apiserver / kubelet bind** | Bind to the node's main IP, not `0.0.0.0`, to avoid conflicts with the data-plane interface (`--apiserver-advertise-address`, `--node-ip`) |
+| **Control-plane taint** | On single-node clusters, remove the taint so workloads can schedule: `kubectl taint nodes --all node-role.kubernetes.io/control-plane-` |
+| **containerd `bin_dir`** | Debian 13 ships containerd without the CNI bin dir — create `/opt/cni/bin` and fix the path in `/etc/containerd/config.toml` |
+| **nftables** | Debian 13 uses nftables by default; no firewalld/ufw needed — configure rules directly with `nft` |
+| **`software-properties-common`** | Not available on Debian 13 minimal — add the Kubernetes apt repository manually via `gpg` + `echo "deb ..."` |
+
+See the [Debian 13 setup guide](docs/en/debian-kubeadm-setup.md) for a complete step-by-step walkthrough.
 
 ---
 

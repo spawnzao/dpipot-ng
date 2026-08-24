@@ -1,0 +1,75 @@
+{{- if .Values.honeypots.cowrie.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cowrie
+  namespace: dpipot
+  labels:
+    app: cowrie
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cowrie
+  template:
+    metadata:
+      labels:
+        app: cowrie
+    spec:
+      containers:
+        - name: cowrie
+          image: cowrie/cowrie:latest
+          ports:
+            - containerPort: 2222
+              protocol: TCP
+              hostPort: 2222
+              hostIP: {{ .Values.hostExpose.ip | quote }}
+            - containerPort: 2323
+              protocol: TCP
+              hostPort: 2323
+              hostIP: {{ .Values.hostExpose.ip | quote }}
+          env:
+            - name: COWRIE_TELNET_ENABLED
+              value: "yes"
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /cowrie/cowrie-git/var/log/cowrie
+          resources:
+            requests:
+              cpu: {{ .Values.resources.cowrie.requests.cpu }}
+              memory: {{ .Values.resources.cowrie.requests.memory }}
+            limits:
+              cpu: {{ .Values.resources.cowrie.limits.cpu }}
+              memory: {{ .Values.resources.cowrie.limits.memory }}
+        - name: cowrie-logs
+          image: busybox:stable
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until [ -f /logs/cowrie.json ]; do sleep 1; done
+              tail -n +1 -F /logs/cowrie.json &
+              TAIL_PID=$!
+              while true; do
+                now=$(date +%s)
+                sleep $(( (now / 86400 + 1) * 86400 - now ))
+                yday=$(date -u -d @$(( $(date +%s) - 43200 )) +%Y%m%d)
+                gzip -c /logs/cowrie.json > /logs/cowrie.${yday}.json.gz && : > /logs/cowrie.json
+                find /logs -name 'cowrie.????????.json.gz' -mtime +6 -delete 2>/dev/null
+              done &
+              wait $TAIL_PID
+          volumeMounts:
+            - name: cowrie-logs
+              mountPath: /logs
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      volumes:
+        - name: cowrie-logs
+          emptyDir: {}
+{{- end }}

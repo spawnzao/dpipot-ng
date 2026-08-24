@@ -1,0 +1,47 @@
+---
+# Full isolation: standalone honeypot host, no local dpipot-proxy.
+# Denies EVERYTHING by default — no honeypot should resolve DNS or reach
+# the internet. Only a remote dpipot-proxy may access these pods, via
+# the isolated network (allowedIngressCIDR).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: honeypot-full-isolation
+  namespace: dpipot
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.honeypotIsolation.allowedIngressCIDR | quote }}
+  egress: []
+{{- if and .Values.honeypots.galah.enabled .Values.honeypots.galah.wgTunnel.enabled }}
+---
+# Single narrow exception: galah only, to the public endpoint of its own
+# WireGuard tunnel — not the internal tunnel IP, but the real address
+# through which the WireGuard handshake exits before encapsulation.
+# NetworkPolicies for the same pod are OR-combined — this ADDS this
+# specific allowance on top of honeypot-full-isolation above, without
+# affecting the other honeypots in this chart.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: galah-llm-tunnel-egress
+  namespace: dpipot
+spec:
+  podSelector:
+    matchLabels:
+      app: galah
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: "{{ .Values.honeypotIsolation.galahWgEndpoint.ip }}/32"
+      ports:
+        - protocol: UDP
+          port: {{ .Values.honeypotIsolation.galahWgEndpoint.port }}
+{{- end }}

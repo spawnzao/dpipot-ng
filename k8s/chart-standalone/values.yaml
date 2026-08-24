@@ -1,0 +1,58 @@
+# Standalone chart: honeypots-only host, no local dpipot-proxy (no
+# TPROXY/nDPI). Traffic classification and forwarding is handled by a
+# remote dpipot-proxy, which reaches these honeypots via an isolated
+# WireGuard network (hostExpose.ip).
+# See docs/en/honeypot-standalone-k3s-cilium.md
+
+hostExpose:
+  # IP of the isolated interface (e.g. wg2) on which honeypots should
+  # bind (hostIP+hostPort) — and through which the remote dpipot-proxy connects.
+  ip: ""
+
+honeypotIsolation:
+  # CIDR of the isolated network — only this range may initiate connections
+  # to the honeypots (ingress). No outbound route by default (egress: [],
+  # no exceptions).
+  allowedIngressCIDR: ""
+  galahWgEndpoint:
+    # Public endpoint of galah's own WireGuard tunnel (not the internal
+    # tunnel IP) — the only egress exception in this chart.
+    ip: ""
+    port: 51820
+
+honeypots:
+  cowrie:
+    enabled: true
+  wordpot:
+    enabled: true
+  heralding:
+    enabled: true
+    # see note in templates/heralding.yaml — prevents port 80 conflict
+    # with wordpot when both share the same hostIP.
+    disableHttpModule: true
+  galah:
+    enabled: true
+    persistence:
+      size: 20Gi
+      storageClass: local-path   # k3s native provisioner
+    # LLM backend model and endpoint — swap for any OpenAI-compatible
+    # provider (Groq, your own vLLM/Ollama, etc.)
+    model: "openai/gpt-oss-120b"
+    llmApiBase: "https://api.groq.com/openai/v1"
+    wgTunnel:
+      # true (default): brings up an isolated WireGuard tunnel inside the
+      # pod itself — the only way to reach a private LLM backend without
+      # opening general internet egress. false: uses normal egress (e.g.
+      # Groq via internet) — in this case also adjust the egress exception
+      # in templates/network-policy.yaml to allow the right destination.
+      enabled: true
+    wgTunnelImage: "dpipot/wg-tools:3.19"
+
+resources:
+  cowrie:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
