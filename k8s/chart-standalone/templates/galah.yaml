@@ -94,6 +94,18 @@ spec:
       # honeypots in this chart do not have this capability. Disable if your
       # LLM backend is reachable without a tunnel (and adjust the egress
       # exception in templates/network-policy.yaml accordingly).
+      # dnsPolicy: None + nameservers: [127.0.0.1] — galah performs a reverse-DNS
+      # lookup on each connection for enrichment. With the full-isolation
+      # NetworkPolicy, that lookup hangs ~10 s waiting for a real DNS timeout.
+      # During those 10 s Cilium's hostPort/socketLB connection tracking expires
+      # ("SeenNonSyn") so when galah sends its HTTP response the return path is
+      # gone — client sees "empty reply" even though galah logged success.
+      # Pointing DNS at 127.0.0.1 makes the lookup fail instantly (connection
+      # refused on loopback) instead of timing out silently.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 127.0.0.1
 {{- if .Values.honeypots.galah.wgTunnel.enabled }}
       initContainers:
         - name: wg-tunnel
@@ -156,11 +168,11 @@ spec:
               mountPath: /galah/data
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: {{ .Values.resources.galah.requests.cpu | default "50m" | quote }}
+              memory: {{ .Values.resources.galah.requests.memory | default "64Mi" | quote }}
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: {{ .Values.resources.galah.limits.cpu | default "2000m" | quote }}
+              memory: {{ .Values.resources.galah.limits.memory | default "256Mi" | quote }}
         - name: galah-logs
           image: busybox:stable
           command:

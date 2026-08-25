@@ -1,0 +1,172 @@
+{{- if .Values.dpipotProxy.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipelines
+  namespace: dpipot
+data:
+  pipelines.yml: |
+    - pipeline.id: kafka-to-elasticsearch
+      path.config: "/usr/share/logstash/pipeline/kafka-to-es.conf"
+    - pipeline.id: kubernetes-logs
+      path.config: "/usr/share/logstash/pipeline/k8s-logs.conf"
+
+  kafka-to-es.conf: |
+    input {
+      kafka {
+        bootstrap_servers => "kafka-svc.dpipot.svc.cluster.local:9092"
+        topics_pattern => "dpipot\\.events\\..*"
+        codec => json
+        group_id => "logstash-dpipot"
+        auto_offset_reset => "earliest"
+      }
+    }
+    filter {
+      mutate {
+        add_field => { "[@metadata][index_prefix]" => "dpipot-unknown" }
+      }
+      if [type] == "proxy" {
+        mutate { update => { "[@metadata][index_prefix]" => "dpipot-proxy" } }
+      } else if [type] == "classifier" {
+        mutate { update => { "[@metadata][index_prefix]" => "dpipot-classifier" } }
+      }
+      date {
+        match => ["timestamp", "ISO8601"]
+        target => "@timestamp"
+        remove_field => ["timestamp"]
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => ["${ES_HOST}"]
+        api_key => "${ES_API_KEY}"
+        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
+      }
+    }
+
+  k8s-logs.conf: |
+    input {
+      beats {
+        port => 5044
+      }
+    }
+    filter {
+      if [kubernetes][namespace] == "dpipot" {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-pods" }
+        }
+      } else if [kubernetes][namespace] =~ /^kube/ {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-infra" }
+        }
+      } else {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-app" }
+        }
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => ["${ES_HOST}"]
+        api_key => "${ES_API_KEY}"
+        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
+      }
+    }
+---
+# Service: exposes the Beats input port so Filebeat DaemonSet can reach Logstash.
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: dpipot
+spec:
+  selector:
+    app: logstash
+  ports:
+    - name: beats
+      port: 5044
+      targetPort: 5044
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: dpipot
+  labels:
+    app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.12.0
+          env:
+            - name: ES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: logstash-elasticsearch-secrets
+                  key: ES_HOST
+            - name: ES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: logstash-elasticsearch-secrets
+                  key: ES_API_KEY
+            - name: LS_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          ports:
+            - containerPort: 5044
+              name: beats
+          volumeMounts:
+            - name: pipelines
+              mountPath: /usr/share/logstash/config/pipelines.yml
+              subPath: pipelines.yml
+              readOnly: true
+            - name: pipelines
+              mountPath: /usr/share/logstash/pipeline/kafka-to-es.conf
+              subPath: kafka-to-es.conf
+              readOnly: true
+            - name: pipelines
+              mountPath: /usr/share/logstash/pipeline/k8s-logs.conf
+              subPath: k8s-logs.conf
+              readOnly: true
+            - name: elastic-certs
+              mountPath: /usr/share/logstash/certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: {{ .Values.resources.logstash.requests.cpu | default "200m" | quote }}
+              memory: {{ .Values.resources.logstash.requests.memory | default "512Mi" | quote }}
+            limits:
+              cpu: {{ .Values.resources.logstash.limits.cpu | default "1000m" | quote }}
+              memory: {{ .Values.resources.logstash.limits.memory | default "1Gi" | quote }}
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 9600
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 9600
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: pipelines
+          configMap:
+            name: logstash-pipelines
+        - name: elastic-certs
+          secret:
+            secretName: elastic-certs
+{{- end }}

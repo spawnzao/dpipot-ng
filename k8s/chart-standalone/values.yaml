@@ -56,3 +56,88 @@ resources:
     limits:
       cpu: 500m
       memory: 768Mi
+  galah:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      # galah's LLM prompt processing can take >15 s under CPU throttling;
+      # Cilium's hostPort timeout then kills the in-flight connection.
+      # Default 2000m keeps processing well under that threshold.
+      cpu: 2000m
+      memory: 256Mi
+  dpipot:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  logstash:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  kafka:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  filebeat:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# --- Proxy-only mode ---
+# When dpipotProxy.enabled=true (and all honeypots.*.enabled=false),
+# this chart deploys dpipot-proxy + Kafka + Logstash + Filebeat on a
+# node that captures and classifies traffic (TPROXY + nDPI) and forwards
+# it to remote honeypots. Set config.HONEYPOT_ROUTES to the remote
+# honeypot IP:port pairs.
+# See docs/en/dpipot-proxy-standalone-k3s.md
+
+image:
+  # dpipot-proxy container image tag
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+network:
+  # Network interface facing internet traffic — used by the TPROXY iptables
+  # rules (init container) and the traffic classifier (nDPI).
+  interface: "eth0"
+
+dpipotProxy:
+  # Set to true to deploy dpipot-proxy (+ Kafka + Logstash + Filebeat).
+  # When false (default), only honeypots are deployed.
+  enabled: false
+
+kafka:
+  # Deploy a local Kafka broker for the proxy pipeline. Only meaningful
+  # when dpipotProxy.enabled=true.
+  enabled: false
+  heapOpts: "-Xms512m -Xmx512m"
+
+filebeat:
+  # Deploy Filebeat to ship Kubernetes pod logs to Logstash.
+  # Only meaningful when dpipotProxy.enabled=true.
+  enabled: false
+
+config:
+  # Environment variables injected into dpipot-proxy via ConfigMap.
+  # Only meaningful when dpipotProxy.enabled=true.
+  PROXY_LISTEN_ADDR: ":8080"
+  PROXY_TIMEOUT: "30s"
+  FLOWTRACKER_TTL: "300s"
+  # Comma-separated list of remote honeypot host:port entries.
+  # See dpipot-proxy documentation for the exact format.
+  HONEYPOT_ROUTES: ""
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "10000"
+  SERVER_FIRST_PORTS: "25,110,143,587,993,995"

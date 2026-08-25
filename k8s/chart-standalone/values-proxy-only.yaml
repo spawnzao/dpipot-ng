@@ -1,0 +1,36 @@
+# Example values override for a standalone proxy-only deployment
+# (dpipot-proxy + Kafka + Logstash + Filebeat, no local honeypots).
+# Traffic is classified (TPROXY + nDPI) and forwarded to remote honeypots.
+# Copy to values-<hostname>.yaml and replace the placeholders.
+# See docs/en/dpipot-proxy-standalone-k3s.md for the full walkthrough.
+
+network:
+  # Network interface that faces internet traffic on this node.
+  # TPROXY iptables rules and nDPI classification run on this interface.
+  interface: "<DATA_IFACE>"
+
+dpipotProxy:
+  enabled: true
+
+kafka:
+  enabled: true
+
+filebeat:
+  enabled: true
+
+# All honeypots disabled — this node only captures and forwards.
+honeypots:
+  cowrie:
+    enabled: false
+  wordpot:
+    enabled: false
+  heralding:
+    enabled: false
+  galah:
+    enabled: false
+
+config:
+  # Host:port of the remote honeypot node (standalone honeypot deployment).
+  # Format: see dpipot-proxy documentation. Multiple entries are comma-separated.
+  HONEYPOT_ROUTES: "<REMOTE_HONEYPOT_IP>:<PORT>"
+  LOG_LEVEL: "info"

@@ -123,7 +123,8 @@ Two deployment modes are available depending on whether a node exposes services 
 | Mode | Chart | Use case |
 |---|---|---|
 | **Standard** | `k8s/chart/` | Proxy + classifier + honeypots on the same node. The `dpipot-proxy` captures all inbound TCP via TPROXY, classifies it with nDPI, and routes it to honeypots running as `ClusterIP` services on the same cluster. All production nodes today run this mode. |
-| **Standalone honeypots** | `k8s/chart-standalone/` | Honeypots only — no local proxy, no TPROXY, no nDPI. A remote `dpipot-ng` node (running the proxy/classifier) forwards already-classified connections here via an isolated WireGuard network. The node has no data interface exposed to the internet. Useful to separate the public attack surface from honeypot execution, limiting blast radius if a honeypot is compromised. |
+| **Standalone honeypots** | `k8s/chart-standalone/` (`dpipotProxy.enabled=false`) | Honeypots only — no local proxy, no TPROXY, no nDPI. A remote `dpipot-ng` node (running the proxy/classifier) forwards already-classified connections here via an isolated WireGuard network. The node has no data interface exposed to the internet. Useful to separate the public attack surface from honeypot execution, limiting blast radius if a honeypot is compromised. |
+| **Standalone proxy** | `k8s/chart-standalone/` (`dpipotProxy.enabled=true`) | Proxy + classifier only — no local honeypots. Captures and classifies internet traffic (TPROXY + nDPI) and forwards connections to a remote honeypot node. Set `config.HONEYPOT_ROUTES` to the remote host. Useful when the capture node must be physically close to the traffic source but honeypot execution should be isolated elsewhere. |
 
 The two charts are **completely independent** — they share no templates. Installing or uninstalling the standalone chart never affects a standard node, and vice versa.
 
@@ -150,13 +151,20 @@ k8s/
 │       ├── galah.yaml
 │       ├── services.yaml
 │       └── network-policy.yaml
-├── chart-standalone/       # Standalone honeypots-only chart (no proxy)
+├── chart-standalone/       # Standalone chart — honeypots-only OR proxy-only
 │   ├── Chart.yaml
-│   ├── values.yaml           # Defaults: all honeypots enabled, Groq LLM
-│   ├── values-honeypots.yaml # Tracked sanitized example — copy per host
+│   ├── values.yaml              # Defaults: all honeypots enabled, Groq LLM
+│   ├── values-honeypots.yaml    # Tracked example for honeypot-only mode
+│   ├── values-proxy-only.yaml   # Tracked example for proxy-only mode
 │   └── templates/
+│       ├── configmap.yaml       # dpipot-proxy env vars (proxy-only mode)
+│       ├── daemonset-proxy.yaml # dpipot-proxy + TPROXY init container
+│       ├── kafka.yaml           # Kafka (KRaft) for proxy pipeline
+│       ├── logstash.yaml        # Logstash: Kafka→ES + Filebeat→ES pipelines
+│       ├── filebeat.yaml        # Filebeat: Kubernetes pod log collection
+│       ├── services.yaml        # ClusterIP services (proxy-only mode)
 │       ├── cowrie.yaml
-│       ├── galah.yaml        # Includes WireGuard tunnel initContainer
+│       ├── galah.yaml           # Includes WireGuard tunnel initContainer
 │       ├── heralding.yaml
 │       ├── wordpot.yaml
 │       └── network-policy.yaml  # Full isolation: deny all, except allowedIngressCIDR
@@ -318,6 +326,66 @@ helm install dpipot-standalone . \
 ```
 
 > **Note:** The standalone chart uses `hostPort` + `hostIP` (not `ClusterIP`) to expose honeypot ports on the isolated WireGuard interface. `NetworkPolicy` is in full-deny mode — the only allowed inbound traffic is from `allowedIngressCIDR`, and the only allowed outbound is galah's WireGuard tunnel egress. See [the standalone guide](docs/en/honeypot-standalone-k3s-cilium.md) for the full walkthrough including k3s + Cilium setup.
+
+### Standalone proxy node
+
+A standalone **proxy-only** node captures and classifies internet traffic (TPROXY + nDPI) and forwards connections to a remote honeypot node. It uses the same `k8s/chart-standalone/` chart with `dpipotProxy.enabled=true` and all honeypots disabled.
+
+**1. Secrets:**
+
+```bash
+# Elasticsearch credentials for the Logstash pipeline
+kubectl -n dpipot create secret generic logstash-elasticsearch-secrets \
+  --from-literal=ES_HOST="https://<ES_HOST>:9200" \
+  --from-literal=ES_API_KEY="<ES_API_KEY>"
+
+# Elasticsearch CA certificate (if using HTTPS)
+kubectl -n dpipot create secret generic elastic-certs \
+  --from-file=ca.crt=/path/to/ca.crt
+```
+
+**2. Host-specific values file** (copy `values-proxy-only.yaml` and fill in the placeholders):
+
+```yaml
+# k8s/chart-standalone/values-<hostname>.yaml  (local only, not committed)
+network:
+  interface: "<DATA_IFACE>"           # internet-facing interface (e.g. ens192)
+
+dpipotProxy:
+  enabled: true
+
+kafka:
+  enabled: true
+
+filebeat:
+  enabled: true
+
+honeypots:
+  cowrie:    { enabled: false }
+  wordpot:   { enabled: false }
+  heralding: { enabled: false }
+  galah:     { enabled: false }
+
+config:
+  HONEYPOT_ROUTES: "<HONEYPOT_WG_IP>:<PORT>"
+```
+
+**3. Deploy:**
+
+```bash
+cd k8s/chart-standalone/
+helm lint . -f values.yaml -f values-$(hostname -s).yaml
+helm install dpipot-standalone . \
+  -f values.yaml -f values-$(hostname -s).yaml \
+  -n dpipot --create-namespace
+```
+
+> **Note:** The proxy node uses k3s with Flannel (no Cilium). Two kernel fixes are
+> required before deploying: set `rp_filter=0` **on the named data interface** (not
+> just on `all`) and configure a WireGuard `FwMark` + routing table 200 if the
+> WireGuard endpoint IP shares a subnet with the data interface. See
+> [the proxy standalone guide](docs/en/dpipot-proxy-standalone-k3s.md) for the
+> full walkthrough.
 
 ### CI/CD (GitHub Actions)
 
@@ -513,6 +581,8 @@ Step-by-step deployment guides for specific platforms:
 | [Debian 13 (trixie) — kubeadm + Calico](docs/pt-br/debian-kubeadm-setup.md) | kubeadm, Calico CNI, containerd, nftables, separação plano de controle/dados, diferenças k3s vs kubeadm | Português |
 | [Standalone Honeypots — k3s + Cilium](docs/en/honeypot-standalone-k3s-cilium.md) | standalone mode (honeypots only, no local proxy), k3s, Cilium CNI + kube-proxy replacement, WireGuard isolation, full-deny NetworkPolicy, galah LLM tunnel, chart-standalone | English |
 | [Honeypots Standalone — k3s + Cilium](docs/pt-br/honeypot-standalone-k3s-cilium.md) | modo standalone (só honeypots, sem proxy local), k3s, Cilium CNI + substituição do kube-proxy, isolamento WireGuard, NetworkPolicy full-deny, túnel LLM do galah, chart-standalone | Português |
+| [Standalone Proxy — k3s + Flannel](docs/en/dpipot-proxy-standalone-k3s.md) | standalone proxy-only mode (dpipot-proxy + Kafka + Logstash), k3s, Flannel, TPROXY, rp_filter per-interface fix, WireGuard leakage fix (FwMark + table 200), remote honeypot routing | English |
+| [Proxy Standalone — k3s + Flannel](docs/pt-br/dpipot-proxy-standalone-k3s.md) | modo standalone somente proxy (dpipot-proxy + Kafka + Logstash), k3s, Flannel, TPROXY, correção rp_filter por interface, correção de vazamento WireGuard (FwMark + tabela 200), encaminhamento para honeypots remotos | Português |
 
 ---
 

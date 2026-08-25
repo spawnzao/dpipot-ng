@@ -4,3 +4,4 @@
 # only) - see the honeypot-standalone-k3s-cilium.md tutorial.
 values-*.yaml
 !values-honeypots.yaml
+!values-proxy-only.yaml
