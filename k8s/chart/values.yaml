@@ -26,6 +26,15 @@ kafka:
 filebeat:
   enabled: true
 
+logstash:
+  # Limit pipeline workers to avoid saturating all CPUs.
+  # Default (unset) = number of CPU cores (12 on this host → ~46% CPU).
+  # 4 workers keeps throughput adequate for observed event rates while
+  # freeing ~30% CPU headroom for dpipot and the kernel.
+  pipelineWorkers: 4
+  # Smaller batch reduces GC pressure and latency; 125 is the JVM default.
+  pipelineBatchSize: 50
+
 honeypots:
   cowrie:
     enabled: true
@@ -68,6 +77,15 @@ resources:
     limits:
       cpu: 500m
       memory: 400Mi
+  galah:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      # Raised from 256Mi: repeatedly OOM-killed at ~254 MB anon RSS (Sep 3-4 2026).
+      # 512Mi gives ~90% headroom above observed peak.
+      memory: 512Mi
   cowrie:
     requests:
       cpu: 100m

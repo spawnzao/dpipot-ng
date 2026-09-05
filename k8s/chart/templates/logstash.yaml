@@ -9,6 +9,8 @@ data:
   logstash.yml: |
     http.host: "0.0.0.0"
     xpack.monitoring.enabled: false
+    pipeline.workers: {{ .Values.logstash.pipelineWorkers }}
+    pipeline.batch.size: {{ .Values.logstash.pipelineBatchSize }}
 
   pipelines.yml: |
 {{- if .Values.kafka.enabled }}

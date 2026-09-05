@@ -59,13 +59,15 @@ resources:
   galah:
     requests:
       cpu: 50m
-      memory: 64Mi
+      memory: 128Mi
     limits:
       # galah's LLM prompt processing can take >15 s under CPU throttling;
       # Cilium's hostPort timeout then kills the in-flight connection.
       # Default 2000m keeps processing well under that threshold.
       cpu: 2000m
-      memory: 256Mi
+      # Raised from 256Mi: galah was repeatedly OOM-killed at ~254 MB anon RSS
+      # (observed in kernel OOM logs Sep 3–4 2026). 512Mi gives ~90% headroom.
+      memory: 512Mi
   dpipot:
     requests:
       cpu: 100m

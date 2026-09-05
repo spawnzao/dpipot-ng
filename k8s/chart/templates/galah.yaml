@@ -129,11 +129,11 @@ spec:
               mountPath: /galah/data
           resources:
             requests:
-              cpu: 50m
-              memory: 64Mi
+              cpu: {{ .Values.resources.galah.requests.cpu }}
+              memory: {{ .Values.resources.galah.requests.memory }}
             limits:
-              cpu: 500m
-              memory: 256Mi
+              cpu: {{ .Values.resources.galah.limits.cpu }}
+              memory: {{ .Values.resources.galah.limits.memory }}
         - name: galah-logs
           image: busybox:stable
           command:
