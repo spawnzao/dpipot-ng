@@ -31,9 +31,9 @@ logstash:
   # Default (unset) = number of CPU cores (12 on this host → ~46% CPU).
   # 4 workers keeps throughput adequate for observed event rates while
   # freeing ~30% CPU headroom for dpipot and the kernel.
-  pipelineWorkers: 4
-  # Smaller batch reduces GC pressure and latency; 125 is the JVM default.
-  pipelineBatchSize: 50
+  pipelineWorkers: 8
+  # Larger batch amortises ES bulk indexing overhead under high ndpi event rates.
+  pipelineBatchSize: 200
 
 honeypots:
   cowrie:
