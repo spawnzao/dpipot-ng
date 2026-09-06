@@ -87,7 +87,7 @@ resources:
       cpu: 50m
       memory: 128Mi
     limits:
-      cpu: 500m
+      cpu: 1000m
       # Raised from 256Mi: repeatedly OOM-killed at ~254 MB anon RSS (Sep 3-4 2026).
       # 512Mi gives ~90% headroom above observed peak.
       memory: 512Mi
@@ -96,8 +96,15 @@ resources:
       cpu: 100m
       memory: 256Mi
     limits:
-      cpu: 500m
+      cpu: 1000m
       memory: 768Mi
+  heralding:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
 
 config:
   PROXY_LISTEN_ADDR: "0.0.0.0:8080"

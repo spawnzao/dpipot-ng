@@ -267,11 +267,11 @@ spec:
               protocol: TCP
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: {{ .Values.resources.heralding.requests.cpu }}
+              memory: {{ .Values.resources.heralding.requests.memory }}
             limits:
-              cpu: 250m
-              memory: 512Mi
+              cpu: {{ .Values.resources.heralding.limits.cpu }}
+              memory: {{ .Values.resources.heralding.limits.memory }}
           securityContext:
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: true
