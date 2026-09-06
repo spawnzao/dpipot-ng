@@ -26,6 +26,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           clean: false   # preserva values-<hostname>.yaml (gitignored, local-only)
+          # workflow_run não herda o ref do build que o disparou — sem isso,
+          # o runner faz checkout da branch padrão (main) em vez do commit que triggerou o build.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: detect orchestrator
         run: |

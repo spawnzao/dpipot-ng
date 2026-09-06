@@ -1,8 +1,9 @@
 image:
-  proxy:
+  dpipot:
     tag: latest
-  classifier:
-    tag: latest
+
+config:
+  NDPI_EVENTS_ENABLED: "true"
 
 kafka:
   persistence:
@@ -10,20 +11,13 @@ kafka:
     size: 100Gi
 
 resources:
-  proxy:
+  dpipot:
     requests:
       cpu: 1000m
-      memory: 256Mi
+      memory: 512Mi
     limits:
       cpu: 2000m
-      memory: 512Mi
-  classifier:
-    requests:
-      cpu: 500m
-      memory: 256Mi
-    limits:
-      cpu: 1000m
-      memory: 512Mi
+      memory: 1Gi
   logstash:
     requests:
       cpu: 500m
@@ -31,6 +25,14 @@ resources:
     limits:
       cpu: 1000m
       memory: 2Gi
+  galah:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      # Raised 256Mi→512Mi→1Gi: galah in-memory response cache grows unboundedly
+      # at ~44 MiB/h under observed traffic; OOM at 512Mi after ~9h (Sep 6 2026).
+      memory: 1Gi
   kafka:
     requests:
       cpu: 1000m
