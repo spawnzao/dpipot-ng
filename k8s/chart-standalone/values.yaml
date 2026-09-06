@@ -54,8 +54,8 @@ resources:
       cpu: 100m
       memory: 256Mi
     limits:
-      cpu: 500m
-      memory: 768Mi
+      cpu: 1000m
+      memory: 1Gi
   galah:
     requests:
       cpu: 50m
