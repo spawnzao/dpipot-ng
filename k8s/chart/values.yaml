@@ -47,6 +47,11 @@ honeypots:
     persistence:
       size: 10Gi
       storageClass: microk8s-hostpath
+    # In-memory response cache TTL in hours. Galah keeps all cached responses
+    # in a Go map (fast lookup) plus SQLite (persistence). The map grows at
+    # ~traffic_rate * avg_response_size * cacheDuration with no size cap.
+    # Lower values reduce peak RAM; 24h is a reasonable default for honeypots.
+    cacheDuration: 24
 
 resources:
   dpipot:

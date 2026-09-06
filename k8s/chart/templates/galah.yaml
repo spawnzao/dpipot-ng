@@ -109,7 +109,7 @@ spec:
                 --config-file /tmp/config.yaml \
                 --rules-config-file /tmp/rules.yaml \
                 --cache-db-file /galah/data/cache.db \
-                --cache-duration 24 \
+                --cache-duration {{ .Values.honeypots.galah.cacheDuration | default 24 }} \
                 --event-log-file /galah/data/event_log.json
           env:
             - name: LLM_API_KEY
