@@ -150,18 +150,52 @@ spec:
             limits:
               cpu: {{ .Values.resources.logstash.limits.cpu | default "1000m" | quote }}
               memory: {{ .Values.resources.logstash.limits.memory | default "1Gi" | quote }}
+          # Detects a known logstash-output-elasticsearch bug where the output
+          # thread silently freezes after an ES reconnect ("Restored connection")
+          # while the JVM/API remain responsive. A plain httpGet on :9600 misses
+          # this because the monitoring API keeps answering even with a frozen
+          # pipeline. This probe checks the cumulative events.out counter from
+          # /_node/stats/pipelines instead: if it stops advancing for >10 min
+          # (600s) the probe fails and Kubernetes restarts the pod.
+          # initialDelaySeconds=300: JVM+JRuby cold start observed up to ~3m30s
+          # in production; failureThreshold=3 adds +90s tolerance (3×30s).
+          # No readinessProbe: logstash does not serve traffic via a K8s Service
+          # that depends on its ready state (beats:5044 and :9600 only).
           livenessProbe:
-            httpGet:
-              path: /
-              port: 9600
-            initialDelaySeconds: 60
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  STATE=/tmp/logstash_liveness_state
+                  NOW=$(date +%s)
+                  OUT=$(curl -s --max-time 5 http://localhost:9600/_node/stats/pipelines 2>/dev/null \
+                    | grep -o '"events":{"out":[0-9]*' | head -1 | grep -o '[0-9]*$')
+                  if [ -z "$OUT" ]; then
+                    echo "monitoring API (9600) did not respond"
+                    exit 1
+                  fi
+                  if [ -f "$STATE" ]; then
+                    PREV_OUT=$(cut -d' ' -f1 "$STATE")
+                    PREV_TIME=$(cut -d' ' -f2 "$STATE")
+                  else
+                    PREV_OUT=""
+                    PREV_TIME=""
+                  fi
+                  if [ "$OUT" != "$PREV_OUT" ]; then
+                    echo "$OUT $NOW" > "$STATE"
+                    exit 0
+                  fi
+                  STUCK_FOR=$((NOW - PREV_TIME))
+                  if [ "$STUCK_FOR" -gt 600 ]; then
+                    echo "pipeline stuck for ${STUCK_FOR}s (events.out stalled at $OUT)"
+                    exit 1
+                  fi
+                  exit 0
+            initialDelaySeconds: 300
             periodSeconds: 30
-          readinessProbe:
-            httpGet:
-              path: /
-              port: 9600
-            initialDelaySeconds: 30
-            periodSeconds: 10
+            timeoutSeconds: 10
+            failureThreshold: 3
       volumes:
         - name: pipelines
           configMap:
