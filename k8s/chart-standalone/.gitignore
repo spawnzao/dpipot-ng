@@ -1,0 +1,7 @@
+# Host-specific values files (values-<hostname>.yaml) are kept locally on
+# each runner, same convention as k8s/chart/.gitignore.
+# values-honeypots.yaml is the tracked, sanitized example (placeholders
+# only) - see the honeypot-standalone-k3s-cilium.md tutorial.
+values-*.yaml
+!values-honeypots.yaml
+!values-proxy-only.yaml

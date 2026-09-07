@@ -57,3 +57,5 @@ POST_REBOOT.mdcmd
 # Dev tools and tests (not deployed)
 tools/
 test/
+scripts/*.csv
+scripts/wg-monitor-*.sh

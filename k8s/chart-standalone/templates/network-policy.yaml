@@ -1,0 +1,63 @@
+{{- if or .Values.honeypots.cowrie.enabled .Values.honeypots.heralding.enabled .Values.honeypots.wordpot.enabled .Values.honeypots.galah.enabled }}
+---
+# Full isolation: standalone honeypot host, no local dpipot-proxy.
+# Denies EVERYTHING by default — no honeypot should resolve DNS or reach
+# the internet. Only a remote dpipot-proxy may access these pods, via
+# the isolated network (allowedIngressCIDR).
+# In proxy-only mode (dpipotProxy.enabled=true, all honeypots disabled),
+# this policy is skipped entirely — proxy/kafka/logstash/filebeat pods
+# manage their own egress and need unrestricted access to internet/ES.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: honeypot-full-isolation
+  namespace: dpipot
+spec:
+  # Targets only honeypot pods — excludes dpipot-proxy/kafka/logstash/filebeat
+  # so those pods can still reach Kafka, Elasticsearch, and the internet
+  # when deployed alongside honeypots in a mixed-mode scenario.
+  podSelector:
+    matchExpressions:
+      - key: app
+        operator: NotIn
+        values:
+          - dpipot-proxy
+          - kafka
+          - logstash
+          - filebeat
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: {{ .Values.honeypotIsolation.allowedIngressCIDR | quote }}
+  egress: []
+{{- end }}
+{{- if and .Values.honeypots.galah.enabled .Values.honeypots.galah.wgTunnel.enabled }}
+---
+# Single narrow exception: galah only, to the public endpoint of its own
+# WireGuard tunnel — not the internal tunnel IP, but the real address
+# through which the WireGuard handshake exits before encapsulation.
+# NetworkPolicies for the same pod are OR-combined — this ADDS this
+# specific allowance on top of honeypot-full-isolation above, without
+# affecting the other honeypots in this chart.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: galah-llm-tunnel-egress
+  namespace: dpipot
+spec:
+  podSelector:
+    matchLabels:
+      app: galah
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - ipBlock:
+            cidr: "{{ .Values.honeypotIsolation.galahWgEndpoint.ip }}/32"
+      ports:
+        - protocol: UDP
+          port: {{ .Values.honeypotIsolation.galahWgEndpoint.port }}
+{{- end }}

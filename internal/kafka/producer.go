@@ -165,9 +165,9 @@ func newKafkaConfig(brokers string) *kafka.ConfigMap {
 		"queue.buffering.max.messages": 100000,
 		"queue.buffering.max.kbytes":   1048576,
 		"linger.ms":                    5,
-		// Fail undelivered messages after 30s so delivery errors surface quickly
-		// rather than silently accumulating for the default 5 minutes.
-		"delivery.timeout.ms":      60000,
+		// Fail undelivered messages after 180s to tolerate broker slowness during
+		// traffic spikes without dropping events (increased from 60s).
+		"delivery.timeout.ms":      180000,
 		"allow.auto.create.topics": "true",
 	}
 }

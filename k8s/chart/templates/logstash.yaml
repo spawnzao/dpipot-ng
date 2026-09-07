@@ -9,6 +9,8 @@ data:
   logstash.yml: |
     http.host: "0.0.0.0"
     xpack.monitoring.enabled: false
+    pipeline.workers: {{ .Values.logstash.pipelineWorkers }}
+    pipeline.batch.size: {{ .Values.logstash.pipelineBatchSize }}
 
   pipelines.yml: |
 {{- if .Values.kafka.enabled }}
@@ -162,9 +164,15 @@ data:
           date {
             match => ["[heralding][timestamp]", "yyyy-MM-dd HH:mm:ss.SSSSSS"]
             target => "@timestamp"
+            # Remove nested field: heralding.timestamp format (space-separated,
+            # microsecond precision) is rejected by ES strict_date_optional_time.
+            remove_field => ["[heralding][timestamp]"]
           }
         }
-        mutate { remove_field => ["message"] }
+        # filebeat decode_json_fields (target:"") also promotes all heralding
+        # JSON keys to the root event. Remove the top-level timestamp here so
+        # ES does not try to re-parse it as a date and reject with status 400.
+        mutate { remove_field => ["message", "timestamp"] }
       }
       if [kubernetes][container][name] == "galah-logs" {
         json {
@@ -295,6 +303,50 @@ spec:
             limits:
               cpu: {{ .Values.resources.logstash.limits.cpu }}
               memory: {{ .Values.resources.logstash.limits.memory }}
+          # Detects a known logstash-output-elasticsearch bug where the output
+          # thread silently freezes after an ES reconnect ("Restored connection")
+          # while the JVM/API remain responsive. A plain httpGet on :9600 misses
+          # this because the monitoring API keeps answering even with a frozen
+          # pipeline. This probe checks the cumulative events.out counter from
+          # /_node/stats/pipelines instead: if it stops advancing for >10 min
+          # (600s) the probe fails and Kubernetes restarts the pod.
+          # initialDelaySeconds=300: JVM+JRuby cold start observed up to ~3m30s
+          # in production; failureThreshold=3 adds +90s tolerance (3×30s).
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  STATE=/tmp/logstash_liveness_state
+                  NOW=$(date +%s)
+                  OUT=$(curl -s --max-time 5 http://localhost:9600/_node/stats/pipelines 2>/dev/null \
+                    | grep -o '"events":{"out":[0-9]*' | head -1 | grep -o '[0-9]*$')
+                  if [ -z "$OUT" ]; then
+                    echo "monitoring API (9600) did not respond"
+                    exit 1
+                  fi
+                  if [ -f "$STATE" ]; then
+                    PREV_OUT=$(cut -d' ' -f1 "$STATE")
+                    PREV_TIME=$(cut -d' ' -f2 "$STATE")
+                  else
+                    PREV_OUT=""
+                    PREV_TIME=""
+                  fi
+                  if [ "$OUT" != "$PREV_OUT" ]; then
+                    echo "$OUT $NOW" > "$STATE"
+                    exit 0
+                  fi
+                  STUCK_FOR=$((NOW - PREV_TIME))
+                  if [ "$STUCK_FOR" -gt 600 ]; then
+                    echo "pipeline stuck for ${STUCK_FOR}s (events.out stalled at $OUT)"
+                    exit 1
+                  fi
+                  exit 0
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
       volumes:
         - name: logstash-config
           configMap:

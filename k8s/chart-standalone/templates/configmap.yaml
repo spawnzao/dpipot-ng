@@ -1,0 +1,14 @@
+{{- if .Values.dpipotProxy.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dpipot-config
+  namespace: dpipot
+data:
+  KAFKA: {{ .Values.kafka.enabled | toString | quote }}
+  CLASSIFIER_INTERFACE: {{ .Values.network.interface | quote }}
+  {{- range $k, $v := .Values.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

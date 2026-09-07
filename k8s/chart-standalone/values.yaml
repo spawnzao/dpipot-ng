@@ -1,0 +1,145 @@
+# Standalone chart: honeypots-only host, no local dpipot-proxy (no
+# TPROXY/nDPI). Traffic classification and forwarding is handled by a
+# remote dpipot-proxy, which reaches these honeypots via an isolated
+# WireGuard network (hostExpose.ip).
+# See docs/en/honeypot-standalone-k3s-cilium.md
+
+hostExpose:
+  # IP of the isolated interface (e.g. wg2) on which honeypots should
+  # bind (hostIP+hostPort) — and through which the remote dpipot-proxy connects.
+  ip: ""
+
+honeypotIsolation:
+  # CIDR of the isolated network — only this range may initiate connections
+  # to the honeypots (ingress). No outbound route by default (egress: [],
+  # no exceptions).
+  allowedIngressCIDR: ""
+  galahWgEndpoint:
+    # Public endpoint of galah's own WireGuard tunnel (not the internal
+    # tunnel IP) — the only egress exception in this chart.
+    ip: ""
+    port: 51820
+
+honeypots:
+  cowrie:
+    enabled: true
+  wordpot:
+    enabled: true
+  heralding:
+    enabled: true
+    # see note in templates/heralding.yaml — prevents port 80 conflict
+    # with wordpot when both share the same hostIP.
+    disableHttpModule: true
+  galah:
+    enabled: true
+    persistence:
+      size: 20Gi
+      storageClass: local-path   # k3s native provisioner
+    # LLM backend model and endpoint — swap for any OpenAI-compatible
+    # provider (Groq, your own vLLM/Ollama, etc.)
+    model: "openai/gpt-oss-120b"
+    llmApiBase: "https://api.groq.com/openai/v1"
+    wgTunnel:
+      # true (default): brings up an isolated WireGuard tunnel inside the
+      # pod itself — the only way to reach a private LLM backend without
+      # opening general internet egress. false: uses normal egress (e.g.
+      # Groq via internet) — in this case also adjust the egress exception
+      # in templates/network-policy.yaml to allow the right destination.
+      enabled: true
+    wgTunnelImage: "dpipot/wg-tools:3.19"
+
+resources:
+  cowrie:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  galah:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      # galah's LLM prompt processing can take >15 s under CPU throttling;
+      # Cilium's hostPort timeout then kills the in-flight connection.
+      # Default 2000m keeps processing well under that threshold.
+      cpu: 2000m
+      # Raised from 256Mi: galah was repeatedly OOM-killed at ~254 MB anon RSS
+      # (observed in kernel OOM logs Sep 3–4 2026). 512Mi gives ~90% headroom.
+      memory: 512Mi
+  dpipot:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  logstash:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  kafka:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  filebeat:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# --- Proxy-only mode ---
+# When dpipotProxy.enabled=true (and all honeypots.*.enabled=false),
+# this chart deploys dpipot-proxy + Kafka + Logstash + Filebeat on a
+# node that captures and classifies traffic (TPROXY + nDPI) and forwards
+# it to remote honeypots. Set config.HONEYPOT_ROUTES to the remote
+# honeypot IP:port pairs.
+# See docs/en/dpipot-proxy-standalone-k3s.md
+
+image:
+  # dpipot-proxy container image tag
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+network:
+  # Network interface facing internet traffic — used by the TPROXY iptables
+  # rules (init container) and the traffic classifier (nDPI).
+  interface: "eth0"
+
+dpipotProxy:
+  # Set to true to deploy dpipot-proxy (+ Kafka + Logstash + Filebeat).
+  # When false (default), only honeypots are deployed.
+  enabled: false
+
+kafka:
+  # Deploy a local Kafka broker for the proxy pipeline. Only meaningful
+  # when dpipotProxy.enabled=true.
+  enabled: false
+  heapOpts: "-Xms512m -Xmx512m"
+
+filebeat:
+  # Deploy Filebeat to ship Kubernetes pod logs to Logstash.
+  # Only meaningful when dpipotProxy.enabled=true.
+  enabled: false
+
+config:
+  # Environment variables injected into dpipot-proxy via ConfigMap.
+  # Only meaningful when dpipotProxy.enabled=true.
+  PROXY_LISTEN_ADDR: ":8080"
+  PROXY_TIMEOUT: "30s"
+  FLOWTRACKER_TTL: "300s"
+  # Comma-separated list of remote honeypot host:port entries.
+  # See dpipot-proxy documentation for the exact format.
+  HONEYPOT_ROUTES: ""
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "10000"
+  SERVER_FIRST_PORTS: "25,110,143,587,993,995"

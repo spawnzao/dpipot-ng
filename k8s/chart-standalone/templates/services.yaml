@@ -1,0 +1,56 @@
+{{- if .Values.dpipotProxy.enabled }}
+{{- if .Values.honeypots.cowrie.enabled }}
+---
+# ClusterIP service for cowrie — allows dpipot-proxy to reach SSH/Telnet
+# honeypots via a stable DNS name inside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cowrie-svc
+  namespace: dpipot
+spec:
+  selector:
+    app: cowrie
+  ports:
+    - name: ssh
+      port: 22
+      targetPort: 2222
+      protocol: TCP
+    - name: telnet
+      port: 23
+      targetPort: 2323
+      protocol: TCP
+{{- end }}
+{{- if .Values.honeypots.wordpot.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpot-svc
+  namespace: dpipot
+spec:
+  selector:
+    app: wordpot
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP
+{{- end }}
+{{- if .Values.kafka.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-svc
+  namespace: dpipot
+spec:
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+      protocol: TCP
+{{- end }}
+{{- end }}

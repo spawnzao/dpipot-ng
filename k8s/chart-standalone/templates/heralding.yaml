@@ -60,7 +60,11 @@ data:
           banner: "Microsoft ESMTP MAIL service ready"
           fqdn: ""
       http:
-        enabled: true
+        # on a standalone host sharing the same hostIP with wordpot, both
+        # compete for port 80 — disable one via
+        # honeypots.heralding.disableHttpModule (wordpot covers generic HTTP
+        # by default).
+        enabled: {{ if .Values.honeypots.heralding.disableHttpModule }}false{{ else }}true{{ end }}
         port: 80
         timeout: 30
         protocol_specific_data:
@@ -144,63 +148,6 @@ data:
     password1
     abc123
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: heralding
-  namespace: dpipot
-  labels:
-    app: heralding
-spec:
-  type: ClusterIP
-  selector:
-    app: heralding
-  ports:
-    - name: ftp
-      port: 21
-      targetPort: 21
-      protocol: TCP
-    - name: ssh
-      port: 22
-      targetPort: 22
-      protocol: TCP
-    - name: telnet
-      port: 23
-      targetPort: 23
-      protocol: TCP
-    - name: smtp
-      port: 25
-      targetPort: 25
-      protocol: TCP
-    - name: http
-      port: 80
-      targetPort: 80
-      protocol: TCP
-    - name: pop3
-      port: 110
-      targetPort: 110
-      protocol: TCP
-    - name: imap
-      port: 143
-      targetPort: 143
-      protocol: TCP
-    - name: mysql
-      port: 3306
-      targetPort: 3306
-      protocol: TCP
-    - name: rdp
-      port: 3389
-      targetPort: 3389
-      protocol: TCP
-    - name: postgresql
-      port: 5432
-      targetPort: 5432
-      protocol: TCP
-    - name: vnc
-      port: 5900
-      targetPort: 5900
-      protocol: TCP
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -235,43 +182,67 @@ spec:
             - name: ftp
               containerPort: 21
               protocol: TCP
+              hostPort: 21
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: ssh
               containerPort: 22
               protocol: TCP
+              hostPort: 22
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: telnet
               containerPort: 23
               protocol: TCP
+              hostPort: 23
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: smtp
               containerPort: 25
               protocol: TCP
+              hostPort: 25
+              hostIP: {{ .Values.hostExpose.ip | quote }}
+{{- if not .Values.honeypots.heralding.disableHttpModule }}
             - name: http
               containerPort: 80
               protocol: TCP
+              hostPort: 80
+              hostIP: {{ .Values.hostExpose.ip | quote }}
+{{- end }}
             - name: pop3
               containerPort: 110
               protocol: TCP
+              hostPort: 110
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: imap
               containerPort: 143
               protocol: TCP
+              hostPort: 143
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: mysql
               containerPort: 3306
               protocol: TCP
+              hostPort: 3306
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: rdp
               containerPort: 3389
               protocol: TCP
+              hostPort: 3389
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: postgresql
               containerPort: 5432
               protocol: TCP
+              hostPort: 5432
+              hostIP: {{ .Values.hostExpose.ip | quote }}
             - name: vnc
               containerPort: 5900
               protocol: TCP
+              hostPort: 5900
+              hostIP: {{ .Values.hostExpose.ip | quote }}
           resources:
             requests:
-              cpu: {{ .Values.resources.heralding.requests.cpu }}
-              memory: {{ .Values.resources.heralding.requests.memory }}
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: {{ .Values.resources.heralding.limits.cpu }}
-              memory: {{ .Values.resources.heralding.limits.memory }}
+              cpu: 250m
+              memory: 512Mi
           securityContext:
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: true

@@ -1,0 +1,206 @@
+{{- if .Values.dpipotProxy.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: logstash-pipelines
+  namespace: dpipot
+data:
+  pipelines.yml: |
+    - pipeline.id: kafka-to-elasticsearch
+      path.config: "/usr/share/logstash/pipeline/kafka-to-es.conf"
+    - pipeline.id: kubernetes-logs
+      path.config: "/usr/share/logstash/pipeline/k8s-logs.conf"
+
+  kafka-to-es.conf: |
+    input {
+      kafka {
+        bootstrap_servers => "kafka-svc.dpipot.svc.cluster.local:9092"
+        topics_pattern => "dpipot\\.events\\..*"
+        codec => json
+        group_id => "logstash-dpipot"
+        auto_offset_reset => "earliest"
+      }
+    }
+    filter {
+      mutate {
+        add_field => { "[@metadata][index_prefix]" => "dpipot-unknown" }
+      }
+      if [type] == "proxy" {
+        mutate { update => { "[@metadata][index_prefix]" => "dpipot-proxy" } }
+      } else if [type] == "classifier" {
+        mutate { update => { "[@metadata][index_prefix]" => "dpipot-classifier" } }
+      }
+      date {
+        match => ["timestamp", "ISO8601"]
+        target => "@timestamp"
+        remove_field => ["timestamp"]
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => ["${ES_HOST}"]
+        api_key => "${ES_API_KEY}"
+        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
+      }
+    }
+
+  k8s-logs.conf: |
+    input {
+      beats {
+        port => 5044
+      }
+    }
+    filter {
+      if [kubernetes][namespace] == "dpipot" {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-pods" }
+        }
+      } else if [kubernetes][namespace] =~ /^kube/ {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-infra" }
+        }
+      } else {
+        mutate {
+          add_field => { "[@metadata][index_prefix]" => "dpipot-app" }
+        }
+      }
+    }
+    output {
+      elasticsearch {
+        hosts => ["${ES_HOST}"]
+        api_key => "${ES_API_KEY}"
+        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
+      }
+    }
+---
+# Service: exposes the Beats input port so Filebeat DaemonSet can reach Logstash.
+apiVersion: v1
+kind: Service
+metadata:
+  name: logstash
+  namespace: dpipot
+spec:
+  selector:
+    app: logstash
+  ports:
+    - name: beats
+      port: 5044
+      targetPort: 5044
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logstash
+  namespace: dpipot
+  labels:
+    app: logstash
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: logstash
+  template:
+    metadata:
+      labels:
+        app: logstash
+    spec:
+      containers:
+        - name: logstash
+          image: docker.elastic.co/logstash/logstash:8.12.0
+          env:
+            - name: ES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: logstash-elasticsearch-secrets
+                  key: ES_HOST
+            - name: ES_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: logstash-elasticsearch-secrets
+                  key: ES_API_KEY
+            - name: LS_JAVA_OPTS
+              value: "-Xms512m -Xmx512m"
+          ports:
+            - containerPort: 5044
+              name: beats
+          volumeMounts:
+            - name: pipelines
+              mountPath: /usr/share/logstash/config/pipelines.yml
+              subPath: pipelines.yml
+              readOnly: true
+            - name: pipelines
+              mountPath: /usr/share/logstash/pipeline/kafka-to-es.conf
+              subPath: kafka-to-es.conf
+              readOnly: true
+            - name: pipelines
+              mountPath: /usr/share/logstash/pipeline/k8s-logs.conf
+              subPath: k8s-logs.conf
+              readOnly: true
+            - name: elastic-certs
+              mountPath: /usr/share/logstash/certs
+              readOnly: true
+          resources:
+            requests:
+              cpu: {{ .Values.resources.logstash.requests.cpu | default "200m" | quote }}
+              memory: {{ .Values.resources.logstash.requests.memory | default "512Mi" | quote }}
+            limits:
+              cpu: {{ .Values.resources.logstash.limits.cpu | default "1000m" | quote }}
+              memory: {{ .Values.resources.logstash.limits.memory | default "1Gi" | quote }}
+          # Detects a known logstash-output-elasticsearch bug where the output
+          # thread silently freezes after an ES reconnect ("Restored connection")
+          # while the JVM/API remain responsive. A plain httpGet on :9600 misses
+          # this because the monitoring API keeps answering even with a frozen
+          # pipeline. This probe checks the cumulative events.out counter from
+          # /_node/stats/pipelines instead: if it stops advancing for >10 min
+          # (600s) the probe fails and Kubernetes restarts the pod.
+          # initialDelaySeconds=300: JVM+JRuby cold start observed up to ~3m30s
+          # in production; failureThreshold=3 adds +90s tolerance (3×30s).
+          # No readinessProbe: logstash does not serve traffic via a K8s Service
+          # that depends on its ready state (beats:5044 and :9600 only).
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  STATE=/tmp/logstash_liveness_state
+                  NOW=$(date +%s)
+                  OUT=$(curl -s --max-time 5 http://localhost:9600/_node/stats/pipelines 2>/dev/null \
+                    | grep -o '"events":{"out":[0-9]*' | head -1 | grep -o '[0-9]*$')
+                  if [ -z "$OUT" ]; then
+                    echo "monitoring API (9600) did not respond"
+                    exit 1
+                  fi
+                  if [ -f "$STATE" ]; then
+                    PREV_OUT=$(cut -d' ' -f1 "$STATE")
+                    PREV_TIME=$(cut -d' ' -f2 "$STATE")
+                  else
+                    PREV_OUT=""
+                    PREV_TIME=""
+                  fi
+                  if [ "$OUT" != "$PREV_OUT" ]; then
+                    echo "$OUT $NOW" > "$STATE"
+                    exit 0
+                  fi
+                  STUCK_FOR=$((NOW - PREV_TIME))
+                  if [ "$STUCK_FOR" -gt 600 ]; then
+                    echo "pipeline stuck for ${STUCK_FOR}s (events.out stalled at $OUT)"
+                    exit 1
+                  fi
+                  exit 0
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+      volumes:
+        - name: pipelines
+          configMap:
+            name: logstash-pipelines
+        - name: elastic-certs
+          secret:
+            secretName: elastic-certs
+{{- end }}

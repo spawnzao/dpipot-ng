@@ -18,6 +18,14 @@ data:
       - If the request seeks credentials or configurations, generate and provide appropriate values.
       - Do not encode the HTTP body content for HTML responses.
 
+      Making it convincing (apply all 6):
+      1. Never return a bare error page for a path that looks intentional (login forms, config files, API endpoints, admin panels) — a real vulnerable server has something there.
+      2. Fill in small, specific, plausible details instead of generic placeholders: real-looking version numbers, timestamps, cookie values, field names — not "value1" or "example".
+      3. Match response depth to what that resource type really looks like: a login page is a full HTML form, a config leak is real key=value lines, an API returns a structured JSON body with several fields, not a one-line message.
+      4. Stay fully in character. Never mention simulation, honeypots, or AI, and never break the response format to explain your reasoning.
+      5. Keep it complete, not padded: no truncated HTML, no empty required fields, but also no unnecessary filler beyond what that response would really contain.
+      6. Nowhere in the response — headers or body — use words that reveal it as fabricated: "fake", "test", "dummy", "sample", "mock", "placeholder", or "decoy", nor the word "example" outside the mandatory ".example.com" hostname suffix. Server/X-Powered-By/banner values must look like a real product name and version; database names, usernames, and other body content must look like something a real deployment would actually have. Any of these words appearing anywhere breaks the illusion immediately.
+
       Security and Privacy Rules (STRICT - always apply):
       - NEVER expose real internal IP addresses in responses. Internal ranges are forbidden: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
       - For any IP address in responses, always use fictional values from RFC 5737 TEST-NET ranges: 192.0.2.x, 198.51.100.x or 203.0.113.x.
@@ -62,21 +70,6 @@ spec:
       storage: {{ .Values.honeypots.galah.persistence.size }}
   storageClassName: {{ .Values.honeypots.galah.persistence.storageClass }}
 ---
-apiVersion: v1
-kind: Service
-metadata:
-  name: galah-svc
-  namespace: dpipot
-spec:
-  selector:
-    app: galah
-  type: ClusterIP
-  ports:
-    - name: http
-      protocol: TCP
-      port: 8080
-      targetPort: 8080
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -94,6 +87,46 @@ spec:
       labels:
         app: galah
     spec:
+      # standalone host: no local dpipot-proxy, no internet access — if
+      # honeypots.galah.wgTunnel.enabled=true (default), galah brings up
+      # its own isolated WireGuard tunnel just to reach the LLM backend.
+      # NET_ADMIN only on this pod — single documented exception, the other
+      # honeypots in this chart do not have this capability. Disable if your
+      # LLM backend is reachable without a tunnel (and adjust the egress
+      # exception in templates/network-policy.yaml accordingly).
+      # dnsPolicy: None + nameservers: [127.0.0.1] — galah performs a reverse-DNS
+      # lookup on each connection for enrichment. With the full-isolation
+      # NetworkPolicy, that lookup hangs ~10 s waiting for a real DNS timeout.
+      # During those 10 s Cilium's hostPort/socketLB connection tracking expires
+      # ("SeenNonSyn") so when galah sends its HTTP response the return path is
+      # gone — client sees "empty reply" even though galah logged success.
+      # Pointing DNS at 127.0.0.1 makes the lookup fail instantly (connection
+      # refused on loopback) instead of timing out silently.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 127.0.0.1
+{{- if .Values.honeypots.galah.wgTunnel.enabled }}
+      initContainers:
+        - name: wg-tunnel
+          # image with wireguard-tools pre-installed (apk add at build time,
+          # not runtime) — the pod has no internet access due to the
+          # full-isolation NetworkPolicy, so packages cannot be installed
+          # once the pod is already running.
+          image: {{ .Values.honeypots.galah.wgTunnelImage | default "dpipot/wg-tools:3.19" }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          command:
+            - /bin/sh
+            - -c
+            - wg-quick up /etc/wireguard-secret/wg-llm.conf
+          volumeMounts:
+            - name: galah-wg-secret
+              mountPath: /etc/wireguard-secret
+              readOnly: true
+{{- end }}
       containers:
         - name: galah
           image: dtagdevsec/galah:24.04.1
@@ -104,24 +137,30 @@ spec:
               cp /galah/config/rules.yaml /tmp/rules.yaml
               /opt/galah/galah \
                 --provider=openai \
-                --model=openai/gpt-oss-120b \
-                --api-key=$LLM_API_KEY \
+                --model={{ .Values.honeypots.galah.model }} \
+                --api-key=${GALAH_LLM_API_KEY} \
                 --config-file /tmp/config.yaml \
                 --rules-config-file /tmp/rules.yaml \
                 --cache-db-file /galah/data/cache.db \
-                --cache-duration {{ .Values.honeypots.galah.cacheDuration | default 24 }} \
+                --cache-duration 168 \
                 --event-log-file /galah/data/event_log.json
           env:
-            - name: LLM_API_KEY
+            - name: GALAH_LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: llm-api-key
+                  name: galah-llm-api-key
                   key: api_key
+            # Routed via galah's own WireGuard tunnel (wg-llm), created
+            # by the initContainer — isolated network, no visibility into
+            # the honeypot network or any admin mesh. Not the admin mesh
+            # directly, as in the main chart.
             - name: OPENAI_API_BASE
-              value: "https://api.groq.com/openai/v1"
+              value: {{ .Values.honeypots.galah.llmApiBase | quote }}
           ports:
             - containerPort: 8080
               name: http
+              hostPort: 8080
+              hostIP: {{ .Values.hostExpose.ip | quote }}
           volumeMounts:
             - name: galah-config
               mountPath: /galah/config
@@ -129,11 +168,11 @@ spec:
               mountPath: /galah/data
           resources:
             requests:
-              cpu: {{ .Values.resources.galah.requests.cpu }}
-              memory: {{ .Values.resources.galah.requests.memory }}
+              cpu: {{ .Values.resources.galah.requests.cpu | default "50m" | quote }}
+              memory: {{ .Values.resources.galah.requests.memory | default "64Mi" | quote }}
             limits:
-              cpu: {{ .Values.resources.galah.limits.cpu }}
-              memory: {{ .Values.resources.galah.limits.memory }}
+              cpu: {{ .Values.resources.galah.limits.cpu | default "2000m" | quote }}
+              memory: {{ .Values.resources.galah.limits.memory | default "256Mi" | quote }}
         - name: galah-logs
           image: busybox:stable
           command:
@@ -168,4 +207,9 @@ spec:
         - name: galah-data
           persistentVolumeClaim:
             claimName: galah-cache-pvc
+{{- if .Values.honeypots.galah.wgTunnel.enabled }}
+        - name: galah-wg-secret
+          secret:
+            secretName: galah-wg-secret
+{{- end }}
 {{- end }}

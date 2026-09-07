@@ -1,0 +1,30 @@
+# Example values override for a standalone honeypot deployment
+# (no local dpipot-proxy) — copy to values-<hostname>.yaml and replace
+# the placeholders with the real values for your environment.
+# See docs/en/honeypot-standalone-k3s-cilium.md for the full walkthrough.
+
+hostExpose:
+  # IP of the isolated interface (e.g. a dedicated WireGuard network) on
+  # which honeypots should bind (hostIP+hostPort) — and through which the
+  # remote dpipot-proxy connects to them.
+  ip: "<HONEYPOT_WG_IFACE_IP>"
+
+honeypotIsolation:
+  # CIDR of the isolated network — only this range may initiate connections
+  # to the honeypots (ingress). No outbound route by default (egress: []
+  # in the template, no exceptions at all).
+  allowedIngressCIDR: "<HONEYPOT_CIDR>"
+  galahWgEndpoint:
+    # Public endpoint of galah's own WireGuard tunnel (not the internal
+    # tunnel IP) — the only egress exception in this chart. Only needed
+    # if honeypots.galah.wgTunnel.enabled=true (see templates/galah.yaml).
+    ip: "<LLM_WG_ENDPOINT_PUBLIC_IP>"
+    port: 51820
+
+honeypots:
+  galah:
+    # LLM backend galah will use. The chart default (values.yaml) already
+    # points to an external provider (e.g. Groq) via internet — only
+    # override here if you are using a private LLM backend, reachable via
+    # galah's isolated WireGuard tunnel.
+    llmApiBase: "http://<LLM_TUNNEL_INTERNAL_IP>:8000/v1"
