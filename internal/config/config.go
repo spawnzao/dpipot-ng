@@ -17,6 +17,8 @@ type Config struct {
 	MaxPayloadBytes     int64
 	SSHInputBufSize     int
 	SSHOutputBufSize    int
+	SSHBannerPool       []string          // banners for random selection (SSH_BANNER_POOL)
+	SSHBannerMap        map[uint16]string // port → specific banner, takes precedence (SSH_BANNER_MAP)
 	MaxConnections      int
 	MaxPerIPConns       int
 	ServerFirstPorts    map[uint16]string
@@ -51,6 +53,8 @@ func Load() (*Config, error) {
 		MaxPayloadBytes:     getInt64("MAX_PAYLOAD_BYTES", 65536),
 		SSHInputBufSize:     getInt("SSH_INPUT_BUF_SIZE", 4096),
 		SSHOutputBufSize:    getInt("SSH_OUTPUT_BUF_SIZE", 65536),
+		SSHBannerPool:       parseSSHBannerPool(getEnv("SSH_BANNER_POOL", "")),
+		SSHBannerMap:        parseSSHBannerMap(getEnv("SSH_BANNER_MAP", "")),
 		MaxConnections:      getInt("MAX_CONNECTIONS", 10000),
 		MaxPerIPConns:       getInt("MAX_CONNECTIONS_PER_IP", 50),
 		PayloadB64Enabled:   parseBoolEnv("PAYLOAD_B64_ENABLED", true),
@@ -227,4 +231,37 @@ func getInt64(key string, fallback int64) int64 {
 		return fallback
 	}
 	return n
+}
+
+func parseSSHBannerPool(raw string) []string {
+	var pool []string
+	for _, b := range strings.Split(raw, ",") {
+		b = strings.TrimSpace(b)
+		if b != "" {
+			pool = append(pool, b)
+		}
+	}
+	return pool
+}
+
+func parseSSHBannerMap(raw string) map[uint16]string {
+	result := make(map[uint16]string)
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		idx := strings.Index(pair, "=")
+		if idx < 0 {
+			continue
+		}
+		portStr := strings.TrimSpace(pair[:idx])
+		banner := strings.TrimSpace(pair[idx+1:])
+		port, err := strconv.ParseUint(portStr, 10, 16)
+		if err != nil || banner == "" {
+			continue
+		}
+		result[uint16(port)] = banner
+	}
+	return result
 }

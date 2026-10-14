@@ -154,6 +154,8 @@ func main() {
 		cfg.MaxPayloadBytes,
 		cfg.SSHInputBufSize,
 		cfg.SSHOutputBufSize,
+		cfg.SSHBannerPool,
+		cfg.SSHBannerMap,
 		cfg.MaxConnections,
 		cfg.MaxPerIPConns,
 		logger,

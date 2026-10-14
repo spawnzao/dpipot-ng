@@ -34,6 +34,26 @@ type Event struct {
 	DurationMs    float64   `json:"duration_ms,omitempty"`
 	AttackType    string    `json:"attack_type,omitempty"`
 	SSHResponse   string    `json:"ssh_response,omitempty"` // output do servidor SSH capturado pelo MITM (resposta ao comando do atacante)
+
+	// SSH MITM credential and handshake fields
+	SSHClientBanner string `json:"ssh_client_banner,omitempty"` // client SSH version string
+	SSHServerBanner string `json:"ssh_server_banner,omitempty"` // banner presented to attacker
+	HASSH           string `json:"hassh,omitempty"`             // MD5 fingerprint (market standard, Fase 3)
+	HASSHAlgos      string `json:"hassh_algos,omitempty"`       // raw kex;enc_c2s;mac_c2s;cmp_c2s string
+	SSHUserHex      string `json:"ssh_user_hex,omitempty"`      // hex-encoded username bytes
+	SSHPassHex      string `json:"ssh_pass_hex,omitempty"`      // hex-encoded password bytes
+	SSHKeyType      string `json:"ssh_key_type,omitempty"`      // publickey: algorithm (ssh-rsa, ssh-ed25519…)
+	SSHFingerprint  string `json:"ssh_fingerprint,omitempty"`   // publickey: SHA256 fingerprint
+	SSHPublicKey    string `json:"ssh_public_key,omitempty"`    // publickey: authorized_keys format
+	SSHAuthMethods  string `json:"ssh_auth_methods,omitempty"`  // ordered auth attempts: "publickey,password"
+	SSHAuthAttempts int    `json:"ssh_auth_attempts,omitempty"` // incremental attempt count
+	SSHChannelType  string `json:"ssh_channel_type,omitempty"`  // "session", "direct-tcpip"
+	SSHPtyTerm      string `json:"ssh_pty_term,omitempty"`      // pty terminal type (xterm, vt100…)
+	SSHPtyCols      uint32 `json:"ssh_pty_cols,omitempty"`      // terminal columns
+	SSHPtyRows      uint32 `json:"ssh_pty_rows,omitempty"`      // terminal rows
+	SSHSubsystem    string `json:"ssh_subsystem,omitempty"`     // subsystem name (sftp, netconf…)
+	SSHExecCmd      string `json:"ssh_exec_cmd,omitempty"`      // direct exec command (non-interactive)
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port

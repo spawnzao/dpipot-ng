@@ -38,6 +38,8 @@ type Server struct {
 	maxPayloadBytes     int64
 	sshInputBufSize     int
 	sshOutputBufSize    int
+	sshBannerPool       []string
+	sshBannerMap        map[uint16]string
 	log                 *zap.Logger
 	flowTable           *flow.Table
 	certMgr             *mitm.CertManager
@@ -80,6 +82,8 @@ func NewServer(
 	maxPayloadBytes int64,
 	sshInputBufSize int,
 	sshOutputBufSize int,
+	sshBannerPool []string,
+	sshBannerMap map[uint16]string,
 	maxConnections int,
 	maxPerIPConns int,
 	log *zap.Logger,
@@ -105,6 +109,8 @@ func NewServer(
 		maxPayloadBytes:     maxPayloadBytes,
 		sshInputBufSize:     sshInputBufSize,
 		sshOutputBufSize:    sshOutputBufSize,
+		sshBannerPool:       sshBannerPool,
+		sshBannerMap:        sshBannerMap,
 		log:                 log,
 		flowTable:           flowTable,
 		certMgr:             certMgr,
@@ -372,6 +378,8 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	h.perIPActive = perIPActive
 	h.nodeName = s.nodeName
 	h.podName = s.podName
+	h.sshBannerPool = s.sshBannerPool
+	h.sshBannerMap = s.sshBannerMap
 	h.retransmitsClient = &s.retransmitsClient
 	h.retransmitsHoneypot = &s.retransmitsHoneypot
 	h.flowsClient = &s.flowsClient

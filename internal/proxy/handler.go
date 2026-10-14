@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"strings"
 	"sync"
@@ -49,6 +50,8 @@ type Handler struct {
 	maxPayloadBytes  int64
 	sshInputBufSize  int
 	sshOutputBufSize int
+	sshBannerPool    []string
+	sshBannerMap     map[uint16]string
 	flowTable        *flow.Table
 
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
@@ -927,6 +930,7 @@ greetingBuf = greetingBuf[:n]
 		mitmConfig := mitm.SSHMITMConfig{
 			HostKey:          hostKey,
 			Banner:           string(firstChunk),
+			ServerVersion:    h.selectSSHBanner(uint16(origDstPort)),
 			TargetAddr:       honeypotAddr,
 			FlowID:           h.classifierFlowID,
 			TupleID:          h.tupleID,
@@ -1362,6 +1366,16 @@ func getTCPInfo(conn net.Conn) *syscall.TCPInfo {
 		return nil
 	}
 	return &info
+}
+
+func (h *Handler) selectSSHBanner(dstPort uint16) string {
+	if b, ok := h.sshBannerMap[dstPort]; ok {
+		return b
+	}
+	if len(h.sshBannerPool) > 0 {
+		return h.sshBannerPool[rand.Intn(len(h.sshBannerPool))]
+	}
+	return "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1"
 }
 
 func (h *Handler) publishEvent(event *kafka.Event) {

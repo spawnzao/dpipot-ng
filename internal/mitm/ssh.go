@@ -3,6 +3,8 @@ package mitm
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,7 +19,8 @@ import (
 
 // SSHMITMConfig holds all parameters for the SSH MITM handler.
 type SSHMITMConfig struct {
-	Banner           string
+	Banner           string // raw firstChunk from client (client SSH banner bytes)
+	ServerVersion    string // SSH server version string to present to attacker
 	HostKey          ssh.Signer
 	TargetAddr       string
 	MaxPayloadSize   int64
@@ -49,6 +52,32 @@ var (
 		regexp.MustCompile(`>\s+`),
 	}
 )
+
+// authTracker records the sequence and count of authentication method attempts.
+type authTracker struct {
+	mu       sync.Mutex
+	methods  []string
+	attempts int
+}
+
+func (t *authTracker) add(method string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.methods = append(t.methods, method)
+	t.attempts++
+}
+
+func (t *authTracker) joined() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Join(t.methods, ",")
+}
+
+func (t *authTracker) count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.attempts
+}
 
 // SSHSession tracks per-channel input/output buffers and emits Kafka events
 // when a complete command line or server response is detected.
@@ -231,17 +260,17 @@ func (s *SSHSession) emitResponse() {
 		return
 	}
 	s.onEvent(&kafka.Event{
-		FlowID:     s.flowID,
-		Timestamp:  time.Now(),
-		SrcIP:      s.srcIP,
-		SrcPort:    s.srcPort,
-		DstIP:      s.dstIP,
-		DstPort:    s.dstPort,
-		NDPIProto:  "SSH",
-		NDPIApp:    "response",
+		FlowID:      s.flowID,
+		Timestamp:   time.Now(),
+		SrcIP:       s.srcIP,
+		SrcPort:     s.srcPort,
+		DstIP:       s.dstIP,
+		DstPort:     s.dstPort,
+		NDPIProto:   "SSH",
+		NDPIApp:     "response",
 		SSHResponse: strings.TrimSpace(s.pendingResp),
-		Honeypot:   s.honeypot,
-		Instance:   "proxy",
+		Honeypot:    s.honeypot,
+		Instance:    "proxy",
 	})
 	s.logger("SSH-MITM: resposta publicada no Kafka: %d bytes", len(s.pendingResp))
 	s.pendingResp = ""
@@ -283,7 +312,7 @@ func (d *directTCPConn) Write(p []byte) (int, error) {
 }
 
 // HandleSSH performs a full SSH MITM:
-//  1. Presents proxy's host key to the client and captures credentials via PasswordCallback.
+//  1. Presents proxy's host key to the client and captures credentials via callbacks.
 //  2. Validates credentials against the honeypot (tryAuthOnHoneypot).
 //  3. Opens a real SSH session to the honeypot with the captured credentials.
 //  4. Relays channels bidirectionally, recording commands and responses.
@@ -294,34 +323,106 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		clientConn.SetDeadline(config.Deadline) //nolint:errcheck
 	}
 
+	serverVersion := "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1"
+	if config.ServerVersion != "" {
+		serverVersion = config.ServerVersion
+	}
 	serverConfig := &ssh.ServerConfig{
 		NoClientAuth:  false,
-		ServerVersion: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.1",
+		ServerVersion: serverVersion,
 	}
 
 	var authMu sync.Mutex
 	var authSuccess bool
 	var capturedUser, capturedPass string
 
+	tracker := &authTracker{}
+
+	serverConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+		tracker.add("publickey")
+		if config.OnEvent != nil {
+			config.OnEvent(&kafka.Event{
+				FlowID:         config.FlowID,
+				TupleID:        config.TupleID,
+				Timestamp:      time.Now(),
+				SrcIP:          config.SrcIP,
+				SrcPort:        config.SrcPort,
+				DstIP:          config.DstIP,
+				DstPort:        config.DstPort,
+				NDPIProto:      "SSH",
+				NDPIApp:        "pubkey_attempt",
+				AttackType:     conn.User(),
+				SSHKeyType:     key.Type(),
+				SSHFingerprint: ssh.FingerprintSHA256(key),
+				SSHPublicKey:   strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))),
+				SSHAuthMethods: tracker.joined(),
+				Honeypot:       config.TargetAddr,
+				Instance:       "proxy",
+			})
+		}
+		return nil, errors.New("publickey auth not accepted")
+	}
+
+	serverConfig.KeyboardInteractiveCallback = func(conn ssh.ConnMetadata, challenge ssh.KeyboardInteractiveChallenge) (*ssh.Permissions, error) {
+		tracker.add("keyboard-interactive")
+		answers, err := challenge("", "", []string{"Password: "}, []bool{false})
+		if err != nil || len(answers) == 0 {
+			return nil, errors.New("keyboard-interactive auth not accepted")
+		}
+		pass := answers[0]
+		if config.OnEvent != nil {
+			config.OnEvent(&kafka.Event{
+				FlowID:         config.FlowID,
+				TupleID:        config.TupleID,
+				Timestamp:      time.Now(),
+				SrcIP:          config.SrcIP,
+				SrcPort:        config.SrcPort,
+				DstIP:          config.DstIP,
+				DstPort:        config.DstPort,
+				NDPIProto:      "SSH",
+				NDPIApp:        "keyboard_interactive",
+				AttackType:     pass,
+				SSHPassHex:     hex.EncodeToString([]byte(pass)),
+				SSHAuthMethods: tracker.joined(),
+				Honeypot:       config.TargetAddr,
+				Instance:       "proxy",
+			})
+		}
+		if tryAuthOnHoneypot(config.TargetAddr, conn.User(), pass, logger) {
+			authMu.Lock()
+			capturedUser = conn.User()
+			capturedPass = pass
+			authSuccess = true
+			authMu.Unlock()
+			return &ssh.Permissions{}, nil
+		}
+		return nil, errors.New("keyboard-interactive auth not accepted")
+	}
+
 	serverConfig.PasswordCallback = func(conn ssh.ConnMetadata, password []byte) (*ssh.Permissions, error) {
 		user := conn.User()
 		pass := string(password)
 		logger("SSH MITM: credenciais capturadas — user=%s", user)
 
+		tracker.add("password")
+
 		if config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
-				FlowID:     config.FlowID,
-				TupleID:    config.TupleID,
-				Timestamp:  time.Now(),
-				SrcIP:      config.SrcIP,
-				SrcPort:    config.SrcPort,
-				DstIP:      config.DstIP,
-				DstPort:    config.DstPort,
-				NDPIProto:  "SSH",
-				NDPIApp:    "username",
-				AttackType: user,
-				Honeypot:   config.TargetAddr,
-				Instance:   "proxy",
+				FlowID:          config.FlowID,
+				TupleID:         config.TupleID,
+				Timestamp:       time.Now(),
+				SrcIP:           config.SrcIP,
+				SrcPort:         config.SrcPort,
+				DstIP:           config.DstIP,
+				DstPort:         config.DstPort,
+				NDPIProto:       "SSH",
+				NDPIApp:         "username",
+				AttackType:      user,
+				SSHUserHex:      hex.EncodeToString([]byte(user)),
+				SSHAuthMethods:  tracker.joined(),
+				SSHAuthAttempts: tracker.count(),
+				Honeypot:        config.TargetAddr,
+				Instance:        "proxy",
 			})
 			config.OnEvent(&kafka.Event{
 				FlowID:     config.FlowID,
@@ -334,6 +435,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIProto:  "SSH",
 				NDPIApp:    "password",
 				AttackType: pass,
+				SSHPassHex: hex.EncodeToString(password),
 				Honeypot:   config.TargetAddr,
 				Instance:   "proxy",
 			})
@@ -377,24 +479,44 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		isAuthFailure := strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet")
 		if !isAuthFailure && config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
-				FlowID:     config.FlowID,
-				TupleID:    config.TupleID,
-				Timestamp:  time.Now(),
-				SrcIP:      config.SrcIP,
-				SrcPort:    config.SrcPort,
-				DstIP:      config.DstIP,
-				DstPort:    config.DstPort,
-				NDPIProto:  "SSH",
-				NDPIApp:    "wrong_key",
-				AttackType: "client disconnected before handshake (possible wrong host key)",
-				Honeypot:   config.TargetAddr,
-				Instance:   "proxy",
+				FlowID:          config.FlowID,
+				TupleID:         config.TupleID,
+				Timestamp:       time.Now(),
+				SrcIP:           config.SrcIP,
+				SrcPort:         config.SrcPort,
+				DstIP:           config.DstIP,
+				DstPort:         config.DstPort,
+				NDPIProto:       "SSH",
+				NDPIApp:         "wrong_key",
+				AttackType:      "client disconnected before handshake (possible wrong host key)",
+				SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
+				Honeypot:        config.TargetAddr,
+				Instance:        "proxy",
 			})
 		}
 		clientConn.Close() //nolint:errcheck
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
 	defer conn.Close()
+
+	// Emit client banner event immediately after successful handshake.
+	if config.OnEvent != nil {
+		config.OnEvent(&kafka.Event{
+			FlowID:          config.FlowID,
+			TupleID:         config.TupleID,
+			Timestamp:       time.Now(),
+			SrcIP:           config.SrcIP,
+			SrcPort:         config.SrcPort,
+			DstIP:           config.DstIP,
+			DstPort:         config.DstPort,
+			NDPIProto:       "SSH",
+			NDPIApp:         "client_banner",
+			SSHClientBanner: string(conn.ClientVersion()),
+			SSHServerBanner: serverVersion,
+			Honeypot:        config.TargetAddr,
+			Instance:        "proxy",
+		})
+	}
 
 	authMu.Lock()
 	success := authSuccess
@@ -432,9 +554,39 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	var chanWg sync.WaitGroup
 
 	for newChannel := range chans {
-		logger("SSH MITM: novo channel recebido: %s", newChannel.ChannelType())
+		chanType := newChannel.ChannelType()
+		logger("SSH MITM: novo channel recebido: %s", chanType)
 
-		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(newChannel.ChannelType(), newChannel.ExtraData())
+		if config.OnEvent != nil {
+			ev := &kafka.Event{
+				FlowID:         config.FlowID,
+				TupleID:        config.TupleID,
+				Timestamp:      time.Now(),
+				SrcIP:          config.SrcIP,
+				SrcPort:        config.SrcPort,
+				DstIP:          config.DstIP,
+				DstPort:        config.DstPort,
+				NDPIProto:      "SSH",
+				NDPIApp:        "channel_open",
+				SSHChannelType: chanType,
+				Honeypot:       config.TargetAddr,
+				Instance:       "proxy",
+			}
+			if chanType == "direct-tcpip" {
+				var tcpipReq struct {
+					DestAddr string
+					DestPort uint32
+					SrcAddr  string
+					SrcPort  uint32
+				}
+				if ssh.Unmarshal(newChannel.ExtraData(), &tcpipReq) == nil {
+					ev.AttackType = fmt.Sprintf("%s:%d", tcpipReq.DestAddr, tcpipReq.DestPort)
+				}
+			}
+			config.OnEvent(ev)
+		}
+
+		targetChannel, targetReqs, err := targetSSHConn.OpenChannel(chanType, newChannel.ExtraData())
 		if err != nil {
 			logger("SSH MITM: falha ao abrir channel no honeypot: %v", err)
 			newChannel.Reject(ssh.Prohibited, "falha ao abrir channel") //nolint:errcheck
@@ -519,21 +671,121 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 		logger("SSH MITM: encaminhando request tipo=%s wantReply=%v payload=%d bytes",
 			req.Type, req.WantReply, len(req.Payload))
 
-		if onEvent != nil && (req.Type == "exit-status" || req.Type == "exit-signal") {
-			onEvent(&kafka.Event{
-				FlowID:     config.FlowID,
-				TupleID:    config.TupleID,
-				Timestamp:  time.Now(),
-				SrcIP:      config.SrcIP,
-				SrcPort:    config.SrcPort,
-				DstIP:      config.DstIP,
-				DstPort:    config.DstPort,
-				NDPIProto:  "SSH",
-				NDPIApp:    "exit",
-				Honeypot:   config.TargetAddr,
-				AttackType: decodeSSHExitPayload(req.Type, req.Payload),
-				Instance:   "proxy",
-			})
+		if onEvent != nil {
+			switch req.Type {
+			case "exit-status", "exit-signal":
+				onEvent(&kafka.Event{
+					FlowID:     config.FlowID,
+					TupleID:    config.TupleID,
+					Timestamp:  time.Now(),
+					SrcIP:      config.SrcIP,
+					SrcPort:    config.SrcPort,
+					DstIP:      config.DstIP,
+					DstPort:    config.DstPort,
+					NDPIProto:  "SSH",
+					NDPIApp:    "exit",
+					Honeypot:   config.TargetAddr,
+					AttackType: decodeSSHExitPayload(req.Type, req.Payload),
+					Instance:   "proxy",
+				})
+			case "pty-req":
+				var ptyReq struct {
+					Term   string
+					Cols   uint32
+					Rows   uint32
+					PixelW uint32
+					PixelH uint32
+					Modes  string
+				}
+				if ssh.Unmarshal(req.Payload, &ptyReq) == nil {
+					onEvent(&kafka.Event{
+						FlowID:     config.FlowID,
+						TupleID:    config.TupleID,
+						Timestamp:  time.Now(),
+						SrcIP:      config.SrcIP,
+						SrcPort:    config.SrcPort,
+						DstIP:      config.DstIP,
+						DstPort:    config.DstPort,
+						NDPIProto:  "SSH",
+						NDPIApp:    "pty_request",
+						SSHPtyTerm: ptyReq.Term,
+						SSHPtyCols: ptyReq.Cols,
+						SSHPtyRows: ptyReq.Rows,
+						Honeypot:   config.TargetAddr,
+						Instance:   "proxy",
+					})
+				}
+			case "exec":
+				var execReq struct{ Cmd string }
+				if ssh.Unmarshal(req.Payload, &execReq) == nil && execReq.Cmd != "" {
+					onEvent(&kafka.Event{
+						FlowID:     config.FlowID,
+						TupleID:    config.TupleID,
+						Timestamp:  time.Now(),
+						SrcIP:      config.SrcIP,
+						SrcPort:    config.SrcPort,
+						DstIP:      config.DstIP,
+						DstPort:    config.DstPort,
+						NDPIProto:  "SSH",
+						NDPIApp:    "exec",
+						SSHExecCmd: execReq.Cmd,
+						AttackType: execReq.Cmd,
+						Honeypot:   config.TargetAddr,
+						Instance:   "proxy",
+					})
+				}
+			case "subsystem":
+				var subsysReq struct{ Name string }
+				if ssh.Unmarshal(req.Payload, &subsysReq) == nil && subsysReq.Name != "" {
+					onEvent(&kafka.Event{
+						FlowID:       config.FlowID,
+						TupleID:      config.TupleID,
+						Timestamp:    time.Now(),
+						SrcIP:        config.SrcIP,
+						SrcPort:      config.SrcPort,
+						DstIP:        config.DstIP,
+						DstPort:      config.DstPort,
+						NDPIProto:    "SSH",
+						NDPIApp:      "subsystem",
+						SSHSubsystem: subsysReq.Name,
+						AttackType:   subsysReq.Name,
+						Honeypot:     config.TargetAddr,
+						Instance:     "proxy",
+					})
+				}
+			case "env":
+				var envReq struct{ Name, Value string }
+				if ssh.Unmarshal(req.Payload, &envReq) == nil && envReq.Name != "" {
+					onEvent(&kafka.Event{
+						FlowID:     config.FlowID,
+						TupleID:    config.TupleID,
+						Timestamp:  time.Now(),
+						SrcIP:      config.SrcIP,
+						SrcPort:    config.SrcPort,
+						DstIP:      config.DstIP,
+						DstPort:    config.DstPort,
+						NDPIProto:  "SSH",
+						NDPIApp:    "env",
+						AttackType: envReq.Name + "=" + envReq.Value,
+						Honeypot:   config.TargetAddr,
+						Instance:   "proxy",
+					})
+				}
+			case "shell":
+				onEvent(&kafka.Event{
+					FlowID:    config.FlowID,
+					TupleID:   config.TupleID,
+					Timestamp: time.Now(),
+					SrcIP:     config.SrcIP,
+					SrcPort:   config.SrcPort,
+					DstIP:     config.DstIP,
+					DstPort:   config.DstPort,
+					NDPIProto: "SSH",
+					NDPIApp:   "shell_open",
+					Honeypot:  config.TargetAddr,
+					Instance:  "proxy",
+				})
+			}
 		}
 
 		ok, err := dst.SendRequest(req.Type, req.WantReply, req.Payload)
