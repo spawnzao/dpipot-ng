@@ -283,8 +283,9 @@ func (h *Handler) Handle() {
 
 	appProtoFlow := "Unknown"
 	var (
-		earlyProto, earlyMasterProto string
-		earlyTrackerFound            bool
+		earlyProto, earlyMasterProto                        string
+		earlyTrackerFound                                   bool
+		sshHASSH, sshHASSHAlgos, sshClientBanner, sshServerBanner string
 	)
 	if h.flowTable != nil {
 		if entry, found := h.flowTable.Get(flowIDForTracker); found {
@@ -971,7 +972,11 @@ greetingBuf = greetingBuf[:n]
 			log.Info("SSH-MITM: "+fmt.Sprintf(format, args...))
 		}
 
-		err = mitm.HandleSSH(clientConn, mitmConfig, mitmLogger)
+		err = mitm.HandleSSH(clientConn, &mitmConfig, mitmLogger)
+		sshHASSH = mitmConfig.HASSH
+		sshHASSHAlgos = mitmConfig.HASSHAlgos
+		sshClientBanner = strings.TrimRight(mitmConfig.Banner, "\r\n")
+		sshServerBanner = mitmConfig.ServerVersion
 		if err != nil {
 			errStr := err.Error()
 			if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet") {
@@ -1305,11 +1310,15 @@ publish:
 		RttMs:          clientRttMs,
 		RttVarMs:       clientRttVarMs,
 		TCPRetransmits: clientRetransmits,
-		SlotsUsed:     kafka.IntPtr(h.slotsUsed),
-		SlotsMax:      h.slotsMax,
-		PerIPActive:   h.perIPActive,
-		NodeName:      h.nodeName,
-		PodName:       h.podName,
+		SlotsUsed:       kafka.IntPtr(h.slotsUsed),
+		SlotsMax:        h.slotsMax,
+		PerIPActive:     h.perIPActive,
+		NodeName:        h.nodeName,
+		PodName:         h.podName,
+		HASSH:           sshHASSH,
+		HASSHAlgos:      sshHASSHAlgos,
+		SSHClientBanner: sshClientBanner,
+		SSHServerBanner: sshServerBanner,
 	}
 	h.publishEvent(event)
 

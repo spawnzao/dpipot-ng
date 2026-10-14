@@ -296,6 +296,9 @@ func (k *kexInitCapture) Read(p []byte) (int, error) {
 	if n > 0 && !k.parsed {
 		k.raw = append(k.raw, p[:n]...)
 		k.tryParse()
+		if k.parsed {
+			k.raw = nil
+		}
 	}
 	return n, err
 }
@@ -392,7 +395,7 @@ func (k *kexInitCapture) tryParse() {
 //  2. Validates credentials against the honeypot (tryAuthOnHoneypot).
 //  3. Opens a real SSH session to the honeypot with the captured credentials.
 //  4. Relays channels bidirectionally, recording commands and responses.
-func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ...interface{})) error {
+func HandleSSH(clientConn net.Conn, config *SSHMITMConfig, logger func(string, ...interface{})) error {
 	logger("SSH MITM: iniciando handshake")
 
 	if !config.Deadline.IsZero() {
@@ -779,8 +782,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 
 		chanWg.Add(6)
 
-		go func() { defer chanWg.Done(); forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, config) }()
-		go func() { defer chanWg.Done(); forwardRequests(clientChannel, targetReqs, logger, config.OnEvent, config) }()
+		go func() { defer chanWg.Done(); forwardRequests(targetChannel, clientReqs, logger, config.OnEvent, *config) }()
+		go func() { defer chanWg.Done(); forwardRequests(clientChannel, targetReqs, logger, config.OnEvent, *config) }()
 
 		go func() {
 			defer chanWg.Done()
