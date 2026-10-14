@@ -14,6 +14,11 @@ func ndpiAppFromEvent(ev CaptureEvent) string {
 			return "password"
 		}
 		return "credential"
+	case EventBanner:
+		if ev.VNCServerVersion != "" {
+			return "vnc_banner"
+		}
+		return "banner"
 	case EventVNCVersion:
 		return "vnc_version"
 	case EventVNCSecType:

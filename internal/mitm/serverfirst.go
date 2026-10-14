@@ -185,7 +185,7 @@ func HandleServerFirst(config ServerFirstConfig) error {
 	return fmt.Errorf("serverfirst: %w", relayErr)
 }
 
-func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, payloadSrc, payloadDst []byte) {
+func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, _, _ []byte) {
 	if config.OnEvent == nil {
 		return
 	}
@@ -194,6 +194,10 @@ func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, payloadSrc, payloadD
 	if ndpiApp == "" && attackType == "" && ev.VNCAuthHash == "" && ev.VNCAuthResult == "" {
 		return
 	}
+	// Credential/command events carry the meaningful data in attack_type; the
+	// full session payload is already included in the flow event emitted by
+	// handler.go. Duplicating it here on every credential or command event
+	// multiplies Kafka/ES payload by the number of events per connection.
 	config.OnEvent(&kafka.Event{
 		FlowID:           config.FlowID,
 		TupleID:          config.TupleID,
@@ -213,7 +217,5 @@ func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, payloadSrc, payloadD
 		VNCSecType:       ev.VNCSecType,
 		VNCAuthHash:      ev.VNCAuthHash,
 		VNCAuthResult:    ev.VNCAuthResult,
-		PayloadSrc:       payloadSrc,
-		PayloadDst:       payloadDst,
 	})
 }

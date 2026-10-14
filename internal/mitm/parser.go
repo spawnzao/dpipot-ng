@@ -255,7 +255,7 @@ var (
 	reLoginPrompt    = regexp.MustCompile(`(?i)(?:login|username|user)\s*:`)
 	rePasswordPrompt = regexp.MustCompile(`(?i)(?:password|passwd)\s*:`)
 	reAuthError      = regexp.MustCompile(`(?i)(?:incorrect|failed|invalid|denied|wrong password|authentication error|login error)`)
-	reShellPrompt    = regexp.MustCompile(`\S[#$]\s*$`)
+	reShellPrompt    = regexp.MustCompile(`\S[#$>]\s*$`)
 )
 
 // TelnetSession is a stateful, bidirectional Telnet parser. It implements both
@@ -302,21 +302,16 @@ func (s *TelnetSession) FeedClient(data []byte) []CaptureEvent {
 		case '\r':
 			line := strings.TrimSpace(string(s.clientBuf))
 			s.clientBuf = s.clientBuf[:0]
-			if line == "" {
-				continue
-			}
 			if ev := s.emitLine(line); ev != nil {
 				events = append(events, *ev)
 			}
 		case '\n':
+			// LF right after CR: clientBuf was already cleared; skip.
 			if len(s.clientBuf) == 0 {
 				continue
 			}
 			line := strings.TrimSpace(string(s.clientBuf))
 			s.clientBuf = s.clientBuf[:0]
-			if line == "" {
-				continue
-			}
 			if ev := s.emitLine(line); ev != nil {
 				events = append(events, *ev)
 			}
@@ -335,14 +330,23 @@ func (s *TelnetSession) emitLine(line string) *CaptureEvent {
 	ev := &CaptureEvent{Direction: "client->honeypot", TelnetAttempt: s.attempt + 1}
 	switch s.state {
 	case telnetAwaitUsername:
+		if line == "" {
+			return nil // blank username: ignore and keep waiting
+		}
 		ev.EventType = EventCredential
 		ev.Username = line
 		s.state = telnetAwaitPassword
 	case telnetAwaitPassword:
+		// Always emit and advance state, even for empty password, so that
+		// blank-password login attempts are recorded and the state machine
+		// doesn't stall waiting for a non-empty line.
 		ev.EventType = EventCredential
 		ev.Password = line
 		s.state = telnetAwaitCommand
 	case telnetAwaitCommand, telnetAuthenticated:
+		if line == "" {
+			return nil
+		}
 		ev.EventType = EventCommand
 		ev.Command = line
 	}
@@ -414,6 +418,19 @@ func stripTelnetControlBytes(data []byte) []byte {
 				continue
 			}
 			i += 2
+			continue
+		}
+		// Strip ANSI/VT100 CSI escape sequences (ESC '[' ... letter) so that
+		// colored prompts (e.g. Cowrie's root@host:~#\x1b[0m) don't obscure the
+		// trailing '#' that reShellPrompt needs to match.
+		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '[' {
+			i += 2
+			for i < len(data) && !((data[i] >= 'a' && data[i] <= 'z') || (data[i] >= 'A' && data[i] <= 'Z')) {
+				i++
+			}
+			if i < len(data) {
+				i++
+			}
 			continue
 		}
 		b := data[i]

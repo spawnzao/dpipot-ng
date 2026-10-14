@@ -95,11 +95,17 @@ func (v *VNCSession) tryConsumeServer() (*CaptureEvent, int) {
 				VNCSecType: v.secType,
 			}, 4
 		}
-		// RFB 003.007+: 1 byte count followed by N security type bytes
+		// RFB 003.007+: 1 byte count followed by N security type bytes.
+		// count == 0 means the server has no acceptable types (RFC 6143 §7.1.2)
+		// and will send a reason string next; treat as done to avoid stalling.
 		if len(v.serverBuf) < 1 {
 			return nil, 0
 		}
 		count := int(v.serverBuf[0])
+		if count == 0 {
+			v.state = vncStateDone
+			return nil, 1
+		}
 		if len(v.serverBuf) < 1+count {
 			return nil, 0
 		}
