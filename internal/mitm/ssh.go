@@ -93,11 +93,14 @@ type SSHSession struct {
 	pendingCmd       string
 	pendingResp      string
 	flowID           string
+	tupleID          string
 	srcIP            string
 	srcPort          int
 	dstIP            string
 	dstPort          int
 	honeypot         string
+	hassh            string
+	hasshAlgos       string
 	onEvent          func(event *kafka.Event)
 	logger           func(string, ...interface{})
 	closed           bool
@@ -105,7 +108,8 @@ type SSHSession struct {
 	maxOutputBufSize int
 }
 
-func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int, honeypot string,
+func NewSSHSession(flowID, tupleID, srcIP string, srcPort int, dstIP string, dstPort int, honeypot string,
+	hassh, hasshAlgos string,
 	onEvent func(event *kafka.Event), logger func(string, ...interface{}),
 	maxInputBufSize, maxOutputBufSize int) *SSHSession {
 
@@ -117,11 +121,14 @@ func NewSSHSession(flowID, srcIP string, srcPort int, dstIP string, dstPort int,
 	}
 	return &SSHSession{
 		flowID:           flowID,
+		tupleID:          tupleID,
 		srcIP:            srcIP,
 		srcPort:          srcPort,
 		dstIP:            dstIP,
 		dstPort:          dstPort,
 		honeypot:         honeypot,
+		hassh:            hassh,
+		hasshAlgos:       hasshAlgos,
 		onEvent:          onEvent,
 		logger:           logger,
 		lastActivity:     time.Now(),
@@ -244,6 +251,7 @@ func (s *SSHSession) emitCommand() {
 	}
 	s.onEvent(&kafka.Event{
 		FlowID:     s.flowID,
+		TupleID:    s.tupleID,
 		Timestamp:  time.Now(),
 		SrcIP:      s.srcIP,
 		SrcPort:    s.srcPort,
@@ -252,6 +260,8 @@ func (s *SSHSession) emitCommand() {
 		NDPIProto:  "SSH",
 		NDPIApp:    "command",
 		AttackType: s.pendingCmd,
+		HASSH:      s.hassh,
+		HASSHAlgos: s.hasshAlgos,
 		Honeypot:   s.honeypot,
 		Instance:   "proxy",
 	})
@@ -265,6 +275,7 @@ func (s *SSHSession) emitResponse() {
 	}
 	s.onEvent(&kafka.Event{
 		FlowID:      s.flowID,
+		TupleID:     s.tupleID,
 		Timestamp:   time.Now(),
 		SrcIP:       s.srcIP,
 		SrcPort:     s.srcPort,
@@ -273,6 +284,8 @@ func (s *SSHSession) emitResponse() {
 		NDPIProto:   "SSH",
 		NDPIApp:     "response",
 		SSHResponse: strings.TrimSpace(s.pendingResp),
+		HASSH:       s.hassh,
+		HASSHAlgos:  s.hasshAlgos,
 		Honeypot:    s.honeypot,
 		Instance:    "proxy",
 	})
@@ -678,6 +691,7 @@ func HandleSSH(clientConn net.Conn, config *SSHMITMConfig, logger func(string, .
 			DstPort:         config.DstPort,
 			NDPIProto:       "SSH",
 			NDPIApp:         "client_banner",
+			AttackType:      string(conn.ClientVersion()),
 			SSHClientBanner: string(conn.ClientVersion()),
 			SSHServerBanner: serverVersion,
 			HASSH:           config.HASSH,
@@ -772,10 +786,11 @@ func HandleSSH(clientConn net.Conn, config *SSHMITMConfig, logger func(string, .
 		}
 
 		sshSession := NewSSHSession(
-			config.FlowID,
+			config.FlowID, config.TupleID,
 			config.SrcIP, config.SrcPort,
 			config.DstIP, config.DstPort,
 			config.TargetAddr,
+			config.HASSH, config.HASSHAlgos,
 			config.OnEvent, logger,
 			config.SSHInputBufSize, config.SSHOutputBufSize,
 		)
