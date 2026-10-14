@@ -135,6 +135,11 @@ func HandleServerFirst(config ServerFirstConfig) error {
 				emitBiEvent(config, ev, srcPayload, dstPayload)
 			}
 		}
+		if flusher, ok := parser.(interface{ Flush() []CaptureEvent }); ok {
+			for _, ev := range flusher.Flush() {
+				emitBiEvent(config, ev, srcPayload, dstPayload)
+			}
+		}
 	} else {
 		for _, ev := range parser.ParseClientData(srcPayload, config.Logger) {
 			ndpiApp := ndpiAppFromEvent(ev)

@@ -337,11 +337,12 @@ func (s *TelnetSession) emitLine(line string) *CaptureEvent {
 		ev.Username = line
 		s.state = telnetAwaitPassword
 	case telnetAwaitPassword:
-		// Always emit and advance state, even for empty password, so that
-		// blank-password login attempts are recorded and the state machine
-		// doesn't stall waiting for a non-empty line.
 		ev.EventType = EventCredential
-		ev.Password = line
+		if line == "" {
+			ev.Password = "<blank>"
+		} else {
+			ev.Password = line
+		}
 		s.state = telnetAwaitCommand
 	case telnetAwaitCommand, telnetAuthenticated:
 		if line == "" {
@@ -351,6 +352,20 @@ func (s *TelnetSession) emitLine(line string) *CaptureEvent {
 		ev.Command = line
 	}
 	return ev
+}
+
+// Flush emits any bytes still buffered in clientBuf when the connection closes
+// before the client sent a CR/LF terminator.
+func (s *TelnetSession) Flush() []CaptureEvent {
+	line := strings.TrimSpace(string(s.clientBuf))
+	s.clientBuf = s.clientBuf[:0]
+	if line == "" {
+		return nil
+	}
+	if ev := s.emitLine(line); ev != nil {
+		return []CaptureEvent{*ev}
+	}
+	return nil
 }
 
 // ParseClientData implements ProtocolParser as a stateless fallback used when
@@ -445,43 +460,7 @@ func stripTelnetControlBytes(data []byte) []byte {
 }
 
 func stripTelnetControl(data []byte) string {
-	var result []byte
-	i := 0
-	for i < len(data) {
-		if data[i] == telnetIAC {
-			if i+1 >= len(data) {
-				break
-			}
-			opt := data[i+1]
-			if opt == telnetSB {
-				for i += 2; i < len(data); i++ {
-					if i+1 < len(data) && data[i] == telnetIAC && data[i+1] == telnetSE {
-						i++
-						break
-					}
-				}
-				i++
-				continue
-			}
-			// WILL/WONT/DO/DONT: sequência de 3 bytes (IAC + verb + option).
-			// Condição correta: telnetWILL(0xFB) ≤ opt ≤ telnetDONT(0xFE).
-			// i aponta no IAC; i+3 pula os 3 bytes completos.
-			if opt >= telnetWILL && opt <= telnetDONT {
-				i += 3
-				continue
-			}
-			// Outros comandos IAC de 2 bytes (SE, NOP, etc.)
-			i += 2
-			continue
-		}
-		if data[i] >= 32 && data[i] < 127 {
-			result = append(result, data[i])
-		} else if data[i] == '\n' || data[i] == '\r' || data[i] == '\t' {
-			result = append(result, data[i])
-		}
-		i++
-	}
-	return strings.TrimSpace(string(result))
+	return strings.TrimSpace(string(stripTelnetControlBytes(data)))
 }
 
 type POP3Parser struct{}
