@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -11,11 +12,15 @@ import (
 type CaptureEventType string
 
 const (
-	EventBanner    CaptureEventType = "banner"
+	EventBanner     CaptureEventType = "banner"
 	EventCredential CaptureEventType = "credential"
-	EventCommand   CaptureEventType = "command"
-	EventResponse  CaptureEventType = "response"
-	EventRawData   CaptureEventType = "raw_data"
+	EventCommand    CaptureEventType = "command"
+	EventResponse   CaptureEventType = "response"
+	EventRawData    CaptureEventType = "raw_data"
+	EventVNCVersion CaptureEventType = "vnc_version"
+	EventVNCSecType CaptureEventType = "vnc_security"
+	EventVNCAuth    CaptureEventType = "vnc_auth"
+	EventVNCResult  CaptureEventType = "vnc_result"
 )
 
 type CaptureEvent struct {
@@ -35,11 +40,29 @@ type CaptureEvent struct {
 	Command    string           `json:"command,omitempty"`
 	Response   string           `json:"response,omitempty"`
 	Banner     string           `json:"banner,omitempty"`
+
+	// Telnet MITM
+	TelnetAttempt int `json:"telnet_attempt,omitempty"`
+
+	// VNC RFB tap
+	VNCServerVersion string `json:"vnc_server_version,omitempty"`
+	VNCClientVersion string `json:"vnc_client_version,omitempty"`
+	VNCSecType       int    `json:"vnc_sec_type,omitempty"`
+	VNCAuthHash      string `json:"vnc_auth_hash,omitempty"`
+	VNCAuthResult    string `json:"vnc_auth_result,omitempty"`
 }
 
 type ProtocolParser interface {
 	ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent
 	ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent
+}
+
+// BiParser is implemented by stateful parsers that need ordered server/client
+// data to correctly classify events. FeedServer and FeedClient are called in
+// the actual order data arrives over the wire.
+type BiParser interface {
+	FeedServer(data []byte) []CaptureEvent
+	FeedClient(data []byte) []CaptureEvent
 }
 
 type RawParser struct{}
@@ -209,8 +232,6 @@ func (p *SMTPParser) ParseServerData(data []byte, logger func(string, ...interfa
 	}}
 }
 
-type TelnetParser struct{}
-
 const (
 	telnetIAC  = 0xFF
 	telnetDONT = 0xFE
@@ -221,13 +242,120 @@ const (
 	telnetSE   = 0xF0
 )
 
-func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+type telnetState int
+
+const (
+	telnetAwaitUsername telnetState = iota
+	telnetAwaitPassword
+	telnetAwaitCommand
+	telnetAuthenticated
+)
+
+var (
+	reLoginPrompt    = regexp.MustCompile(`(?i)(?:login|username|user)\s*:`)
+	rePasswordPrompt = regexp.MustCompile(`(?i)(?:password|passwd)\s*:`)
+	reAuthError      = regexp.MustCompile(`(?i)(?:incorrect|failed|invalid|denied|wrong password|authentication error|login error)`)
+	reShellPrompt    = regexp.MustCompile(`\S[#$]\s*$`)
+)
+
+// TelnetSession is a stateful, bidirectional Telnet parser. It implements both
+// ProtocolParser (bulk fallback for non-server-first paths) and BiParser (ordered
+// chunk replay for the server-first relay path).
+type TelnetSession struct {
+	state     telnetState
+	attempt   int
+	clientBuf []byte
+}
+
+// FeedServer updates the state machine based on server prompts and returns response events.
+func (s *TelnetSession) FeedServer(data []byte) []CaptureEvent {
 	text := stripTelnetControl(data)
 	if text == "" {
 		return nil
 	}
-	// Telnet envia cada Enter como \r ou \r\n; split por linha para separar
-	// username (1ª linha) de password (2ª linha) e comandos subsequentes.
+	switch {
+	case reAuthError.MatchString(text):
+		s.attempt++
+		s.state = telnetAwaitUsername
+		s.clientBuf = s.clientBuf[:0]
+	case reLoginPrompt.MatchString(text):
+		s.state = telnetAwaitUsername
+	case rePasswordPrompt.MatchString(text):
+		s.state = telnetAwaitPassword
+	case reShellPrompt.MatchString(text):
+		s.state = telnetAuthenticated
+	}
+	return []CaptureEvent{{
+		EventType: EventResponse,
+		Direction: "honeypot->client",
+		Response:  text,
+	}}
+}
+
+// FeedClient accumulates client bytes (handling char-by-char NVT mode and backspace),
+// emitting credential/command events per complete line based on current state.
+func (s *TelnetSession) FeedClient(data []byte) []CaptureEvent {
+	stripped := stripTelnetControlBytes(data)
+	var events []CaptureEvent
+	for _, b := range stripped {
+		switch b {
+		case '\r':
+			line := strings.TrimSpace(string(s.clientBuf))
+			s.clientBuf = s.clientBuf[:0]
+			if line == "" {
+				continue
+			}
+			if ev := s.emitLine(line); ev != nil {
+				events = append(events, *ev)
+			}
+		case '\n':
+			if len(s.clientBuf) == 0 {
+				continue
+			}
+			line := strings.TrimSpace(string(s.clientBuf))
+			s.clientBuf = s.clientBuf[:0]
+			if line == "" {
+				continue
+			}
+			if ev := s.emitLine(line); ev != nil {
+				events = append(events, *ev)
+			}
+		case 0x08, 0x7f:
+			if len(s.clientBuf) > 0 {
+				s.clientBuf = s.clientBuf[:len(s.clientBuf)-1]
+			}
+		default:
+			s.clientBuf = append(s.clientBuf, b)
+		}
+	}
+	return events
+}
+
+func (s *TelnetSession) emitLine(line string) *CaptureEvent {
+	ev := &CaptureEvent{Direction: "client->honeypot", TelnetAttempt: s.attempt + 1}
+	switch s.state {
+	case telnetAwaitUsername:
+		ev.EventType = EventCredential
+		ev.Username = line
+		s.state = telnetAwaitPassword
+	case telnetAwaitPassword:
+		ev.EventType = EventCredential
+		ev.Password = line
+		s.state = telnetAwaitCommand
+	case telnetAwaitCommand, telnetAuthenticated:
+		ev.EventType = EventCommand
+		ev.Command = line
+	}
+	return ev
+}
+
+// ParseClientData implements ProtocolParser as a stateless fallback used when
+// the connection does not go through the ordered BiParser path.
+func (s *TelnetSession) ParseClientData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
+	text := stripTelnetControl(data)
+	if text == "" {
+		return nil
+	}
 	lines := strings.FieldsFunc(text, func(r rune) bool { return r == '\r' || r == '\n' })
 	var events []CaptureEvent
 	credIdx := 0
@@ -236,52 +364,67 @@ func (p *TelnetParser) ParseClientData(data []byte, logger func(string, ...inter
 		if line == "" {
 			continue
 		}
+		ev := CaptureEvent{Direction: "client->honeypot", TelnetAttempt: 1}
 		switch credIdx {
 		case 0:
-			events = append(events, CaptureEvent{
-				EventType: EventCredential,
-				Direction: "client->honeypot",
-				Username:  line,
-			})
+			ev.EventType = EventCredential
+			ev.Username = line
 		case 1:
-			events = append(events, CaptureEvent{
-				EventType: EventCredential,
-				Direction: "client->honeypot",
-				Password:  line,
-			})
+			ev.EventType = EventCredential
+			ev.Password = line
 		default:
-			events = append(events, CaptureEvent{
-				EventType: EventCommand,
-				Direction: "client->honeypot",
-				Command:   line,
-			})
+			ev.EventType = EventCommand
+			ev.Command = line
 		}
 		credIdx++
+		events = append(events, ev)
 	}
 	return events
 }
 
-func (p *TelnetParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	// Ecos de caractere chegam sem \r ou \n — ignorar.
-	hasNewline := false
-	for _, b := range data {
-		if b == '\r' || b == '\n' {
-			hasNewline = true
-			break
-		}
-	}
-	if !hasNewline {
-		return nil
-	}
+func (s *TelnetSession) ParseServerData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
 	text := stripTelnetControl(data)
 	if text == "" {
 		return nil
 	}
-	return []CaptureEvent{{
-		EventType: EventResponse,
-		Direction: "honeypot->client",
-		Response:  text,
-	}}
+	return []CaptureEvent{{EventType: EventResponse, Direction: "honeypot->client", Response: text}}
+}
+
+func stripTelnetControlBytes(data []byte) []byte {
+	var result []byte
+	i := 0
+	for i < len(data) {
+		if data[i] == telnetIAC {
+			if i+1 >= len(data) {
+				break
+			}
+			opt := data[i+1]
+			if opt == telnetSB {
+				for i += 2; i < len(data); i++ {
+					if i+1 < len(data) && data[i] == telnetIAC && data[i+1] == telnetSE {
+						i++
+						break
+					}
+				}
+				i++
+				continue
+			}
+			if opt >= telnetWILL && opt <= telnetDONT {
+				i += 3
+				continue
+			}
+			i += 2
+			continue
+		}
+		b := data[i]
+		if b >= 32 && b < 127 {
+			result = append(result, b)
+		} else if b == '\r' || b == '\n' || b == '\t' || b == 0x08 || b == 0x7f {
+			result = append(result, b)
+		}
+		i++
+	}
+	return result
 }
 
 func stripTelnetControl(data []byte) string {
@@ -461,7 +604,9 @@ func NewParser(protocol string, port int) ProtocolParser {
 	case "SMTP", "MAIL", "MAIL_SMTP":
 		return &SMTPParser{}
 	case "TELNET":
-		return &TelnetParser{}
+		return &TelnetSession{}
+	case "VNC":
+		return &VNCSession{}
 	case "POP", "POP3":
 		return &POP3Parser{}
 	case "IMAP", "IMAP4":
@@ -473,7 +618,7 @@ func NewParser(protocol string, port int) ProtocolParser {
 		case 21:
 			return &FTPParser{}
 		case 23:
-			return &TelnetParser{}
+			return &TelnetSession{}
 		case 25, 465, 587:
 			return &SMTPParser{}
 		case 110:
@@ -482,6 +627,8 @@ func NewParser(protocol string, port int) ProtocolParser {
 			return &IMAPParser{}
 		case 3306:
 			return &MySQLParser{}
+		case 5900:
+			return &VNCSession{}
 		default:
 			return &RawParser{}
 		}

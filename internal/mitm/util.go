@@ -1,5 +1,7 @@
 package mitm
 
+import "fmt"
+
 // ndpiAppFromEvent mapeia o tipo de evento para o valor de ndpi_app no ES.
 // Usa "username"/"password" em vez de "credential" genérico para ser filtrável.
 func ndpiAppFromEvent(ev CaptureEvent) string {
@@ -12,6 +14,14 @@ func ndpiAppFromEvent(ev CaptureEvent) string {
 			return "password"
 		}
 		return "credential"
+	case EventVNCVersion:
+		return "vnc_version"
+	case EventVNCSecType:
+		return "vnc_security"
+	case EventVNCAuth:
+		return "vnc_auth"
+	case EventVNCResult:
+		return "vnc_result"
 	default:
 		return string(ev.EventType)
 	}
@@ -31,9 +41,20 @@ func formatAttackType(ev CaptureEvent) string {
 	case EventResponse:
 		return ev.Response
 	case EventBanner:
+		if ev.VNCServerVersion != "" {
+			return ev.VNCServerVersion
+		}
 		return ev.Banner
 	case EventRawData:
 		return ev.RawPayload
+	case EventVNCVersion:
+		return ev.VNCClientVersion
+	case EventVNCSecType:
+		return fmt.Sprintf("type_%d", ev.VNCSecType)
+	case EventVNCAuth:
+		return ev.VNCAuthHash
+	case EventVNCResult:
+		return ev.VNCAuthResult
 	}
 	return ""
 }

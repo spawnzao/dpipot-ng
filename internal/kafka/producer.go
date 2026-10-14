@@ -54,6 +54,16 @@ type Event struct {
 	SSHSubsystem    string `json:"ssh_subsystem,omitempty"`     // subsystem name (sftp, netconf…)
 	SSHExecCmd      string `json:"ssh_exec_cmd,omitempty"`      // direct exec command (non-interactive)
 
+	// Telnet MITM credential tracking
+	TelnetAttempt int `json:"telnet_attempt,omitempty"` // auth attempt number within the same TCP connection
+
+	// VNC RFB passive tap fields
+	VNCServerVersion string `json:"vnc_server_version,omitempty"` // server RFB version string (e.g. "RFB 003.008")
+	VNCClientVersion string `json:"vnc_client_version,omitempty"` // client RFB version echo
+	VNCSecType       int    `json:"vnc_sec_type,omitempty"`       // chosen security type (1=None, 2=VNCAuth, …)
+	VNCAuthHash      string `json:"vnc_auth_hash,omitempty"`      // hashcat-format hash: $vnc$*<challenge>*<response>
+	VNCAuthResult    string `json:"vnc_auth_result,omitempty"`    // "success" or "failed"
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port

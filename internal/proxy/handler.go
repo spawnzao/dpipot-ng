@@ -517,18 +517,19 @@ greetingBuf = greetingBuf[:n]
 		}
 
 		err = mitm.HandleServerFirst(mitm.ServerFirstConfig{
-			ClientConn:     h.conn,
-			HoneypotConn: honeypotConn,
-			FlowID:       h.classifierFlowID,
-			TupleID:      h.tupleID,
-			SrcIP:        h.srcIP,
-			SrcPort:      h.srcPort,
-			DstIP:        h.dstIP,
-			DstPort:      h.dstPort,
-			HoneypotAddr: honeypotAddr,
-			NDPIProto:    ndpiLabel,
-			MaxPayloadSize: h.maxPayloadBytes,
-			Deadline:     deadline,
+			ClientConn:        h.conn,
+			HoneypotConn:      honeypotConn,
+			FlowID:            h.classifierFlowID,
+			TupleID:           h.tupleID,
+			SrcIP:             h.srcIP,
+			SrcPort:           h.srcPort,
+			DstIP:             h.dstIP,
+			DstPort:           h.dstPort,
+			HoneypotAddr:      honeypotAddr,
+			NDPIProto:         ndpiLabel,
+			MaxPayloadSize:    h.maxPayloadBytes,
+			Deadline:          deadline,
+			InitialServerData: greetingBuf,
 			OnEvent: func(event *kafka.Event) {
 				h.publishEvent(event)
 			},
