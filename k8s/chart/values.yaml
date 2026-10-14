@@ -120,6 +120,8 @@ config:
   PAYLOAD_HEX_ENABLED: "true"
   SSH_INPUT_BUF_SIZE: "4096"
   SSH_OUTPUT_BUF_SIZE: "65536"
+  SSH_BANNER_POOL: "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,SSH-2.0-OpenSSH_8.4p1 Debian-2+deb11u2,SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2"
+  SSH_BANNER_MAP: "22=SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,222=SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2,2222=SSH-2.0-OpenSSH_8.4p1 Raspbian-5+deb11u1"
   LOG_LEVEL: "debug"
   MAX_CONNECTIONS: "10000"
   MAX_CONNECTIONS_PER_IP: "1000"
