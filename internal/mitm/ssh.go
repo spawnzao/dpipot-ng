@@ -355,10 +355,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				AttackType:     conn.User(),
 				SSHKeyType:     key.Type(),
 				SSHFingerprint: ssh.FingerprintSHA256(key),
-				SSHPublicKey:   strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))),
-				SSHAuthMethods: tracker.joined(),
-				Honeypot:       config.TargetAddr,
-				Instance:       "proxy",
+				SSHPublicKey:    strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))),
+				SSHAuthMethods:  tracker.joined(),
+				SSHAuthAttempts: tracker.count(),
+				Honeypot:        config.TargetAddr,
+				Instance:        "proxy",
 			})
 		}
 		return nil, errors.New("publickey auth not accepted")
@@ -398,12 +399,13 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				DstIP:          config.DstIP,
 				DstPort:        config.DstPort,
 				NDPIProto:      "SSH",
-				NDPIApp:        "keyboard_interactive",
-				AttackType:     pass,
-				SSHPassHex:     hex.EncodeToString([]byte(pass)),
-				SSHAuthMethods: tracker.joined(),
-				Honeypot:       config.TargetAddr,
-				Instance:       "proxy",
+				NDPIApp:         "keyboard_interactive",
+				AttackType:      pass,
+				SSHPassHex:      hex.EncodeToString([]byte(pass)),
+				SSHAuthMethods:  tracker.joined(),
+				SSHAuthAttempts: tracker.count(),
+				Honeypot:        config.TargetAddr,
+				Instance:        "proxy",
 			})
 		}
 		if tryAuthOnHoneypot(config.TargetAddr, conn.User(), pass, logger) {
@@ -531,7 +533,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 					DstPort:         config.DstPort,
 					NDPIProto:       "SSH",
 					NDPIApp:         "ssh_probe",
+					AttackType:      "scanner probe (disconnected without auth)",
 					SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
+					SSHServerBanner: serverVersion,
 					Honeypot:        config.TargetAddr,
 					Instance:        "proxy",
 				})

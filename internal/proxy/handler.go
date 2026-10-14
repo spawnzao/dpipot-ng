@@ -956,10 +956,11 @@ greetingBuf = greetingBuf[:n]
 					DstIP:      origDstIP.String(),
 					DstPort:    int(origDstPort),
 					NDPIProto:  "SSH",
-					NDPIApp:    "auth_exhausted",
-					AttackType: "client exhausted password attempts",
-					Honeypot:   honeypotAddr,
-					Instance:   "proxy",
+					NDPIApp:         "auth_exhausted",
+					AttackType:      "client exhausted password attempts",
+					SSHAuthAttempts: attempts,
+					Honeypot:        honeypotAddr,
+					Instance:        "proxy",
 				})
 			},
 		}
