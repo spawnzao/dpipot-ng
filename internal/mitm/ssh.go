@@ -2,6 +2,7 @@ package mitm
 
 import (
 	"bytes"
+	"crypto/md5" //nolint:gosec
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -21,14 +22,16 @@ import (
 type SSHMITMConfig struct {
 	Banner           string // raw firstChunk from client (client SSH banner bytes)
 	ServerVersion    string // SSH server version string to present to attacker
-	HostKey          ssh.Signer
+	HostKeys         []ssh.Signer
 	TargetAddr       string
 	MaxPayloadSize   int64
 	SSHInputBufSize  int
 	SSHOutputBufSize int
 	ServerConfig     *ssh.ServerConfig
 	OnEvent          func(event *kafka.Event)
-	OnAuthExhausted  func(attempts int) // called when client exhausts all auth attempts
+	OnAuthExhausted  func(attempts int, hassh, algos string) // called when client exhausts all auth attempts
+	HASSH            string                                   // populated by HandleSSH after KEXINIT exchange
+	HASSHAlgos       string
 	FlowID           string
 	TupleID          string
 	SrcIP            string
@@ -277,39 +280,111 @@ func (s *SSHSession) emitResponse() {
 	s.pendingResp = ""
 }
 
-// BannerConn intercepts the first SSH banner write from the Go ssh library and
-// replaces it with the configured honeypot banner so the attacker sees a realistic
-// server version string.
-type BannerConn struct {
+// kexInitCapture wraps a net.Conn and passively reads the SSH_MSG_KEXINIT (type=20)
+// packet to compute the HASSH fingerprint (MD5 of kex;enc_c2s;mac_c2s;cmp_c2s).
+// All bytes are passed through unchanged — the SSH library sees the full stream.
+type kexInitCapture struct {
 	net.Conn
-	Banner       string
-	wroteBanner  bool
-	wroteBannerM sync.Mutex
+	raw    []byte
+	parsed bool
+	hassh  string
+	algos  string
 }
 
-func (b *BannerConn) Write(p []byte) (int, error) {
-	b.wroteBannerM.Lock()
-	defer b.wroteBannerM.Unlock()
-	if !b.wroteBanner && len(p) > 0 && bytes.HasPrefix(p, []byte("SSH-")) {
-		b.wroteBanner = true
-		return b.Conn.Write([]byte(b.Banner))
+func (k *kexInitCapture) Read(p []byte) (int, error) {
+	n, err := k.Conn.Read(p)
+	if n > 0 && !k.parsed {
+		k.raw = append(k.raw, p[:n]...)
+		k.tryParse()
 	}
-	return b.Conn.Write(p)
+	return n, err
 }
 
-// directTCPConn replaces any outgoing SSH banner with a fixed banner string.
-type directTCPConn struct {
-	net.Conn
-	Banner string
-	Log    func(string, ...interface{})
-}
-
-func (d *directTCPConn) Write(p []byte) (int, error) {
-	if len(p) > 0 && p[0] == 'S' {
-		d.Log("directTCPConn: replacing banner with: %s", d.Banner)
-		return d.Conn.Write([]byte(d.Banner))
+func (k *kexInitCapture) tryParse() {
+	data := k.raw
+	// Phase 1: skip client banner (text, ends with \n)
+	nlIdx := bytes.IndexByte(data, '\n')
+	if nlIdx < 0 {
+		return
 	}
-	return d.Conn.Write(p)
+	data = data[nlIdx+1:]
+	// Phase 2: parse SSH binary packet header (4-byte length + 1-byte padding_len + 1-byte type)
+	if len(data) < 6 {
+		return
+	}
+	pktLen := binary.BigEndian.Uint32(data[0:4])
+	if pktLen < 17 || pktLen > 65535 {
+		k.parsed = true
+		return
+	}
+	if uint32(len(data)) < 4+pktLen {
+		return // wait for more data
+	}
+	paddingLen := int(data[4])
+	if data[5] != 20 { // SSH_MSG_KEXINIT
+		k.parsed = true
+		return
+	}
+	payloadLen := int(pktLen) - 1 - paddingLen
+	if payloadLen < 1+16+4 {
+		k.parsed = true
+		return
+	}
+	payload := data[5 : 5+payloadLen]
+	pos := 1 + 16 // skip type byte (20) + 16-byte cookie
+
+	readNameList := func() (string, bool) {
+		if pos+4 > len(payload) {
+			return "", false
+		}
+		l := int(binary.BigEndian.Uint32(payload[pos : pos+4]))
+		pos += 4
+		if l < 0 || pos+l > len(payload) {
+			return "", false
+		}
+		s := string(payload[pos : pos+l])
+		pos += l
+		return s, true
+	}
+
+	kex, ok := readNameList() // kex_algorithms
+	if !ok {
+		k.parsed = true
+		return
+	}
+	if _, ok = readNameList(); !ok { // server_host_key_algorithms (skip)
+		k.parsed = true
+		return
+	}
+	encC2s, ok := readNameList() // encryption_algorithms_client_to_server
+	if !ok {
+		k.parsed = true
+		return
+	}
+	if _, ok = readNameList(); !ok { // encryption_algorithms_server_to_client (skip)
+		k.parsed = true
+		return
+	}
+	macC2s, ok := readNameList() // mac_algorithms_client_to_server
+	if !ok {
+		k.parsed = true
+		return
+	}
+	if _, ok = readNameList(); !ok { // mac_algorithms_server_to_client (skip)
+		k.parsed = true
+		return
+	}
+	cmpC2s, ok := readNameList() // compression_algorithms_client_to_server
+	if !ok {
+		k.parsed = true
+		return
+	}
+
+	algos := kex + ";" + encC2s + ";" + macC2s + ";" + cmpC2s
+	sum := md5.Sum([]byte(algos)) //nolint:gosec
+	k.hassh = hex.EncodeToString(sum[:])
+	k.algos = algos
+	k.parsed = true
 }
 
 // HandleSSH performs a full SSH MITM:
@@ -338,26 +413,29 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	var capturedUser, capturedPass string
 
 	tracker := &authTracker{}
+	kexCapture := &kexInitCapture{Conn: clientConn}
 
 	serverConfig.PublicKeyCallback = func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 		tracker.add("publickey")
 		if config.OnEvent != nil {
 			config.OnEvent(&kafka.Event{
-				FlowID:         config.FlowID,
-				TupleID:        config.TupleID,
-				Timestamp:      time.Now(),
-				SrcIP:          config.SrcIP,
-				SrcPort:        config.SrcPort,
-				DstIP:          config.DstIP,
-				DstPort:        config.DstPort,
-				NDPIProto:      "SSH",
-				NDPIApp:        "pubkey_attempt",
-				AttackType:     conn.User(),
-				SSHKeyType:     key.Type(),
-				SSHFingerprint: ssh.FingerprintSHA256(key),
+				FlowID:          config.FlowID,
+				TupleID:         config.TupleID,
+				Timestamp:       time.Now(),
+				SrcIP:           config.SrcIP,
+				SrcPort:         config.SrcPort,
+				DstIP:           config.DstIP,
+				DstPort:         config.DstPort,
+				NDPIProto:       "SSH",
+				NDPIApp:         "pubkey_attempt",
+				AttackType:      conn.User(),
+				SSHKeyType:      key.Type(),
+				SSHFingerprint:  ssh.FingerprintSHA256(key),
 				SSHPublicKey:    strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))),
 				SSHAuthMethods:  tracker.joined(),
 				SSHAuthAttempts: tracker.count(),
+				HASSH:           kexCapture.hassh,
+				HASSHAlgos:      kexCapture.algos,
 				Honeypot:        config.TargetAddr,
 				Instance:        "proxy",
 			})
@@ -387,23 +465,27 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				AttackType:     user,
 				SSHUserHex:     hex.EncodeToString([]byte(user)),
 				SSHAuthMethods: tracker.joined(),
+				HASSH:          kexCapture.hassh,
+				HASSHAlgos:     kexCapture.algos,
 				Honeypot:       config.TargetAddr,
 				Instance:       "proxy",
 			})
 			config.OnEvent(&kafka.Event{
-				FlowID:         config.FlowID,
-				TupleID:        config.TupleID,
-				Timestamp:      time.Now(),
-				SrcIP:          config.SrcIP,
-				SrcPort:        config.SrcPort,
-				DstIP:          config.DstIP,
-				DstPort:        config.DstPort,
-				NDPIProto:      "SSH",
+				FlowID:          config.FlowID,
+				TupleID:         config.TupleID,
+				Timestamp:       time.Now(),
+				SrcIP:           config.SrcIP,
+				SrcPort:         config.SrcPort,
+				DstIP:           config.DstIP,
+				DstPort:         config.DstPort,
+				NDPIProto:       "SSH",
 				NDPIApp:         "keyboard_interactive",
 				AttackType:      pass,
 				SSHPassHex:      hex.EncodeToString([]byte(pass)),
 				SSHAuthMethods:  tracker.joined(),
 				SSHAuthAttempts: tracker.count(),
+				HASSH:           kexCapture.hassh,
+				HASSHAlgos:      kexCapture.algos,
 				Honeypot:        config.TargetAddr,
 				Instance:        "proxy",
 			})
@@ -428,6 +510,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIProto:  "SSH",
 				NDPIApp:    "auth_failed",
 				AttackType: "Authentication failed — rejected by honeypot.",
+				HASSH:      kexCapture.hassh,
+				HASSHAlgos: kexCapture.algos,
 				Honeypot:   config.TargetAddr,
 				Instance:   "proxy",
 			})
@@ -457,6 +541,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				SSHUserHex:      hex.EncodeToString([]byte(user)),
 				SSHAuthMethods:  tracker.joined(),
 				SSHAuthAttempts: tracker.count(),
+				HASSH:           kexCapture.hassh,
+				HASSHAlgos:      kexCapture.algos,
 				Honeypot:        config.TargetAddr,
 				Instance:        "proxy",
 			})
@@ -472,6 +558,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIApp:    "password",
 				AttackType: pass,
 				SSHPassHex: hex.EncodeToString(password),
+				HASSH:      kexCapture.hassh,
+				HASSHAlgos: kexCapture.algos,
 				Honeypot:   config.TargetAddr,
 				Instance:   "proxy",
 			})
@@ -500,6 +588,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIProto:  "SSH",
 				NDPIApp:    "auth_failed",
 				AttackType: "Authentication failed — rejected by honeypot.",
+				HASSH:      kexCapture.hassh,
+				HASSHAlgos: kexCapture.algos,
 				Honeypot:   config.TargetAddr,
 				Instance:   "proxy",
 			})
@@ -507,9 +597,11 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		return nil, fmt.Errorf("permission denied")
 	}
 
-	serverConfig.AddHostKey(config.HostKey)
+	for _, hk := range config.HostKeys {
+		serverConfig.AddHostKey(hk)
+	}
 
-	conn, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
+	conn, chans, reqs, err := ssh.NewServerConn(kexCapture, serverConfig)
 	if err != nil {
 		errStr := err.Error()
 		isAuthDenied := strings.Contains(errStr, "permission denied")
@@ -519,7 +611,7 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		switch {
 		case isAuthDenied:
 			if config.OnAuthExhausted != nil {
-				config.OnAuthExhausted(tracker.count())
+				config.OnAuthExhausted(tracker.count(), kexCapture.hassh, kexCapture.algos)
 			}
 		case isProbe:
 			if config.OnEvent != nil {
@@ -536,6 +628,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 					AttackType:      "scanner probe (disconnected without auth)",
 					SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
 					SSHServerBanner: serverVersion,
+					HASSH:           kexCapture.hassh,
+					HASSHAlgos:      kexCapture.algos,
 					Honeypot:        config.TargetAddr,
 					Instance:        "proxy",
 				})
@@ -554,6 +648,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 					NDPIApp:         "wrong_key",
 					AttackType:      "client disconnected before handshake (possible wrong host key)",
 					SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
+					HASSH:           kexCapture.hassh,
+					HASSHAlgos:      kexCapture.algos,
 					Honeypot:        config.TargetAddr,
 					Instance:        "proxy",
 				})
@@ -563,6 +659,9 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		return fmt.Errorf("ssh handshake falhou: %w", err)
 	}
 	defer conn.Close()
+
+	config.HASSH = kexCapture.hassh
+	config.HASSHAlgos = kexCapture.algos
 
 	// Emit client banner event immediately after successful handshake.
 	if config.OnEvent != nil {
@@ -578,6 +677,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			NDPIApp:         "client_banner",
 			SSHClientBanner: string(conn.ClientVersion()),
 			SSHServerBanner: serverVersion,
+			HASSH:           config.HASSH,
+			HASSHAlgos:      config.HASSHAlgos,
 			Honeypot:        config.TargetAddr,
 			Instance:        "proxy",
 		})
@@ -634,6 +735,8 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 				NDPIProto:      "SSH",
 				NDPIApp:        "channel_open",
 				SSHChannelType: chanType,
+				HASSH:          config.HASSH,
+				HASSHAlgos:     config.HASSHAlgos,
 				Honeypot:       config.TargetAddr,
 				Instance:       "proxy",
 			}
@@ -751,6 +854,8 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 					NDPIApp:    "exit",
 					Honeypot:   config.TargetAddr,
 					AttackType: decodeSSHExitPayload(req.Type, req.Payload),
+					HASSH:      config.HASSH,
+					HASSHAlgos: config.HASSHAlgos,
 					Instance:   "proxy",
 				})
 			case "pty-req":
@@ -776,6 +881,8 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 						SSHPtyTerm: ptyReq.Term,
 						SSHPtyCols: ptyReq.Cols,
 						SSHPtyRows: ptyReq.Rows,
+						HASSH:      config.HASSH,
+						HASSHAlgos: config.HASSHAlgos,
 						Honeypot:   config.TargetAddr,
 						Instance:   "proxy",
 					})
@@ -795,6 +902,8 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 						NDPIApp:    "exec",
 						SSHExecCmd: execReq.Cmd,
 						AttackType: execReq.Cmd,
+						HASSH:      config.HASSH,
+						HASSHAlgos: config.HASSHAlgos,
 						Honeypot:   config.TargetAddr,
 						Instance:   "proxy",
 					})
@@ -814,6 +923,8 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 						NDPIApp:      "subsystem",
 						SSHSubsystem: subsysReq.Name,
 						AttackType:   subsysReq.Name,
+						HASSH:        config.HASSH,
+						HASSHAlgos:   config.HASSHAlgos,
 						Honeypot:     config.TargetAddr,
 						Instance:     "proxy",
 					})
@@ -832,23 +943,27 @@ func forwardRequests(dst ssh.Channel, reqs <-chan *ssh.Request, logger func(stri
 						NDPIProto:  "SSH",
 						NDPIApp:    "env",
 						AttackType: envReq.Name + "=" + envReq.Value,
+						HASSH:      config.HASSH,
+						HASSHAlgos: config.HASSHAlgos,
 						Honeypot:   config.TargetAddr,
 						Instance:   "proxy",
 					})
 				}
 			case "shell":
 				onEvent(&kafka.Event{
-					FlowID:    config.FlowID,
-					TupleID:   config.TupleID,
-					Timestamp: time.Now(),
-					SrcIP:     config.SrcIP,
-					SrcPort:   config.SrcPort,
-					DstIP:     config.DstIP,
-					DstPort:   config.DstPort,
-					NDPIProto: "SSH",
-					NDPIApp:   "shell_open",
-					Honeypot:  config.TargetAddr,
-					Instance:  "proxy",
+					FlowID:     config.FlowID,
+					TupleID:    config.TupleID,
+					Timestamp:  time.Now(),
+					SrcIP:      config.SrcIP,
+					SrcPort:    config.SrcPort,
+					DstIP:      config.DstIP,
+					DstPort:    config.DstPort,
+					NDPIProto:  "SSH",
+					NDPIApp:    "shell_open",
+					HASSH:      config.HASSH,
+					HASSHAlgos: config.HASSHAlgos,
+					Honeypot:   config.TargetAddr,
+					Instance:   "proxy",
 				})
 			}
 		}

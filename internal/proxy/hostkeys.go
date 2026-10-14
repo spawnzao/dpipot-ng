@@ -16,6 +16,10 @@ func GetSSHHostKey() (ssh.Signer, error) {
 	return mitm.GetSSHHostKey()
 }
 
+func GetSSHHostKeys() ([]ssh.Signer, error) {
+	return mitm.GetSSHHostKeys()
+}
+
 func GetTLSKey() (*rsa.PrivateKey, *x509.Certificate, error) {
 	return mitm.GetTLSKey()
 }

@@ -913,9 +913,9 @@ greetingBuf = greetingBuf[:n]
 	if isSSH {
 		log.Info("🔐 SSH detectado, usando MITM", zap.String("target", honeypotAddr), zap.ByteString("banner", firstChunk[:min(20, len(firstChunk))]))
 
-		hostKey, err := GetSSHHostKey()
+		hostKeys, err := GetSSHHostKeys()
 		if err != nil {
-			log.Error("falha obtendo host key SSH", zap.Error(err))
+			log.Error("falha obtendo host keys SSH", zap.Error(err))
 			honeypotError = fmt.Sprintf("MITM setup failed: %v", err)
 			goto publish
 		}
@@ -928,7 +928,7 @@ greetingBuf = greetingBuf[:n]
 		}
 		log.Debug("SSH MITM: passando conexão com preload", zap.Int("bytes", len(firstChunk)))
 		mitmConfig := mitm.SSHMITMConfig{
-			HostKey:          hostKey,
+			HostKeys:         hostKeys,
 			Banner:           string(firstChunk),
 			ServerVersion:    h.selectSSHBanner(uint16(origDstPort)),
 			TargetAddr:       honeypotAddr,
@@ -944,21 +944,23 @@ greetingBuf = greetingBuf[:n]
 			OnEvent: func(event *kafka.Event) {
 				h.publishEvent(event)
 			},
-			OnAuthExhausted: func(attempts int) {
+			OnAuthExhausted: func(attempts int, hassh, algos string) {
 				log.Info("MITM SSH: cliente esgotou tentativas de autenticação (comportamento esperado)",
 					zap.Int("attempts", attempts))
 				h.publishEvent(&kafka.Event{
-					FlowID:     h.classifierFlowID,
-					TupleID:    h.tupleID,
-					Timestamp:  time.Now(),
-					SrcIP:      srcAddr.IP.String(),
-					SrcPort:    srcAddr.Port,
-					DstIP:      origDstIP.String(),
-					DstPort:    int(origDstPort),
-					NDPIProto:  "SSH",
+					FlowID:          h.classifierFlowID,
+					TupleID:         h.tupleID,
+					Timestamp:       time.Now(),
+					SrcIP:           srcAddr.IP.String(),
+					SrcPort:         srcAddr.Port,
+					DstIP:           origDstIP.String(),
+					DstPort:         int(origDstPort),
+					NDPIProto:       "SSH",
 					NDPIApp:         "auth_exhausted",
 					AttackType:      "client exhausted password attempts",
 					SSHAuthAttempts: attempts,
+					HASSH:           hassh,
+					HASSHAlgos:      algos,
 					Honeypot:        honeypotAddr,
 					Instance:        "proxy",
 				})

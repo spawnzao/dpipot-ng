@@ -1,6 +1,9 @@
 package mitm
 
 import (
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -16,11 +19,13 @@ import (
 )
 
 var (
-	hostKeyRSA   *rsa.PrivateKey
-	sshSigner    ssh.Signer
-	tlsCert      *x509.Certificate
-	keysOnce     sync.Once
-	keysInitErr  error
+	hostKeyRSA      *rsa.PrivateKey
+	sshSigner       ssh.Signer
+	sshSignerEd25519 ssh.Signer
+	sshSignerECDSA  ssh.Signer
+	tlsCert         *x509.Certificate
+	keysOnce        sync.Once
+	keysInitErr     error
 )
 
 var realisticOrgs = []string{
@@ -67,6 +72,13 @@ func GetSSHHostKey() (ssh.Signer, error) {
 		return sshSigner, nil
 	}
 	return nil, fmt.Errorf("host keys not initialized")
+}
+
+func GetSSHHostKeys() ([]ssh.Signer, error) {
+	if sshSigner == nil || sshSignerEd25519 == nil || sshSignerECDSA == nil {
+		return nil, fmt.Errorf("host keys not initialized")
+	}
+	return []ssh.Signer{sshSigner, sshSignerEd25519, sshSignerECDSA}, nil
 }
 
 func GetTLSKey() (*rsa.PrivateKey, *x509.Certificate, error) {
@@ -123,16 +135,34 @@ func generateHostKeys(log func(string, ...interface{})) error {
 		return fmt.Errorf("criar signer SSH: %w", err)
 	}
 
+	_, edPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("gerar chave Ed25519: %w", err)
+	}
+	sshSignerEd25519, err = ssh.NewSignerFromKey(edPriv)
+	if err != nil {
+		return fmt.Errorf("criar signer Ed25519: %w", err)
+	}
+
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return fmt.Errorf("gerar chave ECDSA: %w", err)
+	}
+	sshSignerECDSA, err = ssh.NewSignerFromKey(ecdsaKey)
+	if err != nil {
+		return fmt.Errorf("criar signer ECDSA: %w", err)
+	}
+
 	serialNum := big.NewInt(time.Now().UnixNano())
 	template := x509.Certificate{
 		SerialNumber: serialNum,
 		Subject: pkix.Name{
-			Organization:  []string{org},
+			Organization:       []string{org},
 			OrganizationalUnit: []string{"IT"},
-			Country:       []string{country},
-			Province:      []string{state},
-			Locality:      []string{city},
-			CommonName:    domain,
+			Country:            []string{country},
+			Province:           []string{state},
+			Locality:           []string{city},
+			CommonName:         domain,
 		},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().AddDate(10, 0, 0),
@@ -152,6 +182,6 @@ func generateHostKeys(log func(string, ...interface{})) error {
 		return fmt.Errorf("parse certificado TLS: %w", err)
 	}
 
-	log("HostKeys: inicializadas com sucesso (RSA 4096 bits)")
+	log("HostKeys: inicializadas com sucesso (RSA 4096 + Ed25519 + ECDSA nistp256)")
 	return nil
 }
