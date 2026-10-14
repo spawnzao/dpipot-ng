@@ -143,3 +143,5 @@ config:
   LOG_LEVEL: "info"
   MAX_CONNECTIONS: "10000"
   SERVER_FIRST_PORTS: "25,110,143,587,993,995"
+  SSH_BANNER_POOL: "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,SSH-2.0-OpenSSH_8.4p1 Debian-2+deb11u2,SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2"
+  SSH_BANNER_MAP: "22=SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,222=SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2,2222=SSH-2.0-OpenSSH_8.4p1 Raspbian-5+deb11u1"

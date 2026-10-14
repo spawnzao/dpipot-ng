@@ -944,9 +944,27 @@ greetingBuf = greetingBuf[:n]
 			OnEvent: func(event *kafka.Event) {
 				h.publishEvent(event)
 			},
+			OnAuthExhausted: func(attempts int) {
+				log.Info("MITM SSH: cliente esgotou tentativas de autenticação (comportamento esperado)",
+					zap.Int("attempts", attempts))
+				h.publishEvent(&kafka.Event{
+					FlowID:     h.classifierFlowID,
+					TupleID:    h.tupleID,
+					Timestamp:  time.Now(),
+					SrcIP:      srcAddr.IP.String(),
+					SrcPort:    srcAddr.Port,
+					DstIP:      origDstIP.String(),
+					DstPort:    int(origDstPort),
+					NDPIProto:  "SSH",
+					NDPIApp:    "auth_exhausted",
+					AttackType: "client exhausted password attempts",
+					Honeypot:   honeypotAddr,
+					Instance:   "proxy",
+				})
+			},
 		}
 
-mitmLogger := func(format string, args ...interface{}) {
+		mitmLogger := func(format string, args ...interface{}) {
 			log.Info("SSH-MITM: "+fmt.Sprintf(format, args...))
 		}
 
@@ -954,26 +972,7 @@ mitmLogger := func(format string, args ...interface{}) {
 		if err != nil {
 			errStr := err.Error()
 			if strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet") {
-				if strings.Contains(errStr, "permission denied, permission denied, permission denied") {
-					log.Info("MITM SSH: cliente esgotou tentativas de senha (comportamento esperado)", zap.Error(err))
-					event := &kafka.Event{
-						FlowID:      h.classifierFlowID,
-				TupleID:     h.tupleID,
-						Timestamp:   time.Now(),
-						SrcIP:       srcAddr.IP.String(),
-						SrcPort:     srcAddr.Port,
-						DstIP:       origDstIP.String(),
-						DstPort:     int(origDstPort),
-						NDPIProto:   "SSH",
-						NDPIApp:    "auth_exhausted",
-						AttackType: "client exhausted password attempts",
-						Honeypot:   honeypotAddr,
-						Instance:      "proxy",
-					}
-					h.publishEvent(event)
-				} else {
-					log.Info("MITM SSH: autenticação recusada pelo honeypot (comportamento esperado)", zap.Error(err))
-				}
+				log.Info("MITM SSH: handshake encerrado por auth (comportamento esperado)", zap.Error(err))
 			} else {
 				log.Info("MITM SSH: cliente fechou conexão antes do handshake", zap.Error(err))
 			}

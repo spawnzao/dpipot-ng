@@ -28,6 +28,7 @@ type SSHMITMConfig struct {
 	SSHOutputBufSize int
 	ServerConfig     *ssh.ServerConfig
 	OnEvent          func(event *kafka.Event)
+	OnAuthExhausted  func(attempts int) // called when client exhausts all auth attempts
 	FlowID           string
 	TupleID          string
 	SrcIP            string
@@ -371,6 +372,23 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 		}
 		pass := answers[0]
 		if config.OnEvent != nil {
+			user := conn.User()
+			config.OnEvent(&kafka.Event{
+				FlowID:         config.FlowID,
+				TupleID:        config.TupleID,
+				Timestamp:      time.Now(),
+				SrcIP:          config.SrcIP,
+				SrcPort:        config.SrcPort,
+				DstIP:          config.DstIP,
+				DstPort:        config.DstPort,
+				NDPIProto:      "SSH",
+				NDPIApp:        "username",
+				AttackType:     user,
+				SSHUserHex:     hex.EncodeToString([]byte(user)),
+				SSHAuthMethods: tracker.joined(),
+				Honeypot:       config.TargetAddr,
+				Instance:       "proxy",
+			})
 			config.OnEvent(&kafka.Event{
 				FlowID:         config.FlowID,
 				TupleID:        config.TupleID,
@@ -395,6 +413,22 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 			authSuccess = true
 			authMu.Unlock()
 			return &ssh.Permissions{}, nil
+		}
+		if config.OnEvent != nil {
+			config.OnEvent(&kafka.Event{
+				FlowID:     config.FlowID,
+				TupleID:    config.TupleID,
+				Timestamp:  time.Now(),
+				SrcIP:      config.SrcIP,
+				SrcPort:    config.SrcPort,
+				DstIP:      config.DstIP,
+				DstPort:    config.DstPort,
+				NDPIProto:  "SSH",
+				NDPIApp:    "auth_failed",
+				AttackType: "Authentication failed — rejected by honeypot.",
+				Honeypot:   config.TargetAddr,
+				Instance:   "proxy",
+			})
 		}
 		return nil, errors.New("keyboard-interactive auth not accepted")
 	}
@@ -476,23 +510,50 @@ func HandleSSH(clientConn net.Conn, config SSHMITMConfig, logger func(string, ..
 	conn, chans, reqs, err := ssh.NewServerConn(clientConn, serverConfig)
 	if err != nil {
 		errStr := err.Error()
-		isAuthFailure := strings.Contains(errStr, "permission denied") || strings.Contains(errStr, "no auth passed yet")
-		if !isAuthFailure && config.OnEvent != nil {
-			config.OnEvent(&kafka.Event{
-				FlowID:          config.FlowID,
-				TupleID:         config.TupleID,
-				Timestamp:       time.Now(),
-				SrcIP:           config.SrcIP,
-				SrcPort:         config.SrcPort,
-				DstIP:           config.DstIP,
-				DstPort:         config.DstPort,
-				NDPIProto:       "SSH",
-				NDPIApp:         "wrong_key",
-				AttackType:      "client disconnected before handshake (possible wrong host key)",
-				SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
-				Honeypot:        config.TargetAddr,
-				Instance:        "proxy",
-			})
+		isAuthDenied := strings.Contains(errStr, "permission denied")
+		isProbe := strings.Contains(errStr, "no auth passed yet") ||
+			strings.Contains(errStr, "unexpected EOF") ||
+			strings.Contains(errStr, "connection reset by peer")
+		switch {
+		case isAuthDenied:
+			if config.OnAuthExhausted != nil {
+				config.OnAuthExhausted(tracker.count())
+			}
+		case isProbe:
+			if config.OnEvent != nil {
+				config.OnEvent(&kafka.Event{
+					FlowID:          config.FlowID,
+					TupleID:         config.TupleID,
+					Timestamp:       time.Now(),
+					SrcIP:           config.SrcIP,
+					SrcPort:         config.SrcPort,
+					DstIP:           config.DstIP,
+					DstPort:         config.DstPort,
+					NDPIProto:       "SSH",
+					NDPIApp:         "ssh_probe",
+					SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
+					Honeypot:        config.TargetAddr,
+					Instance:        "proxy",
+				})
+			}
+		default:
+			if config.OnEvent != nil {
+				config.OnEvent(&kafka.Event{
+					FlowID:          config.FlowID,
+					TupleID:         config.TupleID,
+					Timestamp:       time.Now(),
+					SrcIP:           config.SrcIP,
+					SrcPort:         config.SrcPort,
+					DstIP:           config.DstIP,
+					DstPort:         config.DstPort,
+					NDPIProto:       "SSH",
+					NDPIApp:         "wrong_key",
+					AttackType:      "client disconnected before handshake (possible wrong host key)",
+					SSHClientBanner: strings.TrimRight(config.Banner, "\r\n"),
+					Honeypot:        config.TargetAddr,
+					Instance:        "proxy",
+				})
+			}
 		}
 		clientConn.Close() //nolint:errcheck
 		return fmt.Errorf("ssh handshake falhou: %w", err)
