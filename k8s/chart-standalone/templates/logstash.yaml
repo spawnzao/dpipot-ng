@@ -16,7 +16,7 @@ data:
     input {
       kafka {
         bootstrap_servers => "kafka-svc.dpipot.svc.cluster.local:9092"
-        topics_pattern => "dpipot\\.events\\..*"
+        topics_pattern => "dpipot\\.events.*"
         codec => json
         group_id => "logstash-dpipot"
         auto_offset_reset => "earliest"
@@ -26,9 +26,9 @@ data:
       mutate {
         add_field => { "[@metadata][index_prefix]" => "dpipot-unknown" }
       }
-      if [type] == "proxy" {
+      if [instance] == "proxy" {
         mutate { update => { "[@metadata][index_prefix]" => "dpipot-proxy" } }
-      } else if [type] == "classifier" {
+      } else if [instance] == "classifier" {
         mutate { update => { "[@metadata][index_prefix]" => "dpipot-classifier" } }
       }
       date {
@@ -39,9 +39,11 @@ data:
     }
     output {
       elasticsearch {
-        hosts => ["${ES_HOST}"]
-        api_key => "${ES_API_KEY}"
-        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        hosts => ["${ELASTICSEARCH_HOST}"]
+        user => "${ELASTICSEARCH_USER}"
+        password => "${ELASTIC_PASSWORD}"
+        ssl => true
+        cacert => "/usr/share/logstash/certs/ca.crt"
         index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
       }
     }
@@ -69,9 +71,11 @@ data:
     }
     output {
       elasticsearch {
-        hosts => ["${ES_HOST}"]
-        api_key => "${ES_API_KEY}"
-        ssl_certificate_authorities => ["/usr/share/logstash/certs/ca.crt"]
+        hosts => ["${ELASTICSEARCH_HOST}"]
+        user => "${ELASTICSEARCH_USER}"
+        password => "${ELASTIC_PASSWORD}"
+        ssl => true
+        cacert => "/usr/share/logstash/certs/ca.crt"
         index => "%{[@metadata][index_prefix]}-%{+YYYY.MM.dd}"
       }
     }
@@ -112,16 +116,21 @@ spec:
         - name: logstash
           image: docker.elastic.co/logstash/logstash:8.12.0
           env:
-            - name: ES_HOST
+            - name: ELASTICSEARCH_HOST
               valueFrom:
                 secretKeyRef:
                   name: logstash-elasticsearch-secrets
-                  key: ES_HOST
-            - name: ES_API_KEY
+                  key: ELASTICSEARCH_HOST
+            - name: ELASTICSEARCH_USER
               valueFrom:
                 secretKeyRef:
                   name: logstash-elasticsearch-secrets
-                  key: ES_API_KEY
+                  key: ELASTICSEARCH_USER
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: logstash-elasticsearch-secrets
+                  key: ELASTIC_PASSWORD
             - name: LS_JAVA_OPTS
               value: "-Xms512m -Xmx512m"
           ports:
