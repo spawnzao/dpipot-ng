@@ -217,11 +217,13 @@ func parseNTLMNegotiate(data []byte, offset int) ntlmNegotiateInfo {
 	var info ntlmNegotiateInfo
 
 	// NegotiateDomainSupplied (0x00001000) and NegotiateWorkstationSupplied (0x00002000).
-	if flags&0x00001000 != 0 {
-		info.Domain = ntlmUTF16LEString(d, domOff, domLen)
+	// Per MS-NLMP §2.2.1.1, Type 1 Domain and Workstation are OEM (single-byte ASCII),
+	// not UTF-16LE. UTF-16LE is only used in Type 3 (AUTHENTICATE_MESSAGE).
+	if flags&0x00001000 != 0 && domOff >= 0 && domOff+domLen <= len(d) {
+		info.Domain = string(d[domOff : domOff+domLen])
 	}
-	if flags&0x00002000 != 0 {
-		info.Workstation = ntlmUTF16LEString(d, wksOff, wksLen)
+	if flags&0x00002000 != 0 && wksOff >= 0 && wksOff+wksLen <= len(d) {
+		info.Workstation = string(d[wksOff : wksOff+wksLen])
 	}
 
 	// NegotiateVersion (0x02000000): 8-byte Version block at offset 32.
@@ -378,6 +380,9 @@ func wrapInTSRequest(ntlmToken []byte) ([]byte, error) {
 	//   negoTokens [1] SEQUENCE OF NegoData OPTIONAL,
 	// }
 	// NegoData ::= SEQUENCE { negoToken [0] OCTET STRING }
+	// NegoData ::= SEQUENCE OF SEQUENCE { negoToken [0] OCTET STRING }
+	// Inner SEQUENCE: asn1.Marshal of a struct with []byte tag:0,explicit
+	// correctly produces: SEQUENCE { [0] { OCTET STRING { spnegoToken } } }
 	negoData, err := asn1.Marshal(struct {
 		Token []byte `asn1:"tag:0,explicit"`
 	}{Token: spnegoToken})
@@ -385,29 +390,27 @@ func wrapInTSRequest(ntlmToken []byte) ([]byte, error) {
 		return nil, fmt.Errorf("negodata marshal: %w", err)
 	}
 
+	// negoSeq = SEQUENCE { <negoData> }  →  the SEQUENCE OF NegoData wrapper
 	negoSeq := marshalSequence(negoData)
 
-	tsReq, err := asn1.Marshal(struct {
-		Version    int    `asn1:"tag:0,explicit"`
-		NegoTokens []byte `asn1:"tag:1,explicit"`
-	}{
-		Version:    6,
-		NegoTokens: negoSeq,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("tsrequest marshal: %w", err)
-	}
-	return tsReq, nil
+	// TSRequest ::= SEQUENCE { version [0] INTEGER, negoTokens [1] NegoData OPTIONAL }
+	// Build manually to avoid asn1.Marshal wrapping []byte in an extra OCTET STRING.
+	// [1] must contain negoSeq directly, not [1] { OCTET STRING { negoSeq } }.
+	version := []byte{0xa0, 0x03, 0x02, 0x01, 0x06} // [0] EXPLICIT INTEGER 6
+	negoTokens := marshalExplicitContext(1, negoSeq)
+	return marshalSequence(append(version, negoTokens...)), nil
 }
 
 // wrapLogonDenied builds a TSRequest carrying SEC_E_LOGON_DENIED (0x8009030C).
 func wrapLogonDenied() ([]byte, error) {
 	// TSRequest { version [0] 6, errorCode [4] 0x8009030C }
+	// encoding/asn1 does not support uint32; use int64 so the value is encoded
+	// as a positive INTEGER (2148074252), which clients interpret as the HRESULT.
 	type tsErr struct {
-		Version   int    `asn1:"tag:0,explicit"`
-		ErrorCode uint32 `asn1:"tag:4,explicit"`
+		Version   int   `asn1:"tag:0,explicit"`
+		ErrorCode int64 `asn1:"tag:4,explicit"`
 	}
-	return asn1.Marshal(tsErr{Version: 6, ErrorCode: 0x8009030C})
+	return asn1.Marshal(tsErr{Version: 6, ErrorCode: int64(0x8009030C)})
 }
 
 // marshalExplicitContext wraps raw DER bytes in an explicit context tag.
