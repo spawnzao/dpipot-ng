@@ -73,6 +73,23 @@ type Event struct {
 	NTLMOSVersion         string `json:"ntlm_os_version,omitempty"`         // Windows build from NTLM Version block (e.g. "10.0.19041")
 	NTLMAuthHash          string `json:"ntlm_auth_hash,omitempty"`          // hashcat mode 5600: user::domain:challenge:proof:blob
 
+	// Redis intelligence fields
+	RedisUsername string `json:"redis_username,omitempty"`
+	RedisPassword string `json:"redis_password,omitempty"`
+	RedisCommand  string `json:"redis_command,omitempty"`
+
+	// MSSQL TDS intelligence fields
+	MSSQLUsername   string `json:"mssql_username,omitempty"`
+	MSSQLPassword   string `json:"mssql_password,omitempty"`
+	MSSQLClientHost string `json:"mssql_client_host,omitempty"`
+	MSSQLAppName    string `json:"mssql_app_name,omitempty"`
+
+	// MQTT intelligence fields
+	MQTTClientID  string `json:"mqtt_client_id,omitempty"`
+	MQTTWillTopic string `json:"mqtt_will_topic,omitempty"`
+	MQTTUsername  string `json:"mqtt_username,omitempty"`
+	MQTTPassword  string `json:"mqtt_password,omitempty"`
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port

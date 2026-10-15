@@ -808,6 +808,73 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
+	// In-proxy handlers: intercept before route resolution so no HONEYPOT_ROUTES entry is required.
+	switch ndpiLabel {
+	case "REDIS":
+		if err := mitm.HandleRedis(mitm.RedisConfig{
+			ClientConn: h.conn,
+			FirstChunk: firstChunk,
+			FlowID:     h.classifierFlowID,
+			TupleID:    h.tupleID,
+			SrcIP:      h.srcIP,
+			SrcPort:    h.srcPort,
+			DstIP:      origDstIP.String(),
+			DstPort:    int(origDstPort),
+			Deadline:   deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: func(format string, args ...interface{}) {
+				log.Info(fmt.Sprintf("Redis: "+format, args...))
+			},
+		}); err != nil {
+			log.Warn("Redis handler error", zap.Error(err))
+		}
+		goto publish
+	case "MSSQL_TDS":
+		if err := mitm.HandleMSSQL(mitm.MSSQLConfig{
+			ClientConn: h.conn,
+			FirstChunk: firstChunk,
+			FlowID:     h.classifierFlowID,
+			TupleID:    h.tupleID,
+			SrcIP:      h.srcIP,
+			SrcPort:    h.srcPort,
+			DstIP:      origDstIP.String(),
+			DstPort:    int(origDstPort),
+			Deadline:   deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: func(format string, args ...interface{}) {
+				log.Info(fmt.Sprintf("MSSQL: "+format, args...))
+			},
+		}); err != nil {
+			log.Warn("MSSQL handler error", zap.Error(err))
+		}
+		goto publish
+	case "MQTT":
+		if err := mitm.HandleMQTT(mitm.MQTTConfig{
+			ClientConn: h.conn,
+			FirstChunk: firstChunk,
+			FlowID:     h.classifierFlowID,
+			TupleID:    h.tupleID,
+			SrcIP:      h.srcIP,
+			SrcPort:    h.srcPort,
+			DstIP:      origDstIP.String(),
+			DstPort:    int(origDstPort),
+			Deadline:   deadline,
+			OnEvent: func(event *kafka.Event) {
+				h.publishEvent(event)
+			},
+			Logger: func(format string, args ...interface{}) {
+				log.Info(fmt.Sprintf("MQTT: "+format, args...))
+			},
+		}); err != nil {
+			log.Warn("MQTT handler error", zap.Error(err))
+		}
+		goto publish
+	}
+
 	// --- STEP 4: resolve honeypot pelo label nDPI ---
 	honeypotAddr, _ = h.router.Resolve(ndpiLabel)
 
