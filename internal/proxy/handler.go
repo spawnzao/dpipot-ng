@@ -52,6 +52,7 @@ type Handler struct {
 	sshOutputBufSize int
 	sshBannerPool    []string
 	sshBannerMap     map[uint16]string
+	rdpIdentityPool  []mitm.RDPIdentity
 	flowTable        *flow.Table
 
 	// serverFirstPorts contém as portas que usam server-first (servidor envia greeting primeiro)
@@ -104,6 +105,7 @@ func NewHandler(
 	httpAuthPortsTLS map[uint16]bool,
 	httpClassifier *httpclassifier.Classifier,
 	proxyTimeout time.Duration,
+	rdpIdentityPool []mitm.RDPIdentity,
 ) *Handler {
 	return &Handler{
 		conn:                conn,
@@ -121,6 +123,7 @@ func NewHandler(
 		httpAuthPortsTLS:    httpAuthPortsTLS,
 		httpClassifier:      httpClassifier,
 		proxyTimeout:        proxyTimeout,
+		rdpIdentityPool:     rdpIdentityPool,
 	}
 }
 
@@ -877,6 +880,7 @@ greetingBuf = greetingBuf[:n]
 			HoneypotAddr: honeypotAddr,
 			FirstChunk:   firstChunk,
 			TLSCert:      h.certMgr.Cert(),
+			IdentityPool: h.rdpIdentityPool,
 			FlowID:       h.classifierFlowID,
 			SrcIP:        h.srcIP,
 			SrcPort:      h.srcPort,

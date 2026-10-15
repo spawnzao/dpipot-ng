@@ -64,6 +64,15 @@ type Event struct {
 	VNCAuthHash      string `json:"vnc_auth_hash,omitempty"`      // hashcat-format hash: $vnc$*<challenge>*<response>
 	VNCAuthResult    string `json:"vnc_auth_result,omitempty"`    // "success" or "failed"
 
+	// RDP / NTLM intelligence fields
+	RDPCookie             string `json:"rdp_cookie,omitempty"`              // cookie from X.224 CR (e.g. "mstshash=Administrator")
+	RDPRequestedProtocols string `json:"rdp_requested_protocols,omitempty"` // human-readable bitmask: "HYBRID", "SSL", "CLASSIC"
+	RDPCorrelationID      string `json:"rdp_correlation_id,omitempty"`      // client session UUID (RDP_CORRELATION_INFO)
+	NTLMDomain            string `json:"ntlm_domain,omitempty"`             // NetBIOS domain from NTLM Type 1 or Type 3
+	NTLMWorkstation       string `json:"ntlm_workstation,omitempty"`        // attacker machine name from NTLM Type 1 or Type 3
+	NTLMOSVersion         string `json:"ntlm_os_version,omitempty"`         // Windows build from NTLM Version block (e.g. "10.0.19041")
+	NTLMAuthHash          string `json:"ntlm_auth_hash,omitempty"`          // hashcat mode 5600: user::domain:challenge:proof:blob
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port

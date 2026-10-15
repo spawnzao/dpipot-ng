@@ -19,6 +19,10 @@ type Config struct {
 	SSHOutputBufSize    int
 	SSHBannerPool       []string          // banners for random selection (SSH_BANNER_POOL)
 	SSHBannerMap        map[uint16]string // port → specific banner, takes precedence (SSH_BANNER_MAP)
+	RDPHostnamePool     []string          // NetBIOS hostnames for NTLM Type 2 identity pool (RDP_HOSTNAME_POOL)
+	RDPDomain           string            // NetBIOS domain name (RDP_DOMAIN, default "WORKGROUP")
+	RDPDNSDomain        string            // DNS domain suffix (RDP_DNS_DOMAIN, "" = workgroup mode)
+	RDPDNSTree          string            // DNS tree name (RDP_DNS_TREE, defaults to RDPDNSDomain)
 	MaxConnections      int
 	MaxPerIPConns       int
 	ServerFirstPorts    map[uint16]string
@@ -55,6 +59,10 @@ func Load() (*Config, error) {
 		SSHOutputBufSize:    getInt("SSH_OUTPUT_BUF_SIZE", 65536),
 		SSHBannerPool:       parseSSHBannerPool(getEnv("SSH_BANNER_POOL", "")),
 		SSHBannerMap:        parseSSHBannerMap(getEnv("SSH_BANNER_MAP", "")),
+		RDPHostnamePool:     parseSSHBannerPool(getEnv("RDP_HOSTNAME_POOL", "")), // reuses same comma-split logic
+		RDPDomain:           getEnv("RDP_DOMAIN", "WORKGROUP"),
+		RDPDNSDomain:        getEnv("RDP_DNS_DOMAIN", ""),
+		RDPDNSTree:          getEnv("RDP_DNS_TREE", ""),
 		MaxConnections:      getInt("MAX_CONNECTIONS", 10000),
 		MaxPerIPConns:       getInt("MAX_CONNECTIONS_PER_IP", 50),
 		PayloadB64Enabled:   parseBoolEnv("PAYLOAD_B64_ENABLED", true),

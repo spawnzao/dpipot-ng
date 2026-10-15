@@ -146,6 +146,13 @@ func main() {
 		}
 	}
 
+	rdpPool := mitm.BuildRDPIdentityPool(cfg.RDPHostnamePool, cfg.RDPDomain, cfg.RDPDNSDomain, cfg.RDPDNSTree)
+	logger.Info("RDP identity pool built",
+		zap.Int("size", len(rdpPool)),
+		zap.String("domain", cfg.RDPDomain),
+		zap.String("dns_domain", cfg.RDPDNSDomain),
+	)
+
 	// Proxy server
 	server := proxy.NewServer(
 		cfg.ListenAddr,
@@ -167,6 +174,7 @@ func main() {
 		cfg.HttpAuthPortsTLS,
 		httpClass,
 		cfg.ProxyTimeout,
+		rdpPool,
 	)
 
 	// Wire classifier telemetry — combina AF_PACKET e nDPI num único provider

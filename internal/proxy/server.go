@@ -40,6 +40,7 @@ type Server struct {
 	sshOutputBufSize    int
 	sshBannerPool       []string
 	sshBannerMap        map[uint16]string
+	rdpIdentityPool     []mitm.RDPIdentity
 	log                 *zap.Logger
 	flowTable           *flow.Table
 	certMgr             *mitm.CertManager
@@ -95,6 +96,7 @@ func NewServer(
 	httpAuthPortsTLS map[uint16]bool,
 	httpClassifier *httpclassifier.Classifier,
 	proxyTimeout time.Duration,
+	rdpIdentityPool []mitm.RDPIdentity,
 ) *Server {
 	if maxConnections <= 0 {
 		maxConnections = 10000
@@ -111,6 +113,7 @@ func NewServer(
 		sshOutputBufSize:    sshOutputBufSize,
 		sshBannerPool:       sshBannerPool,
 		sshBannerMap:        sshBannerMap,
+		rdpIdentityPool:     rdpIdentityPool,
 		log:                 log,
 		flowTable:           flowTable,
 		certMgr:             certMgr,
@@ -372,6 +375,7 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 		s.httpAuthPortsTLS,
 		s.httpClassifier,
 		s.proxyTimeout,
+		s.rdpIdentityPool,
 	)
 	h.slotsUsed = slotsUsed
 	h.slotsMax = slotsMax
