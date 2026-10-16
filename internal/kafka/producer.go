@@ -90,6 +90,14 @@ type Event struct {
 	MQTTUsername  string `json:"mqtt_username,omitempty"`
 	MQTTPassword  string `json:"mqtt_password,omitempty"`
 
+	// MySQL BiParser fields
+	MySQLUsername string `json:"mysql_username,omitempty"`
+	MySQLAuthHash string `json:"mysql_auth_hash,omitempty"` // hashcat mode 11200: $mysqlna$<salt>*<resp>
+
+	// SMTP relay probe fields
+	SMTPSender    string `json:"smtp_sender,omitempty"`
+	SMTPRecipient string `json:"smtp_recipient,omitempty"`
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port

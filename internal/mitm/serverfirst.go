@@ -222,5 +222,9 @@ func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, _, _ []byte) {
 		VNCSecType:       ev.VNCSecType,
 		VNCAuthHash:      ev.VNCAuthHash,
 		VNCAuthResult:    ev.VNCAuthResult,
+		MySQLUsername:    ev.MySQLUsername,
+		MySQLAuthHash:    ev.MySQLAuthHash,
+		SMTPSender:       ev.SMTPSender,
+		SMTPRecipient:    ev.SMTPRecipient,
 	})
 }

@@ -1,6 +1,9 @@
 package mitm
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ndpiAppFromEvent mapeia o tipo de evento para o valor de ndpi_app no ES.
 // Usa "username"/"password" em vez de "credential" genérico para ser filtrável.
@@ -27,6 +30,10 @@ func ndpiAppFromEvent(ev CaptureEvent) string {
 		return "vnc_auth"
 	case EventVNCResult:
 		return "vnc_result"
+	case EventMySQLLogin:
+		return "mysql_login"
+	case EventSMTPRelayProbe:
+		return "smtp_relay_probe"
 	default:
 		return string(ev.EventType)
 	}
@@ -60,6 +67,13 @@ func formatAttackType(ev CaptureEvent) string {
 		return ev.VNCAuthHash
 	case EventVNCResult:
 		return ev.VNCAuthResult
+	case EventMySQLLogin:
+		if ev.MySQLUsername != "" {
+			return ev.MySQLUsername
+		}
+		return ev.MySQLAuthHash
+	case EventSMTPRelayProbe:
+		return ev.SMTPRecipient
 	}
 	return ""
 }
@@ -90,6 +104,17 @@ func extractMySQLUsername(data []byte, logger func(string, ...interface{})) stri
 	return ""
 }
 
-func extractMySQLPassword(_ []byte, _ func(string, ...interface{})) string {
-	return ""
+// extractSMTPAddress parses the address from the argument part of a MAIL FROM or RCPT TO command.
+// Input is the text after "MAIL FROM:" or "RCPT TO:", e.g. " <user@example.com> SIZE=1000".
+func extractSMTPAddress(s string) string {
+	s = strings.TrimSpace(s)
+	if start := strings.Index(s, "<"); start >= 0 {
+		if end := strings.Index(s[start:], ">"); end >= 0 {
+			return s[start+1 : start+end]
+		}
+	}
+	if idx := strings.Index(s, " "); idx >= 0 {
+		s = s[:idx]
+	}
+	return s
 }

@@ -12,15 +12,17 @@ import (
 type CaptureEventType string
 
 const (
-	EventBanner     CaptureEventType = "banner"
-	EventCredential CaptureEventType = "credential"
-	EventCommand    CaptureEventType = "command"
-	EventResponse   CaptureEventType = "response"
-	EventRawData    CaptureEventType = "raw_data"
-	EventVNCVersion CaptureEventType = "vnc_version"
-	EventVNCSecType CaptureEventType = "vnc_security"
-	EventVNCAuth    CaptureEventType = "vnc_auth"
-	EventVNCResult  CaptureEventType = "vnc_result"
+	EventBanner        CaptureEventType = "banner"
+	EventCredential    CaptureEventType = "credential"
+	EventCommand       CaptureEventType = "command"
+	EventResponse      CaptureEventType = "response"
+	EventRawData       CaptureEventType = "raw_data"
+	EventVNCVersion    CaptureEventType = "vnc_version"
+	EventVNCSecType    CaptureEventType = "vnc_security"
+	EventVNCAuth       CaptureEventType = "vnc_auth"
+	EventVNCResult     CaptureEventType = "vnc_result"
+	EventMySQLLogin    CaptureEventType = "mysql_login"
+	EventSMTPRelayProbe CaptureEventType = "smtp_relay_probe"
 )
 
 type CaptureEvent struct {
@@ -50,6 +52,14 @@ type CaptureEvent struct {
 	VNCSecType       int    `json:"vnc_sec_type,omitempty"`
 	VNCAuthHash      string `json:"vnc_auth_hash,omitempty"`
 	VNCAuthResult    string `json:"vnc_auth_result,omitempty"`
+
+	// MySQL BiParser
+	MySQLUsername string `json:"mysql_username,omitempty"`
+	MySQLAuthHash string `json:"mysql_auth_hash,omitempty"` // hashcat mode 11200: $mysqlna$<salt>*<resp>
+
+	// SMTP relay probe
+	SMTPSender    string `json:"smtp_sender,omitempty"`
+	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 }
 
 type ProtocolParser interface {
@@ -83,56 +93,171 @@ func (p *RawParser) ParseServerData(data []byte, logger func(string, ...interfac
 	}}
 }
 
-type MySQLParser struct{}
-
-func (p *MySQLParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	var events []CaptureEvent
-
-	user := extractMySQLUsername(data, logger)
-	if user != "" {
-		events = append(events, CaptureEvent{
-			EventType: EventCredential,
-			Direction: "client->honeypot",
-			Username:  user,
-		})
-	}
-
-	pass := extractMySQLPassword(data, logger)
-	if pass != "" {
-		events = append(events, CaptureEvent{
-			EventType: EventCredential,
-			Direction: "client->honeypot",
-			Password:  pass,
-		})
-	}
-
-	if len(events) == 0 && len(data) > 5 {
-		events = append(events, CaptureEvent{
-			EventType:  EventRawData,
-			Direction: "client->honeypot",
-			RawPayload: hex.EncodeToString(data),
-		})
-	}
-
-	return events
+// MySQLSession is a stateful BiParser for MySQL server-first relay.
+// FeedServer captures the 20-byte auth challenge from the Initial Handshake (seq=0);
+// FeedClient parses HandshakeResponse41 (seq=1) and emits a mysql_login event
+// with a hashcat mode-11200-compatible hash when mysql_native_password is used.
+type MySQLSession struct {
+	salt       []byte // 20-byte auth-plugin-data from server
+	authPlugin string // e.g. "mysql_native_password"
 }
 
-func (p *MySQLParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	if len(data) > 5 {
-		version := extractMySQLVersion(data)
-		if version != "" {
-			return []CaptureEvent{{
-				EventType: EventBanner,
-				Direction: "honeypot->client",
-				Banner:    fmt.Sprintf("MySQL %s", version),
-			}}
+func (s *MySQLSession) FeedServer(data []byte) []CaptureEvent {
+	// Only parse the Initial Handshake (seq=0, protocol version=0x0a).
+	if len(data) < 5 || data[3] != 0 || data[4] != 0x0a {
+		return nil
+	}
+	payload := data[4:]
+	i := 1 // skip protocol version byte
+	for i < len(payload) && payload[i] != 0x00 {
+		i++ // skip server version string
+	}
+	i++    // skip null terminator
+	i += 4 // skip connection ID
+	if i+8 > len(payload) {
+		return nil
+	}
+	part1 := payload[i : i+8]
+	i += 9 // skip auth-plugin-data-part-1 (8) + filler (1)
+	if i+7 > len(payload) {
+		return nil
+	}
+	// capability lower (2) + charset (1) + status (2) + capability upper (2) = 7 bytes
+	i += 7
+	if i >= len(payload) {
+		return nil
+	}
+	authDataLen := int(payload[i])
+	i += 11 // skip auth-plugin-data-len (1) + reserved (10)
+	// auth-plugin-data-part-2: max(13, authDataLen-8) bytes (incl. null terminator)
+	part2Len := authDataLen - 8
+	if part2Len < 13 {
+		part2Len = 13
+	}
+	if i+part2Len > len(payload) {
+		part2Len = len(payload) - i
+	}
+	salt := append([]byte(nil), part1...)
+	if part2Len > 0 {
+		take := part2Len - 1 // drop null terminator byte
+		if take > 12 {
+			take = 12
+		}
+		salt = append(salt, payload[i:i+take]...)
+	}
+	if len(salt) == 20 {
+		s.salt = salt
+	}
+	i += part2Len
+	// auth-plugin-name (null-terminated)
+	if i < len(payload) {
+		end := i
+		for end < len(payload) && payload[end] != 0x00 {
+			end++
+		}
+		s.authPlugin = string(payload[i:end])
+	}
+	version := extractMySQLVersion(data)
+	banner := "MySQL"
+	if version != "" {
+		banner = "MySQL " + version
+	}
+	return []CaptureEvent{{EventType: EventBanner, Direction: "honeypot->client", Banner: banner}}
+}
+
+func (s *MySQLSession) FeedClient(data []byte) []CaptureEvent {
+	// Only parse HandshakeResponse41 (seq=1).
+	if len(data) < 5 || data[3] != 1 {
+		return nil
+	}
+	payload := data[4:]
+	// caps(4) + max_packet(4) + charset(1) + reserved(23) = 32 bytes before username
+	if len(payload) < 33 {
+		return nil
+	}
+	caps := uint32(payload[0]) | uint32(payload[1])<<8 | uint32(payload[2])<<16 | uint32(payload[3])<<24
+	i := 32
+	userStart := i
+	for i < len(payload) && payload[i] != 0x00 {
+		i++
+	}
+	username := string(payload[userStart:i])
+	if i >= len(payload) {
+		return nil
+	}
+	i++ // skip null
+	// auth response length: lenenc if CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA, else 1 byte
+	const clientPluginAuthLenenc = uint32(1 << 21)
+	var authLen int
+	if caps&clientPluginAuthLenenc != 0 {
+		if i >= len(payload) {
+			return nil
+		}
+		fb := payload[i]
+		i++
+		switch {
+		case fb < 0xfb:
+			authLen = int(fb)
+		case fb == 0xfc:
+			if i+2 > len(payload) {
+				return nil
+			}
+			authLen = int(payload[i]) | int(payload[i+1])<<8
+			i += 2
+		default:
+			return nil
+		}
+	} else {
+		if i >= len(payload) {
+			return nil
+		}
+		authLen = int(payload[i])
+		i++
+	}
+	if authLen < 0 || i+authLen > len(payload) {
+		return nil
+	}
+	authResp := payload[i : i+authLen]
+	ev := CaptureEvent{
+		EventType:     EventMySQLLogin,
+		Direction:     "client->honeypot",
+		MySQLUsername: username,
+	}
+	if len(s.salt) == 20 && len(authResp) == 20 {
+		plugin := s.authPlugin
+		if plugin == "" {
+			plugin = "mysql_native_password"
+		}
+		if plugin == "mysql_native_password" {
+			// hashcat mode 11200
+			ev.MySQLAuthHash = fmt.Sprintf("$mysqlna$%s*%s",
+				hex.EncodeToString(s.salt), hex.EncodeToString(authResp))
+		} else {
+			ev.MySQLAuthHash = fmt.Sprintf("%s:%s*%s",
+				plugin, hex.EncodeToString(s.salt), hex.EncodeToString(authResp))
 		}
 	}
-	return []CaptureEvent{{
-		EventType:  EventRawData,
-		Direction: "honeypot->client",
-		RawPayload: hex.EncodeToString(data),
-	}}
+	return []CaptureEvent{ev}
+}
+
+func (s *MySQLSession) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	user := extractMySQLUsername(data, logger)
+	if user != "" {
+		return []CaptureEvent{{EventType: EventMySQLLogin, Direction: "client->honeypot", MySQLUsername: user}}
+	}
+	if len(data) > 5 {
+		return []CaptureEvent{{EventType: EventRawData, Direction: "client->honeypot", RawPayload: hex.EncodeToString(data)}}
+	}
+	return nil
+}
+
+func (s *MySQLSession) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+	if len(data) > 5 {
+		if version := extractMySQLVersion(data); version != "" {
+			return []CaptureEvent{{EventType: EventBanner, Direction: "honeypot->client", Banner: fmt.Sprintf("MySQL %s", version)}}
+		}
+	}
+	return []CaptureEvent{{EventType: EventRawData, Direction: "honeypot->client", RawPayload: hex.EncodeToString(data)}}
 }
 
 type FTPParser struct{}
@@ -178,58 +303,99 @@ func (p *FTPParser) ParseServerData(data []byte, logger func(string, ...interfac
 	}}
 }
 
-type SMTPParser struct{}
-
 var smtpCommandPrefixes = []string{
 	"EHLO", "HELO", "MAIL", "RCPT", "DATA", "QUIT", "RSET",
 	"NOOP", "VRFY", "EXPN", "HELP", "STARTTLS", "AUTH",
 }
 
-func (p *SMTPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	text := strings.TrimSpace(string(data))
-	upper := strings.ToUpper(text)
-
-	// Comandos SMTP têm prioridade — evita que "QUIT" e outros sejam
-	// decodificados como base64 por coincidência.
-	for _, prefix := range smtpCommandPrefixes {
-		if strings.HasPrefix(upper, prefix) {
-			return []CaptureEvent{{
-				EventType: EventCommand,
-				Direction: "client->honeypot",
-				Command:   text,
-			}}
-		}
-	}
-
-	// Linhas de credencial base64 (respostas ao AUTH LOGIN/PLAIN challenge)
-	if decoded, err := base64.StdEncoding.DecodeString(text); err == nil && len(decoded) > 0 && isPrintableOrControlASCII(decoded) {
-		return []CaptureEvent{{
-			EventType: EventCredential,
-			Direction: "client->honeypot",
-			Username:  string(decoded),
-		}}
-	}
-	return []CaptureEvent{{
-		EventType: EventCommand,
-		Direction: "client->honeypot",
-		Command:   text,
-	}}
+// SMTPSession is a stateful BiParser for SMTP relay.
+// It tracks the envelope sender and emits smtp_relay_probe events for each RCPT TO.
+type SMTPSession struct {
+	sender string
 }
 
-func (p *SMTPParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+func (s *SMTPSession) FeedServer(data []byte) []CaptureEvent {
+	var events []CaptureEvent
+	for _, raw := range strings.Split(string(data), "\n") {
+		text := strings.TrimSpace(strings.TrimRight(raw, "\r"))
+		if text == "" {
+			continue
+		}
+		if strings.HasPrefix(text, "220") {
+			events = append(events, CaptureEvent{EventType: EventBanner, Direction: "honeypot->client", Banner: text})
+		} else {
+			events = append(events, CaptureEvent{EventType: EventResponse, Direction: "honeypot->client", Response: text})
+		}
+	}
+	return events
+}
+
+func (s *SMTPSession) FeedClient(data []byte) []CaptureEvent {
+	var events []CaptureEvent
+	for _, raw := range strings.Split(string(data), "\n") {
+		text := strings.TrimSpace(strings.TrimRight(raw, "\r"))
+		if text == "" {
+			continue
+		}
+		upper := strings.ToUpper(text)
+		switch {
+		case strings.HasPrefix(upper, "MAIL FROM:"):
+			s.sender = extractSMTPAddress(text[10:])
+		case strings.HasPrefix(upper, "RCPT TO:"):
+			events = append(events, CaptureEvent{
+				EventType:     EventSMTPRelayProbe,
+				Direction:     "client->honeypot",
+				SMTPSender:    s.sender,
+				SMTPRecipient: extractSMTPAddress(text[8:]),
+			})
+		case strings.HasPrefix(upper, "RSET"):
+			s.sender = ""
+			events = append(events, CaptureEvent{EventType: EventCommand, Direction: "client->honeypot", Command: text})
+		default:
+			ev := CaptureEvent{Direction: "client->honeypot"}
+			isCmd := false
+			for _, pfx := range smtpCommandPrefixes {
+				if strings.HasPrefix(upper, pfx) {
+					isCmd = true
+					break
+				}
+			}
+			if isCmd {
+				ev.EventType = EventCommand
+				ev.Command = text
+			} else if dec, err := base64.StdEncoding.DecodeString(text); err == nil && len(dec) > 0 && isPrintableOrControlASCII(dec) {
+				ev.EventType = EventCredential
+				ev.Username = string(dec)
+			} else {
+				ev.EventType = EventCommand
+				ev.Command = text
+			}
+			events = append(events, ev)
+		}
+	}
+	return events
+}
+
+func (s *SMTPSession) ParseClientData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
+	text := strings.TrimSpace(string(data))
+	upper := strings.ToUpper(text)
+	for _, prefix := range smtpCommandPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return []CaptureEvent{{EventType: EventCommand, Direction: "client->honeypot", Command: text}}
+		}
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(text); err == nil && len(decoded) > 0 && isPrintableOrControlASCII(decoded) {
+		return []CaptureEvent{{EventType: EventCredential, Direction: "client->honeypot", Username: string(decoded)}}
+	}
+	return []CaptureEvent{{EventType: EventCommand, Direction: "client->honeypot", Command: text}}
+}
+
+func (s *SMTPSession) ParseServerData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
 	text := strings.TrimSpace(string(data))
 	if strings.HasPrefix(text, "220") {
-		return []CaptureEvent{{
-			EventType: EventBanner,
-			Direction: "honeypot->client",
-			Banner:    text,
-		}}
+		return []CaptureEvent{{EventType: EventBanner, Direction: "honeypot->client", Banner: text}}
 	}
-	return []CaptureEvent{{
-		EventType: EventResponse,
-		Direction: "honeypot->client",
-		Response:  text,
-	}}
+	return []CaptureEvent{{EventType: EventResponse, Direction: "honeypot->client", Response: text}}
 }
 
 const (
@@ -596,9 +762,9 @@ func NewParser(protocol string, port int) ProtocolParser {
 	case "FTP":
 		return &FTPParser{}
 	case "MYSQL":
-		return &MySQLParser{}
+		return &MySQLSession{}
 	case "SMTP", "MAIL", "MAIL_SMTP":
-		return &SMTPParser{}
+		return &SMTPSession{}
 	case "TELNET":
 		return &TelnetSession{}
 	case "VNC":
@@ -616,13 +782,13 @@ func NewParser(protocol string, port int) ProtocolParser {
 		case 23:
 			return &TelnetSession{}
 		case 25, 465, 587:
-			return &SMTPParser{}
+			return &SMTPSession{}
 		case 110:
 			return &POP3Parser{}
 		case 143, 993:
 			return &IMAPParser{}
 		case 3306:
-			return &MySQLParser{}
+			return &MySQLSession{}
 		case 5900:
 			return &VNCSession{}
 		default:
