@@ -31,6 +31,9 @@ type Config struct {
 	HttpAuthPortsTLS    map[uint16]bool
 	PayloadB64Enabled   bool
 	PayloadHexEnabled   bool
+	FastpathEnabled      bool
+	ClassifyWaitTimeout  time.Duration // CLASSIFY_WAIT_TIMEOUT: max wait for nDPI to classify Unknown flows
+	NDPIWorkers          int           // NDPI_WORKERS: parallel nDPI shards (0 or 1 = synchronous)
 
 	// classifier (agora no mesmo processo)
 	ClassifierInterface string
@@ -67,6 +70,9 @@ func Load() (*Config, error) {
 		MaxPerIPConns:       getInt("MAX_CONNECTIONS_PER_IP", 50),
 		PayloadB64Enabled:   parseBoolEnv("PAYLOAD_B64_ENABLED", true),
 		PayloadHexEnabled:   parseBoolEnv("PAYLOAD_HEX_ENABLED", true),
+		FastpathEnabled:     parseBoolEnv("FASTPATH_ENABLED", true),
+		ClassifyWaitTimeout: getDuration("CLASSIFY_WAIT_TIMEOUT", 50*time.Millisecond),
+		NDPIWorkers:         getInt("NDPI_WORKERS", 1),
 		ServerFirstPorts:    parseServerFirstPorts(serverFirstPortsRaw),
 		ServerFirstPortsTLS: parseServerFirstPortsTLS(serverFirstPortsTLSRaw),
 		HttpAuthPorts:       parsePortList(getEnv("HTTP_AUTH_PORTS", "")),

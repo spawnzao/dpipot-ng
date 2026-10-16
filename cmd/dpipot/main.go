@@ -89,6 +89,7 @@ func main() {
 		NodeName:          os.Getenv("NODE_NAME"),
 		PodName:           os.Getenv("POD_NAME"),
 		LocalIP:           interfaceIP(cfg.ClassifierInterface, logger),
+		NumWorkers:        cfg.NDPIWorkers,
 	})
 	if err != nil {
 		logger.Fatal("failed to create nDPI handler", zap.Error(err))
@@ -180,6 +181,8 @@ func main() {
 	// Wire classifier telemetry — combina AF_PACKET e nDPI num único provider
 	// para que o heartbeat do proxy inclua todas as métricas de captura.
 	server.SetClassifier(&classifierTelemetry{af: af, handler: ndpiHandler})
+	server.SetFastpathEnabled(cfg.FastpathEnabled)
+	server.SetClassifyWaitTimeout(cfg.ClassifyWaitTimeout)
 
 	// Start AF_PACKET capture
 	af.Start()
@@ -192,9 +195,15 @@ func main() {
 		for {
 			select {
 			case packet, ok := <-af.Packets():
+				t2 := time.Now()
 				if !ok {
 					return
 				}
+				// T2 − T1: time the packet waited in the AF_PACKET channel.
+				ndpiHandler.ObserveQueueWait(t2.Sub(packet.Timestamp))
+				// Queue depth at dequeue: how many packets are still waiting.
+				ndpiHandler.ObserveQueueDepth(len(af.Packets()))
+
 				// Skip broadcast frames
 				if len(packet.Data) >= 6 &&
 					packet.Data[0] == 0xff && packet.Data[1] == 0xff &&
@@ -218,6 +227,7 @@ func main() {
 					}
 				}
 				ndpiHandler.ProcessPacket(packet.Data)
+				// T3 − T2 is now recorded inside ProcessPacket / worker goroutines.
 			case err, ok := <-af.Errors():
 				if !ok {
 					return
@@ -282,6 +292,24 @@ func (c *classifierTelemetry) NDPIPacketsProcessedAndReset() int64 {
 }
 func (c *classifierTelemetry) NDPIFlowsActive() int              { return c.handler.ActiveFlows() }
 func (c *classifierTelemetry) NDPICleanupEvictedAndReset() int64 { return c.handler.CleanupEvictedAndReset() }
+
+func (c *classifierTelemetry) NDPITimingStatsAndReset() proxy.NDPITimingStats {
+	snap := c.handler.TimingSnapshotAndReset()
+	return proxy.NDPITimingStats{
+		QueueWaitP50:   snap.QueueWait.P50,
+		QueueWaitP95:   snap.QueueWait.P95,
+		QueueWaitP99:   snap.QueueWait.P99,
+		QueueWaitP999:  snap.QueueWait.P999,
+		QueueWaitCount: snap.QueueWait.Count,
+		ProcessP50:     snap.Processing.P50,
+		ProcessP95:     snap.Processing.P95,
+		ProcessP99:     snap.Processing.P99,
+		ProcessP999:    snap.Processing.P999,
+		ProcessCount:   snap.Processing.Count,
+		QueueDepthMax:  snap.QueueDepth.Max,
+		QueueDepthAvg:  snap.QueueDepth.Avg,
+	}
+}
 
 func interfaceIP(ifname string, logger *zap.Logger) net.IP {
 	iface, err := net.InterfaceByName(ifname)

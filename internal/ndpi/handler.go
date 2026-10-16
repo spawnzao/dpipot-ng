@@ -14,6 +14,7 @@ import (
 
 	"github.com/spawnzao/dpipot-ng/internal/flow"
 	"github.com/spawnzao/dpipot-ng/internal/kafka"
+	"github.com/spawnzao/dpipot-ng/internal/metrics"
 	"github.com/spawnzao/dpipot-ng/internal/ndpi/gondpi"
 )
 
@@ -21,31 +22,43 @@ const (
 	EthernetHeaderSize = 14
 )
 
-type Handler struct {
-	ndpiDM           *gondpi.NdpiDetectionModule
-	flowTable        *flow.Table
-	ndpiFlows        *sync.Map
-	flowUUIDs        sync.Map // tuple_id → UUID; um UUID por conexão TCP
-	logger           *zap.Logger
-	wg               sync.WaitGroup
-	ctx              context.Context
-	cancel           context.CancelFunc
-	serverFirstPorts []uint16
-	portProtocolMap  map[uint16]string
-	producer         *kafka.Producer
-	ndpiEventsEnabled bool
-	nodeName         string
-	podName          string
-	localIP          net.IP
-	// pendingFree armazena flows removidos do ndpiFlows no ciclo anterior de
-	// cleanup. São liberados no próximo ciclo (2 min depois), garantindo que
-	// nenhum PacketProcessing em curso ainda segure o ponteiro C.
-	pendingFree []*gondpi.NdpiFlow
+// ndpiShard holds per-worker nDPI state. Each shard owns its detection module
+// and flow map so the hot path needs no inter-goroutine locking on C resources.
+type ndpiShard struct {
+	ndpiDM      *gondpi.NdpiDetectionModule
+	ndpiFlows   sync.Map           // tupleID → *gondpi.NdpiFlow; accessed only by this shard
+	pendingFree []*gondpi.NdpiFlow // queued for deferred Close on the next cleanup cycle
+	ch          chan []byte         // dispatch channel; nil when numShards == 1 (synchronous)
+}
 
-	// contadores de telemetria — lidos pelo heartbeat do proxy via ClassifierTelemetry
-	packetsProcessed atomic.Int64 // pacotes recebidos pelo ProcessPacket; reset por heartbeat
-	activeFlows      atomic.Int64 // flows ativos no ndpiFlows sync.Map (snapshot via Add/Sub)
-	cleanupEvicted   atomic.Int64 // flows removidos pelo cleanup; reset por heartbeat
+type Handler struct {
+	shards    []*ndpiShard
+	numShards int
+
+	flowTable *flow.Table
+	flowUUIDs sync.Map // tupleID → UUID; shared, LoadOrStore is thread-safe
+	logger    *zap.Logger
+	wg        sync.WaitGroup
+	ctx       context.Context
+	cancel    context.CancelFunc
+
+	serverFirstPorts  []uint16
+	portProtocolMap   map[uint16]string
+	producer          *kafka.Producer
+	ndpiEventsEnabled bool
+	nodeName          string
+	podName           string
+	localIP           net.IP
+
+	// telemetry counters — read by heartbeat via ClassifierTelemetry
+	packetsProcessed atomic.Int64
+	activeFlows      atomic.Int64
+	cleanupEvicted   atomic.Int64
+
+	// Phase 2 timing histograms
+	queueWait  metrics.Histogram
+	processing metrics.Histogram
+	queueDepth metrics.GaugeSampler
 }
 
 type HandlerConfig struct {
@@ -58,23 +71,36 @@ type HandlerConfig struct {
 	NodeName          string
 	PodName           string
 	LocalIP           net.IP
+	NumWorkers        int // NDPI_WORKERS; 0 or 1 = synchronous single-goroutine (default)
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
-	detectionBitmask := gondpi.NewNdpiProtocolBitmask()
-	detectionBitmask = gondpi.NdpiProtocolBitmaskSetAll(detectionBitmask)
+	n := cfg.NumWorkers
+	if n <= 0 {
+		n = 1
+	}
 
-	ndpiDM, err := gondpi.NdpiDetectionModuleInitialize(0, detectionBitmask)
-	if err != nil {
-		return nil, fmt.Errorf("nDPI init failed: %w", err)
+	shards := make([]*ndpiShard, n)
+	for i := range shards {
+		bitmask := gondpi.NewNdpiProtocolBitmask()
+		bitmask = gondpi.NdpiProtocolBitmaskSetAll(bitmask)
+		dm, err := gondpi.NdpiDetectionModuleInitialize(0, bitmask)
+		if err != nil {
+			return nil, fmt.Errorf("nDPI shard %d init failed: %w", i, err)
+		}
+		s := &ndpiShard{ndpiDM: dm}
+		if n > 1 {
+			s.ch = make(chan []byte, 1024)
+		}
+		shards[i] = s
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	h := &Handler{
-		ndpiDM:            ndpiDM,
+		shards:            shards,
+		numShards:         n,
 		flowTable:         cfg.FlowTable,
-		ndpiFlows:         &sync.Map{},
 		logger:            cfg.Logger,
 		ctx:               ctx,
 		cancel:            cancel,
@@ -87,32 +113,148 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		localIP:           cfg.LocalIP,
 	}
 
-	h.startNdpiFlowsCleanup(30 * time.Second)
+	// Worker goroutines — only needed in sharded (N>1) mode.
+	if n > 1 {
+		for i, s := range shards {
+			h.wg.Add(1)
+			go h.runShard(i, s)
+		}
+	}
+
+	// One cleanup goroutine per shard.
+	for _, s := range shards {
+		h.startShardCleanup(s, 30*time.Second)
+	}
 
 	if h.logger != nil {
-		h.logger.Info("nDPI handler initialized")
+		h.logger.Info("nDPI handler initialized", zap.Int("shards", n))
 	}
 
 	return h, nil
 }
 
+// ProcessPacket routes an Ethernet frame to the appropriate nDPI shard.
+// For N=1 (synchronous), processing runs in the calling goroutine and the
+// T3−T2 interval is recorded internally. For N>1, frames fan out to worker
+// goroutines which record their own processing time.
 func (h *Handler) ProcessPacket(data []byte) {
 	h.packetsProcessed.Add(1)
 	if len(data) < EthernetHeaderSize+20 {
 		return
 	}
 
-	ethertype := uint16(data[12])<<8 | uint16(data[13])
+	if h.numShards == 1 {
+		t := time.Now()
+		h.dispatchToShard(h.shards[0], data)
+		h.processing.Observe(time.Since(t).Nanoseconds())
+		return
+	}
 
-	switch ethertype {
-	case 0x0800:
-		h.processIPv4(data)
-	case 0x86DD:
-		h.processIPv6(data)
+	// Sharded path: all packets of a flow must reach the same shard.
+	tupleID := extractTupleID(data)
+	idx := 0
+	if tupleID != "" {
+		idx = int(fnv32a(tupleID) % uint32(h.numShards))
+	}
+	select {
+	case h.shards[idx].ch <- data:
+	default:
+		// Channel full; drop to avoid blocking the AF_PACKET reader.
 	}
 }
 
-func (h *Handler) processIPv4(data []byte) {
+func (h *Handler) runShard(idx int, s *ndpiShard) {
+	defer h.wg.Done()
+	for {
+		select {
+		case data, ok := <-s.ch:
+			if !ok {
+				return
+			}
+			t := time.Now()
+			h.dispatchToShard(s, data)
+			h.processing.Observe(time.Since(t).Nanoseconds())
+		case <-h.ctx.Done():
+			return
+		}
+	}
+}
+
+func (h *Handler) dispatchToShard(s *ndpiShard, data []byte) {
+	ethertype := uint16(data[12])<<8 | uint16(data[13])
+	switch ethertype {
+	case 0x0800:
+		h.processIPv4Shard(s, data)
+	case 0x86DD:
+		h.processIPv6Shard(s, data)
+	}
+}
+
+// extractTupleID parses the minimal Ethernet/IP/TCP header fields needed to
+// compute the normalized flow ID for shard routing. Returns "" on malformed frames.
+func extractTupleID(data []byte) string {
+	if len(data) < EthernetHeaderSize+20 {
+		return ""
+	}
+	ethertype := uint16(data[12])<<8 | uint16(data[13])
+	switch ethertype {
+	case 0x0800:
+		ip := data[EthernetHeaderSize:]
+		if len(ip) < 20 {
+			return ""
+		}
+		proto := ip[9]
+		if proto != 6 && proto != 17 {
+			return ""
+		}
+		ihl := int(ip[0]&0x0F) * 4
+		if ihl < 20 {
+			return ""
+		}
+		tcpStart := EthernetHeaderSize + ihl
+		if len(data) < tcpStart+4 {
+			return ""
+		}
+		t := data[tcpStart:]
+		return flow.NormalizeFlowID(
+			net.IP(ip[12:16]), net.IP(ip[16:20]),
+			uint16(t[0])<<8|uint16(t[1]), uint16(t[2])<<8|uint16(t[3]),
+			proto,
+		)
+	case 0x86DD:
+		ip := data[EthernetHeaderSize:]
+		if len(ip) < 40 {
+			return ""
+		}
+		proto := ip[6]
+		if proto != 6 && proto != 17 {
+			return ""
+		}
+		tcpStart := EthernetHeaderSize + 40
+		if len(data) < tcpStart+4 {
+			return ""
+		}
+		t := data[tcpStart:]
+		return flow.NormalizeFlowID(
+			net.IP(ip[8:24]), net.IP(ip[24:40]),
+			uint16(t[0])<<8|uint16(t[1]), uint16(t[2])<<8|uint16(t[3]),
+			proto,
+		)
+	}
+	return ""
+}
+
+// fnv32a computes a FNV-1a 32-bit hash inline, avoiding a hasher allocation per packet.
+func fnv32a(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
+}
+
+func (h *Handler) processIPv4Shard(s *ndpiShard, data []byte) {
 	ipOffset := EthernetHeaderSize
 	ipHeader := data[ipOffset:]
 
@@ -150,11 +292,10 @@ func (h *Handler) processIPv4(data []byte) {
 		tcpWindow = uint16(tcpHeader[14])<<8 | uint16(tcpHeader[15])
 	}
 
-	ipPacket := data[ipOffset:]
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, protocol, ipPacket, ttl, tos, tcpWindow, 4)
+	h.classifyAndUpdateFlowShard(s, srcIP, dstIP, srcPort, dstPort, protocol, data[ipOffset:], ttl, tos, tcpWindow, 4)
 }
 
-func (h *Handler) processIPv6(data []byte) {
+func (h *Handler) processIPv6Shard(s *ndpiShard, data []byte) {
 	ipOffset := EthernetHeaderSize
 	ipHeader := data[ipOffset:]
 
@@ -187,11 +328,10 @@ func (h *Handler) processIPv6(data []byte) {
 		tcpWindowIPv6 = uint16(tcpHeader[14])<<8 | uint16(tcpHeader[15])
 	}
 
-	ipPacket := data[ipOffset:]
-	h.classifyAndUpdateFlow(srcIP, dstIP, srcPort, dstPort, nextHeader, ipPacket, hopLimit, trafficClass, tcpWindowIPv6, 6)
+	h.classifyAndUpdateFlowShard(s, srcIP, dstIP, srcPort, dstPort, nextHeader, data[ipOffset:], hopLimit, trafficClass, tcpWindowIPv6, 6)
 }
 
-func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
+func (h *Handler) classifyAndUpdateFlowShard(s *ndpiShard, srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint8, payload []byte, ttl, tos uint8, tcpWindow uint16, ipVersion uint8) {
 	tupleID := flow.NormalizeFlowID(srcIP, dstIP, srcPort, dstPort, protocol)
 
 	uuidVal, _ := h.flowUUIDs.LoadOrStore(tupleID, uuid.New().String())
@@ -233,14 +373,14 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		return
 	}
 
-	ndpiFlowI, loaded := h.ndpiFlows.Load(tupleID)
+	ndpiFlowI, loaded := s.ndpiFlows.Load(tupleID)
 	if !loaded {
 		newFlow, err := gondpi.NewNdpiFlow()
 		if err != nil {
 			return
 		}
 		newFlow.SetupFlow(srcIP, dstIP, protocol, srcPort, dstPort)
-		actual, existedAlready := h.ndpiFlows.LoadOrStore(tupleID, newFlow)
+		actual, existedAlready := s.ndpiFlows.LoadOrStore(tupleID, newFlow)
 		if !existedAlready {
 			h.activeFlows.Add(1)
 		}
@@ -252,7 +392,7 @@ func (h *Handler) classifyAndUpdateFlow(srcIP, dstIP net.IP, srcPort, dstPort ui
 		return
 	}
 
-	proto := h.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), time.Now().UnixMilli())
+	proto := s.ndpiDM.PacketProcessing(ndpiFlow, payload, uint16(len(payload)), time.Now().UnixMilli())
 
 	if h.logger != nil {
 		h.logger.Debug("nDPI result",
@@ -392,7 +532,7 @@ func (h *Handler) PacketsProcessedAndReset() int64 {
 	return h.packetsProcessed.Swap(0)
 }
 
-// ActiveFlows retorna o número atual de flows ativos no sync.Map do nDPI.
+// ActiveFlows retorna o número atual de flows ativos no nDPI (somados de todos os shards).
 func (h *Handler) ActiveFlows() int {
 	return int(h.activeFlows.Load())
 }
@@ -401,6 +541,39 @@ func (h *Handler) ActiveFlows() int {
 // e zera o contador.
 func (h *Handler) CleanupEvictedAndReset() int64 {
 	return h.cleanupEvicted.Swap(0)
+}
+
+// ObserveQueueWait records T2−T1: how long a packet waited in the AF_PACKET channel.
+func (h *Handler) ObserveQueueWait(d time.Duration) {
+	h.queueWait.Observe(d.Nanoseconds())
+}
+
+// ObserveProcessing records T3−T2: the wall-clock cost of one ProcessPacket call.
+// For N=1 this is called internally by ProcessPacket; the public method is kept for
+// external callers that need to override measurement (e.g. tests).
+func (h *Handler) ObserveProcessing(d time.Duration) {
+	h.processing.Observe(d.Nanoseconds())
+}
+
+// ObserveQueueDepth records a point-in-time sample of the AF_PACKET channel depth.
+func (h *Handler) ObserveQueueDepth(n int) {
+	h.queueDepth.Observe(int64(n))
+}
+
+// TimingSnapshot holds one interval's worth of Phase 2 timing data.
+type TimingSnapshot struct {
+	QueueWait  metrics.HistogramSnapshot
+	Processing metrics.HistogramSnapshot
+	QueueDepth metrics.GaugeSnapshot
+}
+
+// TimingSnapshotAndReset drains the Phase 2 histograms and returns a snapshot.
+func (h *Handler) TimingSnapshotAndReset() TimingSnapshot {
+	return TimingSnapshot{
+		QueueWait:  h.queueWait.SnapshotAndReset(),
+		Processing: h.processing.SnapshotAndReset(),
+		QueueDepth: h.queueDepth.SnapshotAndReset(),
+	}
 }
 
 // SetProducer injects the Kafka producer after construction.
@@ -415,14 +588,16 @@ func (h *Handler) Close() {
 	// Não chamamos ndpi_exit_detection_module: tráfego de honeypot pode corromper
 	// o estado interno do nDPI causando double-free no shutdown. O OS recupera o
 	// heap C ao terminar o processo. Flows pendentes são seguros de liberar pois
-	// o goroutine de processamento já parou (wg.Wait acima).
-	for _, f := range h.pendingFree {
-		f.Close()
+	// os goroutines de processamento já pararam (wg.Wait acima).
+	for _, s := range h.shards {
+		for _, f := range s.pendingFree {
+			f.Close()
+		}
+		s.pendingFree = nil
 	}
-	h.pendingFree = nil
 }
 
-func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
+func (h *Handler) startShardCleanup(s *ndpiShard, interval time.Duration) {
 	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
@@ -433,26 +608,28 @@ func (h *Handler) startNdpiFlowsCleanup(interval time.Duration) {
 			case <-h.ctx.Done():
 				return
 			case <-ticker.C:
-				h.cleanupNdpiFlows()
+				h.cleanupShard(s)
 			}
 		}
 	}()
 }
 
-func (h *Handler) cleanupNdpiFlows() {
-	freed := len(h.pendingFree)
-	for _, f := range h.pendingFree {
+func (h *Handler) cleanupShard(s *ndpiShard) {
+	// Free flows deferred from the previous cleanup cycle. They were removed from
+	// s.ndpiFlows then, so no PacketProcessing call can still reference them.
+	freed := len(s.pendingFree)
+	for _, f := range s.pendingFree {
 		f.Close()
 	}
-	h.pendingFree = h.pendingFree[:0]
+	s.pendingFree = s.pendingFree[:0]
 
 	evicted := 0
-	h.ndpiFlows.Range(func(key, value any) bool {
+	s.ndpiFlows.Range(func(key, value any) bool {
 		tupleID := key.(string)
 		if _, found := h.flowTable.Get(tupleID); !found {
-			h.ndpiFlows.Delete(tupleID)
+			s.ndpiFlows.Delete(tupleID)
 			h.flowUUIDs.Delete(tupleID)
-			h.pendingFree = append(h.pendingFree, value.(*gondpi.NdpiFlow))
+			s.pendingFree = append(s.pendingFree, value.(*gondpi.NdpiFlow))
 			evicted++
 			h.activeFlows.Add(-1)
 			h.cleanupEvicted.Add(1)
@@ -460,21 +637,10 @@ func (h *Handler) cleanupNdpiFlows() {
 		return true
 	})
 
-	uuidsCleaned := 0
-	h.flowUUIDs.Range(func(key, value any) bool {
-		tupleID := key.(string)
-		if _, found := h.flowTable.Get(tupleID); !found {
-			h.flowUUIDs.Delete(tupleID)
-			uuidsCleaned++
-		}
-		return true
-	})
-
-	if h.logger != nil && (evicted > 0 || freed > 0 || uuidsCleaned > 0) {
-		h.logger.Info("nDPI flows cleanup",
+	if h.logger != nil && (evicted > 0 || freed > 0) {
+		h.logger.Info("nDPI shard cleanup",
 			zap.Int("evicted", evicted),
 			zap.Int("freed", freed),
-			zap.Int("uuids_cleaned", uuidsCleaned),
 		)
 	}
 }
