@@ -223,15 +223,17 @@ func parseLOGIN7(payload []byte) (mssqlLoginInfo, error) {
 }
 
 // deobfuscateTDSPassword reverses TDS password obfuscation (MS-TDS §2.2.6.4):
-// for each byte rotate nibbles left 4, then XOR with 0xA5; decode as UTF-16LE.
+// client encodes as rotate_nibbles(p) XOR 0xA5, so decode is XOR 0xA5 then rotate.
 func deobfuscateTDSPassword(data []byte) string {
 	if len(data)%2 != 0 {
 		return ""
 	}
 	runes := make([]uint16, len(data)/2)
 	for i := 0; i+1 < len(data); i += 2 {
-		b1 := ((data[i] << 4) | (data[i] >> 4)) ^ 0xA5
-		b2 := ((data[i+1] << 4) | (data[i+1] >> 4)) ^ 0xA5
+		b1 := data[i] ^ 0xA5
+		b1 = (b1 << 4) | (b1 >> 4)
+		b2 := data[i+1] ^ 0xA5
+		b2 = (b2 << 4) | (b2 >> 4)
 		runes[i/2] = binary.LittleEndian.Uint16([]byte{b1, b2})
 	}
 	return string(utf16.Decode(runes))
