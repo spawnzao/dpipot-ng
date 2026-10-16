@@ -33,6 +33,7 @@ type NDPITimingStats struct {
 	ProcessCount   int64
 	QueueDepthMax  int64
 	QueueDepthAvg  int64
+	ShardDrops     int64 // packets dropped because a shard channel was full (0 when NDPI_WORKERS=1)
 }
 
 // ClassifierTelemetry abstrai as métricas do AF_PACKET e do nDPI handler para
@@ -385,6 +386,9 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			if timing.QueueDepthMax > 0 {
 				ev.NDPIQueueDepthMax = kafka.Int64Ptr(timing.QueueDepthMax)
 				ev.NDPIQueueDepthAvg = kafka.Int64Ptr(timing.QueueDepthAvg)
+			}
+			if timing.ShardDrops > 0 {
+				ev.NDPIShardDrops = kafka.Int64Ptr(timing.ShardDrops)
 			}
 			s.producer.Publish(ev)
 		}

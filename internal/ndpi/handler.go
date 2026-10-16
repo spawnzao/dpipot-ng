@@ -54,6 +54,7 @@ type Handler struct {
 	packetsProcessed atomic.Int64
 	activeFlows      atomic.Int64
 	cleanupEvicted   atomic.Int64
+	shardDrops       atomic.Int64 // packets dropped because a shard's dispatch channel was full
 
 	// Phase 2 timing histograms
 	queueWait  metrics.Histogram
@@ -151,15 +152,13 @@ func (h *Handler) ProcessPacket(data []byte) {
 	}
 
 	// Sharded path: all packets of a flow must reach the same shard.
-	tupleID := extractTupleID(data)
-	idx := 0
-	if tupleID != "" {
-		idx = int(fnv32a(tupleID) % uint32(h.numShards))
-	}
+	// shardKey hashes directly on the binary 5-tuple — zero allocations.
+	idx := int(shardKey(data) % uint32(h.numShards))
 	select {
 	case h.shards[idx].ch <- data:
 	default:
 		// Channel full; drop to avoid blocking the AF_PACKET reader.
+		h.shardDrops.Add(1)
 	}
 }
 
@@ -190,67 +189,70 @@ func (h *Handler) dispatchToShard(s *ndpiShard, data []byte) {
 	}
 }
 
-// extractTupleID parses the minimal Ethernet/IP/TCP header fields needed to
-// compute the normalized flow ID for shard routing. Returns "" on malformed frames.
-func extractTupleID(data []byte) string {
+// shardKey computes a FNV-1a 32-bit hash directly over the binary 5-tuple bytes
+// of an Ethernet frame without allocating any strings, making it safe to call on
+// every packet at 100k+ pps. Returns 0 for IPv6 or unrecognized frames (caller
+// routes them to shard 0, which quickly discards them in classifyAndUpdateFlowShard).
+func shardKey(data []byte) uint32 {
 	if len(data) < EthernetHeaderSize+20 {
-		return ""
+		return 0
 	}
-	ethertype := uint16(data[12])<<8 | uint16(data[13])
-	switch ethertype {
-	case 0x0800:
-		ip := data[EthernetHeaderSize:]
-		if len(ip) < 20 {
-			return ""
-		}
-		proto := ip[9]
-		if proto != 6 && proto != 17 {
-			return ""
-		}
-		ihl := int(ip[0]&0x0F) * 4
-		if ihl < 20 {
-			return ""
-		}
-		tcpStart := EthernetHeaderSize + ihl
-		if len(data) < tcpStart+4 {
-			return ""
-		}
-		t := data[tcpStart:]
-		return flow.NormalizeFlowID(
-			net.IP(ip[12:16]), net.IP(ip[16:20]),
-			uint16(t[0])<<8|uint16(t[1]), uint16(t[2])<<8|uint16(t[3]),
-			proto,
-		)
-	case 0x86DD:
-		ip := data[EthernetHeaderSize:]
-		if len(ip) < 40 {
-			return ""
-		}
-		proto := ip[6]
-		if proto != 6 && proto != 17 {
-			return ""
-		}
-		tcpStart := EthernetHeaderSize + 40
-		if len(data) < tcpStart+4 {
-			return ""
-		}
-		t := data[tcpStart:]
-		return flow.NormalizeFlowID(
-			net.IP(ip[8:24]), net.IP(ip[24:40]),
-			uint16(t[0])<<8|uint16(t[1]), uint16(t[2])<<8|uint16(t[3]),
-			proto,
-		)
+	if uint16(data[12])<<8|uint16(data[13]) != 0x0800 {
+		return 0 // IPv6 and non-IP frames go to shard 0
 	}
-	return ""
-}
+	ip := data[EthernetHeaderSize:]
+	if len(ip) < 20 {
+		return 0
+	}
+	proto := ip[9]
+	if proto != 6 && proto != 17 {
+		return 0
+	}
+	ihl := int(ip[0]&0x0F) * 4
+	if ihl < 20 {
+		return 0
+	}
+	tcpStart := EthernetHeaderSize + ihl
+	if len(data) < tcpStart+4 {
+		return 0
+	}
 
-// fnv32a computes a FNV-1a 32-bit hash inline, avoiding a hasher allocation per packet.
-func fnv32a(s string) uint32 {
-	h := uint32(2166136261)
-	for i := 0; i < len(s); i++ {
-		h ^= uint32(s[i])
-		h *= 16777619
+	var src, dst [4]byte
+	copy(src[:], ip[12:16])
+	copy(dst[:], ip[16:20])
+	sp := [2]byte{data[tcpStart], data[tcpStart+1]}
+	dp := [2]byte{data[tcpStart+2], data[tcpStart+3]}
+
+	// Canonicalize direction: smaller IP first (tie-break by port), matching
+	// NormalizeFlowID so both directions of a flow hash to the same shard.
+	flip := false
+	for i := range src {
+		if src[i] > dst[i] {
+			flip = true
+			break
+		} else if src[i] < dst[i] {
+			break
+		}
 	}
+	if !flip && src == dst {
+		if uint16(sp[0])<<8|uint16(sp[1]) > uint16(dp[0])<<8|uint16(dp[1]) {
+			flip = true
+		}
+	}
+	if flip {
+		src, dst = dst, src
+		sp, dp = dp, sp
+	}
+
+	// FNV-1a over 13 bytes: 4+4+2+2+1 — zero heap allocations.
+	h := uint32(2166136261)
+	for _, b := range src { h ^= uint32(b); h *= 16777619 }
+	for _, b := range dst { h ^= uint32(b); h *= 16777619 }
+	h ^= uint32(sp[0]); h *= 16777619
+	h ^= uint32(sp[1]); h *= 16777619
+	h ^= uint32(dp[0]); h *= 16777619
+	h ^= uint32(dp[1]); h *= 16777619
+	h ^= uint32(proto); h *= 16777619
 	return h
 }
 
@@ -541,6 +543,12 @@ func (h *Handler) ActiveFlows() int {
 // e zera o contador.
 func (h *Handler) CleanupEvictedAndReset() int64 {
 	return h.cleanupEvicted.Swap(0)
+}
+
+// ShardDropsAndReset retorna packets descartados por shard channel cheio desde o
+// último reset e zera o contador. Sempre 0 quando NDPI_WORKERS=1.
+func (h *Handler) ShardDropsAndReset() int64 {
+	return h.shardDrops.Swap(0)
 }
 
 // ObserveQueueWait records T2−T1: how long a packet waited in the AF_PACKET channel.

@@ -308,6 +308,7 @@ func (c *classifierTelemetry) NDPITimingStatsAndReset() proxy.NDPITimingStats {
 		ProcessCount:   snap.Processing.Count,
 		QueueDepthMax:  snap.QueueDepth.Max,
 		QueueDepthAvg:  snap.QueueDepth.Avg,
+		ShardDrops:     c.handler.ShardDropsAndReset(),
 	}
 }
 

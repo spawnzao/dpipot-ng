@@ -156,6 +156,7 @@ type Event struct {
 	NDPIPackets         *int64 `json:"ndpi_packets_processed,omitempty"`   // pacotes processados pelo nDPI no intervalo
 	NDPIFlowsActive     *int   `json:"ndpi_flows_active,omitempty"`        // flows ativos no sync.Map do nDPI (snapshot)
 	NDPICleanupEvicted  *int64 `json:"ndpi_cleanup_evicted,omitempty"`     // flows removidos pelo cleanup no intervalo
+	NDPIShardDrops      *int64 `json:"ndpi_shard_drops,omitempty"`         // packets descartados por shard channel cheio (NDPI_WORKERS>1)
 
 	// tamanho atual da flow table in-process — preenchido no heartbeat
 	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
