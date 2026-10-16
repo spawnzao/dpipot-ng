@@ -18,6 +18,23 @@ import (
 	"go.uber.org/zap"
 )
 
+// NDPITimingStats carries one heartbeat interval's Phase 2 timing histograms.
+// All nanosecond values are 0 when no samples were collected in the interval.
+type NDPITimingStats struct {
+	QueueWaitP50   int64
+	QueueWaitP95   int64
+	QueueWaitP99   int64
+	QueueWaitP999  int64
+	QueueWaitCount int64
+	ProcessP50     int64
+	ProcessP95     int64
+	ProcessP99     int64
+	ProcessP999    int64
+	ProcessCount   int64
+	QueueDepthMax  int64
+	QueueDepthAvg  int64
+}
+
 // ClassifierTelemetry abstrai as métricas do AF_PACKET e do nDPI handler para
 // o heartbeat do proxy, sem criar dependência direta dos pacotes capture/ndpi.
 // Implementada em main.go como glue entre os dois componentes.
@@ -27,6 +44,7 @@ type ClassifierTelemetry interface {
 	NDPIPacketsProcessedAndReset() int64
 	NDPIFlowsActive() int
 	NDPICleanupEvictedAndReset() int64
+	NDPITimingStatsAndReset() NDPITimingStats
 }
 
 // Server aceita conexões TCP e cria um Handler por conexão.
@@ -67,7 +85,9 @@ type Server struct {
 	flowTableNotFound atomic.Int64 // lookup sem entrada (nDPI ainda não classificou)
 	flowTableUnknown  atomic.Int64 // entrada existe mas protocolo é Unknown
 
-	classifier ClassifierTelemetry // opcional — nil se não configurado
+	classifier          ClassifierTelemetry // opcional — nil se não configurado
+	fastpathEnabled     bool               // FASTPATH_ENABLED: structural payload detection for Unknown flows
+	classifyWaitTimeout time.Duration      // CLASSIFY_WAIT_TIMEOUT: max wait for nDPI (0 = disabled)
 }
 
 // SetClassifier registra a implementação de ClassifierTelemetry para que o heartbeat
@@ -75,6 +95,12 @@ type Server struct {
 func (s *Server) SetClassifier(c ClassifierTelemetry) {
 	s.classifier = c
 }
+
+// SetFastpathEnabled controls structural payload detection for Unknown flows (FASTPATH_ENABLED).
+func (s *Server) SetFastpathEnabled(v bool) { s.fastpathEnabled = v }
+
+// SetClassifyWaitTimeout sets the max duration to wait for nDPI to classify Unknown flows (CLASSIFY_WAIT_TIMEOUT).
+func (s *Server) SetClassifyWaitTimeout(d time.Duration) { s.classifyWaitTimeout = d }
 
 func NewServer(
 	listenAddr string,
@@ -302,15 +328,17 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 
 			var afKernelDrops, afChanDrops, ndpiPackets, ndpiEvicted int64
 			var ndpiFlowsActive int
+			var timing NDPITimingStats
 			if s.classifier != nil {
 				afKernelDrops = s.classifier.AFPacketKernelDropsAndReset()
 				afChanDrops = s.classifier.AFPacketChanDropsAndReset()
 				ndpiPackets = s.classifier.NDPIPacketsProcessedAndReset()
 				ndpiFlowsActive = s.classifier.NDPIFlowsActive()
 				ndpiEvicted = s.classifier.NDPICleanupEvictedAndReset()
+				timing = s.classifier.NDPITimingStatsAndReset()
 			}
 
-			s.producer.Publish(&kafka.Event{
+			ev := &kafka.Event{
 				Timestamp:                   time.Now(),
 				EventType:                   "heartbeat",
 				SlotsUsed:                   kafka.IntPtr(len(s.sem)),
@@ -339,7 +367,26 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				NDPIPackets:                 kafka.Int64Ptr(ndpiPackets),
 				NDPIFlowsActive:             kafka.IntPtr(ndpiFlowsActive),
 				NDPICleanupEvicted:          kafka.Int64Ptr(ndpiEvicted),
-			})
+			}
+			if timing.QueueWaitCount > 0 {
+				ev.NDPIQueueWaitP50 = kafka.Int64Ptr(timing.QueueWaitP50)
+				ev.NDPIQueueWaitP95 = kafka.Int64Ptr(timing.QueueWaitP95)
+				ev.NDPIQueueWaitP99 = kafka.Int64Ptr(timing.QueueWaitP99)
+				ev.NDPIQueueWaitP999 = kafka.Int64Ptr(timing.QueueWaitP999)
+				ev.NDPIQueueWaitCount = kafka.Int64Ptr(timing.QueueWaitCount)
+			}
+			if timing.ProcessCount > 0 {
+				ev.NDPIProcessP50 = kafka.Int64Ptr(timing.ProcessP50)
+				ev.NDPIProcessP95 = kafka.Int64Ptr(timing.ProcessP95)
+				ev.NDPIProcessP99 = kafka.Int64Ptr(timing.ProcessP99)
+				ev.NDPIProcessP999 = kafka.Int64Ptr(timing.ProcessP999)
+				ev.NDPIProcessCount = kafka.Int64Ptr(timing.ProcessCount)
+			}
+			if timing.QueueDepthMax > 0 {
+				ev.NDPIQueueDepthMax = kafka.Int64Ptr(timing.QueueDepthMax)
+				ev.NDPIQueueDepthAvg = kafka.Int64Ptr(timing.QueueDepthAvg)
+			}
+			s.producer.Publish(ev)
 		}
 	}
 }
@@ -390,6 +437,8 @@ func (s *Server) handle(conn net.Conn, slotsUsed, slotsMax, perIPActive int) {
 	h.flowsHoneypot = &s.flowsHoneypot
 	h.flowTableNotFound = &s.flowTableNotFound
 	h.flowTableUnknown = &s.flowTableUnknown
+	h.fastpathEnabled = s.fastpathEnabled
+	h.classifyWaitTimeout = s.classifyWaitTimeout
 	h.Handle()
 
 	log.Info("handler finished")

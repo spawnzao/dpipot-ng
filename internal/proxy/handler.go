@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -87,6 +88,9 @@ type Handler struct {
 	flowsHoneypot       *atomic.Int64
 	flowTableNotFound   *atomic.Int64
 	flowTableUnknown    *atomic.Int64
+
+	fastpathEnabled     bool          // FASTPATH_ENABLED: structural payload detection for Unknown flows
+	classifyWaitTimeout time.Duration // CLASSIFY_WAIT_TIMEOUT: max wait for nDPI to classify Unknown flows (0 = disabled)
 }
 
 func NewHandler(
@@ -345,6 +349,8 @@ func (h *Handler) Handle() {
 		clientRttMs        float64
 		clientRttVarMs     float64
 		clientRetransmits  uint8
+		fastpathProto      string // protocol detected by fast-path; empty when not applied
+		routingSource      string // "fastpath" | "ndpi" | "fallback"
 	)
 
 	// Aplica resultados do FlowTracker antecipado com swap intencional (mesmo do STEP 3),
@@ -788,6 +794,40 @@ greetingBuf = greetingBuf[:n]
 		appProtoFlow = ""
 	}
 
+	// Phase 3 — WaitClassified: if nDPI hasn't classified the flow yet, block briefly.
+	// Only engaged when the result is still Unknown and there is no SERVER_FIRST_PORTS
+	// fallback already in play. The timeout is bounded by both classifyWaitTimeout and
+	// the overall connection deadline so the connection is never held open abnormally.
+	if h.flowTable != nil && h.classifyWaitTimeout > 0 &&
+		strings.ToUpper(ndpiLabel) == "UNKNOWN" && fallbackProto == "" {
+		waitDeadline := time.Now().Add(h.classifyWaitTimeout)
+		if !deadline.IsZero() && deadline.Before(waitDeadline) {
+			waitDeadline = deadline
+		}
+		waitCtx, cancelWait := context.WithDeadline(context.Background(), waitDeadline)
+		if entry, ok := h.flowTable.WaitClassified(waitCtx, flowIDForTracker); ok {
+			masterProtoFlow = entry.Protocol
+			appProtoFlow = entry.MasterProtocol
+			if entry.FlowUUID != "" && h.classifierFlowID == "" {
+				h.classifierFlowID = entry.FlowUUID
+				log = log.With(zap.String("flow_id", h.classifierFlowID))
+			}
+			clientTTL = entry.TTL
+			clientTOS = kafka.Uint8Ptr(entry.TOS)
+			clientTCPWindow = kafka.Uint16Ptr(entry.TCPWindow)
+			clientIPVersion = entry.IPVersion
+			trackerFound = true
+			ndpiLabel = masterProtoFlow
+			log.Info("WaitClassified: classified",
+				zap.String("ndpi_proto", masterProtoFlow),
+				zap.String("ndpi_app", appProtoFlow))
+		} else {
+			log.Debug("WaitClassified: timeout",
+				zap.Duration("timeout", h.classifyWaitTimeout))
+		}
+		cancelWait()
+	}
+
 	log.Info("fluxo classificado", zap.String("app_proto", ndpiLabel))
 
 	// Garante que ndpiLabel nunca seja vazio
@@ -806,6 +846,23 @@ greetingBuf = greetingBuf[:n]
 				zap.String("app_proto", appProtoFlow))
 			ndpiLabel = appProtoFlow
 		}
+	}
+
+	// Fast-path: structural payload inspection for flows still Unknown after nDPI/appProto refinement.
+	// Never overrides a confirmed nDPI classification; only applied when FASTPATH_ENABLED=true (default).
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && h.fastpathEnabled && len(firstChunk) > 0 {
+		if fp := mitm.FastpathDetect(firstChunk); fp != "" {
+			log.Info("fast-path: classified unknown flow",
+				zap.String("proto", fp),
+				zap.Int("payload_bytes", len(firstChunk)))
+			fastpathProto = fp
+			routingSource = "fastpath"
+			ndpiLabel = fp
+		} else {
+			routingSource = "fallback"
+		}
+	} else if strings.ToUpper(ndpiLabel) != "UNKNOWN" && routingSource == "" {
+		routingSource = "ndpi"
 	}
 
 	// In-proxy handlers: intercept before route resolution so no HONEYPOT_ROUTES entry is required.
@@ -1391,8 +1448,39 @@ publish:
 		HASSHAlgos:      sshHASSHAlgos,
 		SSHClientBanner: sshClientBanner,
 		SSHServerBanner: sshServerBanner,
+		RoutingSource:   routingSource,
+		FastpathProto:   fastpathProto,
 	}
 	h.publishEvent(event)
+
+	// Concordance: when flow was routed via fast-path, compare against nDPI's final classification.
+	// Re-reads the flow table at connection close — nDPI had the full session to classify.
+	if routingSource == "fastpath" && h.flowTable != nil {
+		if entry, found := h.flowTable.Get(flowIDForTracker); found {
+			ndpiFinal := entry.MasterProtocol
+			if strings.ToUpper(ndpiFinal) == "UNKNOWN" || ndpiFinal == "" {
+				ndpiFinal = entry.Protocol
+			}
+			if ndpiFinal != "" && strings.ToUpper(ndpiFinal) != "UNKNOWN" {
+				match := strings.EqualFold(fastpathProto, ndpiFinal)
+				h.publishEvent(&kafka.Event{
+					EventType:     "concordance",
+					FlowID:        h.classifierFlowID,
+					TupleID:       h.tupleID,
+					Timestamp:     time.Now(),
+					SrcIP:         srcAddr.IP.String(),
+					SrcPort:       srcAddr.Port,
+					DstIP:         origDstIP.String(),
+					DstPort:       int(origDstPort),
+					NDPIProto:     ndpiFinal,
+					RoutingSource: "fastpath",
+					FastpathProto: fastpathProto,
+					FastpathMatch: kafka.BoolPtr(match),
+					Instance:      "proxy",
+				})
+			}
+		}
+	}
 
 	if honeypotError != "" {
 		log.Info("fluxo encerrado com erro",

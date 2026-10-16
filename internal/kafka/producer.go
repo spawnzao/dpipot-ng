@@ -98,6 +98,11 @@ type Event struct {
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 
+	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
+	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"
+	FastpathProto string `json:"fastpath_proto,omitempty"` // protocol label from structural detector
+	FastpathMatch *bool  `json:"fastpath_match,omitempty"` // true when fast-path and nDPI final label agreed
+
 	Severity      string    `json:"severity,omitempty"`
 	Instance      string    `json:"instance,omitempty"`
 	PortMismatch  bool      `json:"port_mismatch,omitempty"`  // true: ndpi_proto ≠ protocolo esperado para dst_port
@@ -156,6 +161,23 @@ type Event struct {
 	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
 	FlowTableNotFound *int64 `json:"flow_table_not_found,omitempty"` // lookups sem entrada (nDPI ainda não classificou)
 	FlowTableUnknown  *int64 `json:"flow_table_unknown,omitempty"`   // entrada existe mas protocolo é Unknown
+
+	// Phase 2 timing histograms — preenchidos no heartbeat; nanoseconds
+	// queue_wait: T2−T1 (time packet spent in AF_PACKET channel before dequeue)
+	NDPIQueueWaitP50   *int64 `json:"ndpi_queue_wait_p50_ns,omitempty"`
+	NDPIQueueWaitP95   *int64 `json:"ndpi_queue_wait_p95_ns,omitempty"`
+	NDPIQueueWaitP99   *int64 `json:"ndpi_queue_wait_p99_ns,omitempty"`
+	NDPIQueueWaitP999  *int64 `json:"ndpi_queue_wait_p999_ns,omitempty"`
+	NDPIQueueWaitCount *int64 `json:"ndpi_queue_wait_count,omitempty"`
+	// processing: T3−T2 (wall-clock cost of one ProcessPacket call, including flowTable.Update)
+	NDPIProcessP50   *int64 `json:"ndpi_process_p50_ns,omitempty"`
+	NDPIProcessP95   *int64 `json:"ndpi_process_p95_ns,omitempty"`
+	NDPIProcessP99   *int64 `json:"ndpi_process_p99_ns,omitempty"`
+	NDPIProcessP999  *int64 `json:"ndpi_process_p999_ns,omitempty"`
+	NDPIProcessCount *int64 `json:"ndpi_process_count,omitempty"`
+	// queue_depth: samples of len(af.Packets()) at dequeue time
+	NDPIQueueDepthMax *int64 `json:"ndpi_queue_depth_max,omitempty"`
+	NDPIQueueDepthAvg *int64 `json:"ndpi_queue_depth_avg,omitempty"`
 
 	// qualidade de link — preenchido no heartbeat; permite calcular retransmits/fluxo por direção
 	TCPRetransmitsClientTotal   *int64 `json:"tcp_retransmits_client_total,omitempty"`
@@ -528,7 +550,8 @@ func (p *Producer) DeliveryDroppedAndReset() int64 {
 
 // IntPtr, Int64Ptr, Uint8Ptr e Uint16Ptr retornam ponteiros para os valores.
 // Usados em campos com omitempty que precisam aparecer no JSON mesmo quando zero.
-func IntPtr(n int) *int         { return &n }
-func Int64Ptr(n int64) *int64   { return &n }
-func Uint8Ptr(n uint8) *uint8   { return &n }
+func IntPtr(n int) *int          { return &n }
+func Int64Ptr(n int64) *int64    { return &n }
+func Uint8Ptr(n uint8) *uint8    { return &n }
 func Uint16Ptr(n uint16) *uint16 { return &n }
+func BoolPtr(b bool) *bool       { return &b }
