@@ -163,6 +163,14 @@ func (t *Table) WaitClassified(ctx context.Context, flowID string) (*Entry, bool
 	actual, _ := t.notifiers.LoadOrStore(flowID, ch)
 	ch = actual.(chan struct{})
 
+	// Double-check: Update() may have fired between the classifiedEntry call above
+	// and LoadOrStore. If so, the notifier was never registered and ch is orphaned —
+	// re-read under the read lock before blocking to avoid a permanent sleep.
+	if e, ok := t.classifiedEntry(flowID); ok {
+		t.notifiers.CompareAndDelete(flowID, ch)
+		return e, true
+	}
+
 	select {
 	case <-ch:
 		// Update() classified the flow; re-read the entry.

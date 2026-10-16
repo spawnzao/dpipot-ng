@@ -32,8 +32,9 @@ func IsRDP(data []byte) bool {
 		return false
 	}
 	tpktLen := uint16(data[2])<<8 | uint16(data[3])
-	// tpktLen encodes total TPKT packet size; must be at least 11 bytes and fit in data.
-	if tpktLen < 11 || int(tpktLen) > len(data) {
+	// Only check the lower bound: the first chunk may be a TCP fragment smaller than
+	// the full PDU (e.g. large RDP cookie). Upper-bound check causes false negatives.
+	if tpktLen < 11 {
 		return false
 	}
 	// data[5] = X.224 PDU type; 0xe0 = Connection Request (CR).
@@ -54,6 +55,36 @@ func IsHTTP(data []byte) bool {
 	return false
 }
 
+// IsMQTT reports whether data is a MQTT CONNECT packet (type 1).
+// Checks for the fixed-header byte and the mandatory protocol-name field.
+func IsMQTT(data []byte) bool {
+	// data[0] == 0x10: packet type 1 (CONNECT), flags 0.
+	return len(data) >= 4 && data[0] == 0x10 &&
+		(bytes.Contains(data, []byte("MQTT")) || bytes.Contains(data, []byte("MQIsdp")))
+}
+
+// IsRedis reports whether data looks like a Redis client greeting.
+// Covers both RESP (array/bulk-string prefixes) and common inline commands.
+func IsRedis(data []byte) bool {
+	if len(data) < 4 {
+		return false
+	}
+	// RESP: '*' or '$' followed by a digit — e.g. *3\r\n or $4\r\n
+	if (data[0] == '*' || data[0] == '$') && data[1] >= '0' && data[1] <= '9' {
+		return true
+	}
+	// Inline commands sent without framing
+	for _, prefix := range [][]byte{
+		[]byte("PING"), []byte("INFO"), []byte("AUTH"),
+		[]byte("COMMAND"), []byte("CONFIG"),
+	} {
+		if bytes.HasPrefix(data, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // FastpathDetect returns a protocol label for flows whose nDPI classification is still
 // Unknown. Returns "" when no protocol is recognizable from the payload alone.
 func FastpathDetect(data []byte) string {
@@ -65,6 +96,15 @@ func FastpathDetect(data []byte) string {
 	}
 	if IsHTTP(data) {
 		return "HTTP"
+	}
+	if IsSSH(data) {
+		return "SSH"
+	}
+	if IsMQTT(data) {
+		return "MQTT"
+	}
+	if IsRedis(data) {
+		return "REDIS"
 	}
 	return ""
 }

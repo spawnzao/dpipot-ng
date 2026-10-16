@@ -794,10 +794,22 @@ greetingBuf = greetingBuf[:n]
 		appProtoFlow = ""
 	}
 
-	// Phase 3 — WaitClassified: if nDPI hasn't classified the flow yet, block briefly.
-	// Only engaged when the result is still Unknown and there is no SERVER_FIRST_PORTS
-	// fallback already in play. The timeout is bounded by both classifyWaitTimeout and
-	// the overall connection deadline so the connection is never held open abnormally.
+	// Fast-path: O(1) structural payload inspection runs first so the blocking wait
+	// below is skipped for flows recognizable from the first chunk alone (RDP, HTTP,
+	// SSH, MQTT, Redis). Never overrides a confirmed nDPI classification.
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && h.fastpathEnabled && len(firstChunk) > 0 {
+		if fp := mitm.FastpathDetect(firstChunk); fp != "" {
+			log.Info("fast-path: classified unknown flow",
+				zap.String("proto", fp),
+				zap.Int("payload_bytes", len(firstChunk)))
+			fastpathProto = fp
+			routingSource = "fastpath"
+			ndpiLabel = fp
+		}
+	}
+
+	// WaitClassified: if fast-path also returned empty, block briefly for nDPI.
+	// Only engaged when no SERVER_FIRST_PORTS fallback is already in play.
 	if h.flowTable != nil && h.classifyWaitTimeout > 0 &&
 		strings.ToUpper(ndpiLabel) == "UNKNOWN" && fallbackProto == "" {
 		waitDeadline := time.Now().Add(h.classifyWaitTimeout)
@@ -818,6 +830,7 @@ greetingBuf = greetingBuf[:n]
 			clientIPVersion = entry.IPVersion
 			trackerFound = true
 			ndpiLabel = masterProtoFlow
+			routingSource = "ndpi"
 			log.Info("WaitClassified: classified",
 				zap.String("ndpi_proto", masterProtoFlow),
 				zap.String("ndpi_app", appProtoFlow))
@@ -848,21 +861,13 @@ greetingBuf = greetingBuf[:n]
 		}
 	}
 
-	// Fast-path: structural payload inspection for flows still Unknown after nDPI/appProto refinement.
-	// Never overrides a confirmed nDPI classification; only applied when FASTPATH_ENABLED=true (default).
-	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && h.fastpathEnabled && len(firstChunk) > 0 {
-		if fp := mitm.FastpathDetect(firstChunk); fp != "" {
-			log.Info("fast-path: classified unknown flow",
-				zap.String("proto", fp),
-				zap.Int("payload_bytes", len(firstChunk)))
-			fastpathProto = fp
-			routingSource = "fastpath"
-			ndpiLabel = fp
-		} else {
+	// Finalize routing source: set only if not already stamped by fast-path or WaitClassified.
+	if routingSource == "" {
+		if strings.ToUpper(ndpiLabel) == "UNKNOWN" {
 			routingSource = "fallback"
+		} else {
+			routingSource = "ndpi"
 		}
-	} else if strings.ToUpper(ndpiLabel) != "UNKNOWN" && routingSource == "" {
-		routingSource = "ndpi"
 	}
 
 	// In-proxy handlers: intercept before route resolution so no HONEYPOT_ROUTES entry is required.
