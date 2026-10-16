@@ -2,8 +2,10 @@ package flow
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,6 +31,9 @@ type Table struct {
 	cleanup     time.Duration
 	lastCleanup time.Time
 	stopCh      chan struct{}
+	// notifiers is keyed by flowID (tupleID); chan struct{} is closed (broadcast) when
+	// the entry transitions from Unknown to a concrete protocol classification.
+	notifiers sync.Map
 }
 
 type TableConfig struct {
@@ -96,14 +101,77 @@ func (t *Table) Get(flowID string) (*Entry, bool) {
 
 func (t *Table) Update(flowID string, entry *Entry) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
 	entry.LastSeen = time.Now()
 	t.entries[flowID] = entry
+
+	// Signal any WaitClassified waiter when the entry carries a concrete classification.
+	// The load+close happens under the write lock so the waiter sees a consistent entry.
+	var notifierCh chan struct{}
+	if !isUnknownProto(entry.Protocol) {
+		if ch, ok := t.notifiers.LoadAndDelete(flowID); ok {
+			notifierCh = ch.(chan struct{})
+		}
+	}
 
 	if time.Since(t.lastCleanup) > t.cleanup {
 		t.cleanupLocked()
 		t.lastCleanup = time.Now()
+	}
+	t.mu.Unlock()
+
+	// Close outside the lock to avoid holding it during channel ops (no-op if nil).
+	if notifierCh != nil {
+		close(notifierCh)
+	}
+}
+
+// isUnknownProto reports whether a protocol string represents an unclassified flow.
+func isUnknownProto(s string) bool {
+	return s == "" || strings.EqualFold(s, "unknown")
+}
+
+// classifiedEntry returns the entry for flowID if it exists, is not TTL-expired,
+// and carries a concrete (non-Unknown) protocol classification.
+func (t *Table) classifiedEntry(flowID string) (*Entry, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	e, ok := t.entries[flowID]
+	if !ok || time.Since(e.LastSeen) > t.ttl {
+		return nil, false
+	}
+	if isUnknownProto(e.Protocol) {
+		return nil, false
+	}
+	return e, true
+}
+
+// WaitClassified blocks until the flow identified by flowID receives a concrete nDPI
+// classification, or until ctx is cancelled (timeout). It returns the classified entry
+// and true on success, or nil/false on timeout.
+//
+// WaitClassified is safe for concurrent use. Multiple goroutines waiting on the same
+// flowID share a single notification channel and are all woken together.
+func (t *Table) WaitClassified(ctx context.Context, flowID string) (*Entry, bool) {
+	// Fast path: entry already classified.
+	if e, ok := t.classifiedEntry(flowID); ok {
+		return e, true
+	}
+
+	// Register a notifier channel. If another goroutine has already registered one for
+	// this flowID, reuse it so a single Update() close wakes all waiters.
+	ch := make(chan struct{})
+	actual, _ := t.notifiers.LoadOrStore(flowID, ch)
+	ch = actual.(chan struct{})
+
+	select {
+	case <-ch:
+		// Update() classified the flow; re-read the entry.
+		e, ok := t.classifiedEntry(flowID)
+		return e, ok
+	case <-ctx.Done():
+		// Timed out; remove our registration if it's still ours.
+		t.notifiers.CompareAndDelete(flowID, ch)
+		return nil, false
 	}
 }
 
