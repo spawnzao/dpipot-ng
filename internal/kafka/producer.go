@@ -98,6 +98,10 @@ type Event struct {
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 
+	// FTP login fields
+	FTPUsername string `json:"ftp_username,omitempty"`
+	FTPPassword string `json:"ftp_password,omitempty"`
+
 	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
 	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"
 	FastpathProto string `json:"fastpath_proto,omitempty"` // protocol label from structural detector

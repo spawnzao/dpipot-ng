@@ -1,6 +1,7 @@
 package mitm
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -23,6 +24,7 @@ const (
 	EventVNCResult     CaptureEventType = "vnc_result"
 	EventMySQLLogin    CaptureEventType = "mysql_login"
 	EventSMTPRelayProbe CaptureEventType = "smtp_relay_probe"
+	EventFTPLogin      CaptureEventType = "ftp_login"
 )
 
 type CaptureEvent struct {
@@ -60,6 +62,10 @@ type CaptureEvent struct {
 	// SMTP relay probe
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
+
+	// FTP login
+	FTPUsername string `json:"ftp_username,omitempty"`
+	FTPPassword string `json:"ftp_password,omitempty"`
 }
 
 type ProtocolParser interface {
@@ -260,47 +266,60 @@ func (s *MySQLSession) ParseServerData(data []byte, logger func(string, ...inter
 	return []CaptureEvent{{EventType: EventRawData, Direction: "honeypot->client", RawPayload: hex.EncodeToString(data)}}
 }
 
-type FTPParser struct{}
-
-func (p *FTPParser) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
-	text := strings.TrimSpace(string(data))
-	upper := strings.ToUpper(text)
-
-	if strings.HasPrefix(upper, "USER ") {
-		return []CaptureEvent{{
-			EventType: EventCredential,
-			Direction: "client->honeypot",
-			Username:  strings.TrimPrefix(text[5:], " "),
-		}}
-	}
-	if strings.HasPrefix(upper, "PASS ") {
-		return []CaptureEvent{{
-			EventType: EventCredential,
-			Direction: "client->honeypot",
-			Password:  strings.TrimPrefix(text[5:], " "),
-		}}
-	}
-	return []CaptureEvent{{
-		EventType: EventCommand,
-		Direction: "client->honeypot",
-		Command:   text,
-	}}
+// FTPBiParser is a stateful BiParser that accumulates the USER command across
+// chunks and emits a single ftp_login event with both username and password
+// when the PASS command arrives.
+type FTPBiParser struct {
+	username string
+	buf      []byte
 }
 
-func (p *FTPParser) ParseServerData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
+func (p *FTPBiParser) FeedClient(data []byte) []CaptureEvent {
+	p.buf = append(p.buf, data...)
+	var events []CaptureEvent
+	for {
+		idx := bytes.Index(p.buf, []byte("\r\n"))
+		if idx < 0 {
+			break
+		}
+		line := string(p.buf[:idx])
+		p.buf = p.buf[idx+2:]
+		upper := strings.ToUpper(line)
+		switch {
+		case strings.HasPrefix(upper, "USER "):
+			p.username = strings.TrimSpace(line[5:])
+		case strings.HasPrefix(upper, "PASS "):
+			events = append(events, CaptureEvent{
+				EventType:   EventFTPLogin,
+				Direction:   "client->honeypot",
+				FTPUsername: p.username,
+				FTPPassword: strings.TrimSpace(line[5:]),
+			})
+		case line != "":
+			events = append(events, CaptureEvent{
+				EventType: EventCommand,
+				Direction: "client->honeypot",
+				Command:   line,
+			})
+		}
+	}
+	return events
+}
+
+func (p *FTPBiParser) FeedServer(data []byte) []CaptureEvent {
 	text := strings.TrimSpace(string(data))
 	if strings.HasPrefix(text, "220") {
-		return []CaptureEvent{{
-			EventType: EventBanner,
-			Direction: "honeypot->client",
-			Banner:    text,
-		}}
+		return []CaptureEvent{{EventType: EventBanner, Direction: "honeypot->client", Banner: text}}
 	}
-	return []CaptureEvent{{
-		EventType: EventResponse,
-		Direction: "honeypot->client",
-		Response:  text,
-	}}
+	return nil
+}
+
+func (p *FTPBiParser) ParseClientData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
+	return p.FeedClient(data)
+}
+
+func (p *FTPBiParser) ParseServerData(data []byte, _ func(string, ...interface{})) []CaptureEvent {
+	return p.FeedServer(data)
 }
 
 var smtpCommandPrefixes = []string{
@@ -760,7 +779,7 @@ func (p *RDPParser) ParseServerData(data []byte, logger func(string, ...interfac
 func NewParser(protocol string, port int) ProtocolParser {
 	switch strings.ToUpper(protocol) {
 	case "FTP":
-		return &FTPParser{}
+		return &FTPBiParser{}
 	case "MYSQL":
 		return &MySQLSession{}
 	case "SMTP", "MAIL", "MAIL_SMTP":
@@ -778,7 +797,7 @@ func NewParser(protocol string, port int) ProtocolParser {
 	default:
 		switch port {
 		case 21:
-			return &FTPParser{}
+			return &FTPBiParser{}
 		case 23:
 			return &TelnetSession{}
 		case 25, 465, 587:

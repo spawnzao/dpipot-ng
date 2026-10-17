@@ -226,5 +226,7 @@ func emitBiEvent(config ServerFirstConfig, ev CaptureEvent, _, _ []byte) {
 		MySQLAuthHash:    ev.MySQLAuthHash,
 		SMTPSender:       ev.SMTPSender,
 		SMTPRecipient:    ev.SMTPRecipient,
+		FTPUsername:      ev.FTPUsername,
+		FTPPassword:      ev.FTPPassword,
 	})
 }
