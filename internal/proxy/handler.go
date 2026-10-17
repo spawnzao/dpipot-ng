@@ -794,21 +794,9 @@ greetingBuf = greetingBuf[:n]
 		appProtoFlow = ""
 	}
 
-	// Fast-path: O(1) structural payload inspection runs first so the blocking wait
-	// below is skipped for flows recognizable from the first chunk alone (RDP, HTTP,
-	// SSH, MQTT, Redis). Never overrides a confirmed nDPI classification.
-	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && h.fastpathEnabled && len(firstChunk) > 0 {
-		if fp := mitm.FastpathDetect(firstChunk); fp != "" {
-			log.Info("fast-path: classified unknown flow",
-				zap.String("proto", fp),
-				zap.Int("payload_bytes", len(firstChunk)))
-			fastpathProto = fp
-			routingSource = "fastpath"
-			ndpiLabel = fp
-		}
-	}
-
-	// WaitClassified: if fast-path also returned empty, block briefly for nDPI.
+	// WaitClassified: block briefly for nDPI when the flow table lookup returned Unknown.
+	// Primary classification path — fast-path below is only a fallback for flows nDPI
+	// cannot identify within the timeout.
 	// Only engaged when no SERVER_FIRST_PORTS fallback is already in play.
 	if h.flowTable != nil && h.classifyWaitTimeout > 0 &&
 		strings.ToUpper(ndpiLabel) == "UNKNOWN" && fallbackProto == "" {
@@ -839,6 +827,19 @@ greetingBuf = greetingBuf[:n]
 				zap.Duration("timeout", h.classifyWaitTimeout))
 		}
 		cancelWait()
+	}
+
+	// Fast-path: O(1) structural payload inspection as fallback when nDPI returned Unknown.
+	// Never overrides a confirmed nDPI classification.
+	if strings.ToUpper(ndpiLabel) == "UNKNOWN" && h.fastpathEnabled && len(firstChunk) > 0 {
+		if fp := mitm.FastpathDetect(firstChunk); fp != "" {
+			log.Info("fast-path: classified unknown flow",
+				zap.String("proto", fp),
+				zap.Int("payload_bytes", len(firstChunk)))
+			fastpathProto = fp
+			routingSource = "fastpath"
+			ndpiLabel = fp
+		}
 	}
 
 	log.Info("fluxo classificado", zap.String("app_proto", ndpiLabel))
