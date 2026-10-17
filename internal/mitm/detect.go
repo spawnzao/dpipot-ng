@@ -85,6 +85,24 @@ func IsRedis(data []byte) bool {
 	return false
 }
 
+// IsPostgreSQL reports whether data is a PostgreSQL client startup message.
+// Covers SSLRequest (8 bytes, magic 0x04d2162f), GSSENCRequest (magic 0x04d21630),
+// and the regular Startup message (protocol major version = 3).
+func IsPostgreSQL(data []byte) bool {
+	if len(data) < 8 {
+		return false
+	}
+	msgLen := uint32(data[0])<<24 | uint32(data[1])<<16 | uint32(data[2])<<8 | uint32(data[3])
+	magic := uint32(data[4])<<24 | uint32(data[5])<<16 | uint32(data[6])<<8 | uint32(data[7])
+	// SSLRequest or GSSENCRequest
+	if msgLen == 8 && (magic == 0x04d2162f || magic == 0x04d21630) {
+		return true
+	}
+	// Startup message v3 (length prefix + protocol major = 3)
+	major := uint16(data[4])<<8 | uint16(data[5])
+	return msgLen >= 8 && msgLen <= 10000 && major == 3
+}
+
 // FastpathDetect returns a protocol label for flows whose nDPI classification is still
 // Unknown. Returns "" when no protocol is recognizable from the payload alone.
 func FastpathDetect(data []byte) string {
@@ -105,6 +123,9 @@ func FastpathDetect(data []byte) string {
 	}
 	if IsRedis(data) {
 		return "REDIS"
+	}
+	if IsPostgreSQL(data) {
+		return "PostgreSQL"
 	}
 	return ""
 }
