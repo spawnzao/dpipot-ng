@@ -138,7 +138,7 @@ func HandleMQTT(config MQTTConfig) error {
 		clientID, willTopic, username, password, protoLevel)
 
 	if config.OnEvent != nil {
-		config.OnEvent(&kafka.Event{
+		base := kafka.Event{
 			FlowID:        config.FlowID,
 			TupleID:       config.TupleID,
 			Timestamp:     time.Now(),
@@ -147,14 +147,29 @@ func HandleMQTT(config MQTTConfig) error {
 			DstIP:         config.DstIP,
 			DstPort:       config.DstPort,
 			NDPIProto:     "MQTT",
-			NDPIApp:       "mqtt_connect",
-			AttackType:    username,
 			Instance:      "proxy",
 			MQTTClientID:  clientID,
 			MQTTWillTopic: willTopic,
-			MQTTUsername:  username,
-			MQTTPassword:  password,
-		})
+		}
+		if username != "" {
+			uEv := base
+			uEv.NDPIApp = "username"
+			uEv.AttackType = username
+			uEv.MQTTUsername = username
+			config.OnEvent(&uEv)
+		}
+		if password != "" {
+			pEv := base
+			pEv.NDPIApp = "password"
+			pEv.AttackType = password
+			pEv.MQTTPassword = password
+			config.OnEvent(&pEv)
+		}
+		if username == "" && password == "" {
+			ev := base
+			ev.NDPIApp = "mqtt_connect"
+			config.OnEvent(&ev)
+		}
 	}
 
 	var connack []byte

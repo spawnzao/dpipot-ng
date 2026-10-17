@@ -79,7 +79,7 @@ func HandleMSSQL(config MSSQLConfig) error {
 			config.Logger("LOGIN7: user=%q host=%q app=%q pass=%q",
 				info.Username, info.Hostname, info.AppName, info.Password)
 			if config.OnEvent != nil {
-				config.OnEvent(&kafka.Event{
+				base := kafka.Event{
 					FlowID:          config.FlowID,
 					TupleID:         config.TupleID,
 					Timestamp:       time.Now(),
@@ -88,14 +88,22 @@ func HandleMSSQL(config MSSQLConfig) error {
 					DstIP:           config.DstIP,
 					DstPort:         config.DstPort,
 					NDPIProto:       "MSSQL_TDS",
-					NDPIApp:         "mssql_login",
-					AttackType:      info.Username,
 					Instance:        "proxy",
-					MSSQLUsername:   info.Username,
-					MSSQLPassword:   info.Password,
 					MSSQLClientHost: info.Hostname,
 					MSSQLAppName:    info.AppName,
-				})
+				}
+				uEv := base
+				uEv.NDPIApp = "username"
+				uEv.AttackType = info.Username
+				uEv.MSSQLUsername = info.Username
+				config.OnEvent(&uEv)
+				if info.Password != "" {
+					pEv := base
+					pEv.NDPIApp = "password"
+					pEv.AttackType = info.Password
+					pEv.MSSQLPassword = info.Password
+					config.OnEvent(&pEv)
+				}
 			}
 			resp := buildTDSLoginErrorResponse(info.Username)
 			if _, err := config.ClientConn.Write(resp); err != nil {

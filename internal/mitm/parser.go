@@ -224,32 +224,40 @@ func (s *MySQLSession) FeedClient(data []byte) []CaptureEvent {
 		return nil
 	}
 	authResp := payload[i : i+authLen]
-	ev := CaptureEvent{
-		EventType:     EventMySQLLogin,
+	usernameEv := CaptureEvent{
+		EventType:     EventCredential,
 		Direction:     "client->honeypot",
+		Username:      username,
 		MySQLUsername: username,
 	}
+	events := []CaptureEvent{usernameEv}
 	if len(s.salt) == 20 && len(authResp) == 20 {
 		plugin := s.authPlugin
 		if plugin == "" {
 			plugin = "mysql_native_password"
 		}
+		var authHash string
 		if plugin == "mysql_native_password" {
-			// hashcat mode 11200
-			ev.MySQLAuthHash = fmt.Sprintf("$mysqlna$%s*%s",
+			authHash = fmt.Sprintf("$mysqlna$%s*%s",
 				hex.EncodeToString(s.salt), hex.EncodeToString(authResp))
 		} else {
-			ev.MySQLAuthHash = fmt.Sprintf("%s:%s*%s",
+			authHash = fmt.Sprintf("%s:%s*%s",
 				plugin, hex.EncodeToString(s.salt), hex.EncodeToString(authResp))
 		}
+		events = append(events, CaptureEvent{
+			EventType:     EventCredential,
+			Direction:     "client->honeypot",
+			Password:      authHash,
+			MySQLAuthHash: authHash,
+		})
 	}
-	return []CaptureEvent{ev}
+	return events
 }
 
 func (s *MySQLSession) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
 	user := extractMySQLUsername(data, logger)
 	if user != "" {
-		return []CaptureEvent{{EventType: EventMySQLLogin, Direction: "client->honeypot", MySQLUsername: user}}
+		return []CaptureEvent{{EventType: EventCredential, Direction: "client->honeypot", Username: user, MySQLUsername: user}}
 	}
 	if len(data) > 5 {
 		return []CaptureEvent{{EventType: EventRawData, Direction: "client->honeypot", RawPayload: hex.EncodeToString(data)}}
@@ -289,12 +297,13 @@ func (p *FTPBiParser) FeedClient(data []byte) []CaptureEvent {
 		case strings.HasPrefix(upper, "USER "):
 			p.username = strings.TrimSpace(line[5:])
 		case strings.HasPrefix(upper, "PASS "):
-			events = append(events, CaptureEvent{
-				EventType:   EventFTPLogin,
-				Direction:   "client->honeypot",
-				FTPUsername: p.username,
-				FTPPassword: strings.TrimSpace(line[5:]),
-			})
+			password := strings.TrimSpace(line[5:])
+			events = append(events,
+				CaptureEvent{EventType: EventCredential, Direction: "client->honeypot",
+					Username: p.username, FTPUsername: p.username},
+				CaptureEvent{EventType: EventCredential, Direction: "client->honeypot",
+					Password: password, FTPPassword: password},
+			)
 		case line != "":
 			events = append(events, CaptureEvent{
 				EventType: EventCommand,

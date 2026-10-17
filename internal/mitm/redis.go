@@ -68,21 +68,31 @@ func HandleRedis(config RedisConfig) error {
 			}
 			config.Logger("AUTH user=%q pass=%q", username, password)
 			if config.OnEvent != nil {
-				config.OnEvent(&kafka.Event{
-					FlowID:        config.FlowID,
-					TupleID:       config.TupleID,
-					Timestamp:     time.Now(),
-					SrcIP:         config.SrcIP,
-					SrcPort:       config.SrcPort,
-					DstIP:         config.DstIP,
-					DstPort:       config.DstPort,
-					NDPIProto:     "REDIS",
-					NDPIApp:       "redis_auth",
-					AttackType:    username,
-					Instance:      "proxy",
-					RedisUsername: username,
-					RedisPassword: password,
-				})
+				base := kafka.Event{
+					FlowID:    config.FlowID,
+					TupleID:   config.TupleID,
+					Timestamp: time.Now(),
+					SrcIP:     config.SrcIP,
+					SrcPort:   config.SrcPort,
+					DstIP:     config.DstIP,
+					DstPort:   config.DstPort,
+					NDPIProto: "REDIS",
+					Instance:  "proxy",
+				}
+				if username != "" {
+					uEv := base
+					uEv.NDPIApp = "username"
+					uEv.AttackType = username
+					uEv.RedisUsername = username
+					config.OnEvent(&uEv)
+				}
+				if password != "" {
+					pEv := base
+					pEv.NDPIApp = "password"
+					pEv.AttackType = password
+					pEv.RedisPassword = password
+					config.OnEvent(&pEv)
+				}
 			}
 			config.ClientConn.Write([]byte("-ERR invalid password\r\n")) //nolint:errcheck
 			return nil
