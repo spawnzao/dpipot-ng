@@ -282,6 +282,11 @@ func (h *Handler) Handle() {
 	deadline := time.Now().Add(h.proxyTimeout)
 	h.conn.SetDeadline(deadline)
 
+	// Wrap the client connection so every Read is counted at TCP wire level,
+	// independently of the payload capture buffer limit.
+	cc := &countingConn{Conn: h.conn}
+	h.conn = cc
+
 	// tuple_id preliminar usando dstAddr (em TPROXY mode == origDst real)
 	// Pode ser refinado em STEP 2 se REDIRECT retornar IP diferente.
 	flowIDForTracker := normalizeFlowID(srcAddr.IP, dstAddr.IP, uint16(srcAddr.Port), uint16(dstAddr.Port), 6)
@@ -1244,9 +1249,12 @@ greetingBuf = greetingBuf[:n]
 				DstPort:     h.dstPort,
 				NDPIProto:   ndpiLabel,
 				Honeypot:    honeypotAddr,
-				PayloadSrc: payloadSrcTLS,
-				PayloadDst: payloadDstTLS,
-				Instance:      "proxy",
+				PayloadSrc:  payloadSrcTLS,
+				PayloadDst:  payloadDstTLS,
+				Instance:    "proxy",
+				ClientBytes: kafka.IntPtr(int(cc.n.Load())),
+				// is_probe and probe_reason are absent on TLS events: TLS handshake
+				// already constitutes client traffic, so client_bytes > 0 is expected.
 			}
 			h.publishEvent(event)
 			log.Info("TLS-MITM: eventos publicados", zap.Int("src", len(payloadSrcTLS)), zap.Int("dst", len(payloadDstTLS)))
@@ -1420,8 +1428,8 @@ publish:
 
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
-	clientBytes := bufSrc.Len()
-	// Phase 1: probe only when client sent zero bytes, nDPI returned Unknown,
+	clientBytes := int(cc.n.Load())
+	// Phase 1: probe only when client sent zero bytes (wire-level), nDPI returned Unknown,
 	// AND the close reason is one of the two known phase-1 motives.
 	// RST and other errors are excluded until phase 2 adds rst_no_payload explicitly.
 	isProbeConfirmed := clientBytes == 0 &&
@@ -1660,4 +1668,19 @@ func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint
 
 	return fmt.Sprintf("%s-%s-%d", src, dst, protocol)
 }
-// trigger rebuild
+
+// countingConn wraps a net.Conn and counts every byte received from the remote
+// side via Read. The counter is independent of payload capture buffers and their
+// size limits, so it reflects actual TCP wire bytes for the lifetime of the conn.
+type countingConn struct {
+	net.Conn
+	n atomic.Int64
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	r, err := c.Conn.Read(b)
+	if r > 0 {
+		c.n.Add(int64(r))
+	}
+	return r, err
+}
