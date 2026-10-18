@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -344,7 +345,8 @@ func (h *Handler) Handle() {
 		isTLS          bool
 		isClientTimeout   bool
 		isProbe          bool
-		probeReason      string // eof_no_payload | timeout_no_payload
+		probeReason      string // eof_no_payload | timeout_no_payload | rst_no_payload | banner_only
+		greetingSent     bool   // true when the server greeting was fully written to the client
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
 		trackerFound       bool
@@ -513,7 +515,11 @@ greetingBuf = greetingBuf[:n]
 		log.Info("ServerFirst: banner/version publicado no Kafka")
 
 		// Envia greeting para o cliente
-		_, err = h.conn.Write(greetingBuf)
+		{
+			written, writeErr := h.conn.Write(greetingBuf)
+			greetingSent = writeErr == nil && written == len(greetingBuf)
+			err = writeErr
+		}
 		if err != nil {
 			log.Warn("falha ao enviar greeting para o cliente", zap.Error(err))
 			honeypotConn.Close()
@@ -575,7 +581,7 @@ greetingBuf = greetingBuf[:n]
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			log.Debug("timeout lendo do cliente, tentando conectar ao honeypot para receber greeting", zap.Error(err))
 			isClientTimeout = true
-		} else if err != io.EOF {
+		} else if err != io.EOF && !isConnectionResetError(err) {
 			log.Debug("erro lendo primeiro chunk", zap.Error(err))
 			honeypotError = fmt.Sprintf("read error: %v", err)
 			goto publish
@@ -590,11 +596,19 @@ greetingBuf = greetingBuf[:n]
 		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			isProbe = true
 			probeReason = "timeout_no_payload"
+		} else if isConnectionResetError(err) {
+			isProbe = true
+			probeReason = "rst_no_payload"
 		}
 	}
 	if isProbe {
 		log.Debug("cliente não enviou dados ou fechou conexão (0 bytes lidos)", zap.Int("n", n), zap.Error(err))
 		honeypotError = ""
+		goto publish
+	}
+	// RST on a server-first port before any data: no greeting was sent yet,
+	// so banner_only does not apply. Publish without connecting to the honeypot.
+	if n == 0 && isConnectionResetError(err) {
 		goto publish
 	}
 
@@ -632,7 +646,11 @@ greetingBuf = greetingBuf[:n]
 					log.Debug("recebi greeting do honeypot", zap.ByteString("greeting", greetingBuf[:min(20, len(greetingBuf))]))
 
 					// Envia greeting para o cliente
-					_, err = h.conn.Write(greetingBuf)
+					{
+						written, writeErr := h.conn.Write(greetingBuf)
+						greetingSent = writeErr == nil && written == len(greetingBuf)
+						err = writeErr
+					}
 					if err != nil {
 						log.Warn("falha enviando greeting para o cliente", zap.Error(err))
 					}
@@ -1429,12 +1447,19 @@ publish:
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
 	clientBytes := int(cc.n.Load())
-	// Phase 1: probe only when client sent zero bytes (wire-level), nDPI returned Unknown,
-	// AND the close reason is one of the two known phase-1 motives.
-	// RST and other errors are excluded until phase 2 adds rst_no_payload explicitly.
-	isProbeConfirmed := clientBytes == 0 &&
+	// A fully forwarded TCP server-first greeting followed by zero client bytes is
+	// banner fingerprinting; takes priority over the close-reason check.
+	isProbeConfirmed := false
+	if clientBytes == 0 && greetingSent {
+		isProbeConfirmed = true
+		probeReason = "banner_only"
+	} else if clientBytes == 0 &&
 		strings.ToUpper(ndpiLabel) == "UNKNOWN" &&
-		(probeReason == "eof_no_payload" || probeReason == "timeout_no_payload")
+		(probeReason == "eof_no_payload" ||
+			probeReason == "timeout_no_payload" ||
+			probeReason == "rst_no_payload") {
+		isProbeConfirmed = true
+	}
 	finalProbeReason := ""
 	if isProbeConfirmed {
 		finalProbeReason = probeReason
@@ -1627,6 +1652,15 @@ func (w *limitedTeeWriter) Write(p []byte) (int, error) {
 
 func (w *limitedTeeWriter) Read(p []byte) (int, error) {
 	return 0, io.EOF
+}
+
+func isConnectionResetError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var errno syscall.Errno
+	return (errors.As(err, &errno) && errno == syscall.ECONNRESET) ||
+		strings.Contains(err.Error(), "connection reset by peer")
 }
 
 func isServerFirstPort(serverFirstPorts map[uint16]string, port uint16) bool {
