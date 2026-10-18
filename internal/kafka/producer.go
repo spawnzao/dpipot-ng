@@ -73,34 +73,17 @@ type Event struct {
 	NTLMOSVersion         string `json:"ntlm_os_version,omitempty"`         // Windows build from NTLM Version block (e.g. "10.0.19041")
 	NTLMAuthHash          string `json:"ntlm_auth_hash,omitempty"`          // hashcat mode 5600: user::domain:challenge:proof:blob
 
-	// Redis intelligence fields
-	RedisUsername string `json:"redis_username,omitempty"`
-	RedisPassword string `json:"redis_password,omitempty"`
-	RedisCommand  string `json:"redis_command,omitempty"`
-
 	// MSSQL TDS intelligence fields
-	MSSQLUsername   string `json:"mssql_username,omitempty"`
-	MSSQLPassword   string `json:"mssql_password,omitempty"`
 	MSSQLClientHost string `json:"mssql_client_host,omitempty"`
 	MSSQLAppName    string `json:"mssql_app_name,omitempty"`
 
 	// MQTT intelligence fields
 	MQTTClientID  string `json:"mqtt_client_id,omitempty"`
 	MQTTWillTopic string `json:"mqtt_will_topic,omitempty"`
-	MQTTUsername  string `json:"mqtt_username,omitempty"`
-	MQTTPassword  string `json:"mqtt_password,omitempty"`
-
-	// MySQL BiParser fields
-	MySQLUsername string `json:"mysql_username,omitempty"`
-	MySQLAuthHash string `json:"mysql_auth_hash,omitempty"` // hashcat mode 11200: $mysqlna$<salt>*<resp>
 
 	// SMTP relay probe fields
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
-
-	// FTP login fields
-	FTPUsername string `json:"ftp_username,omitempty"`
-	FTPPassword string `json:"ftp_password,omitempty"`
 
 	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
 	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"

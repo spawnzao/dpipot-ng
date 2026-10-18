@@ -22,9 +22,7 @@ const (
 	EventVNCSecType    CaptureEventType = "vnc_security"
 	EventVNCAuth       CaptureEventType = "vnc_auth"
 	EventVNCResult     CaptureEventType = "vnc_result"
-	EventMySQLLogin    CaptureEventType = "mysql_login"
 	EventSMTPRelayProbe CaptureEventType = "smtp_relay_probe"
-	EventFTPLogin      CaptureEventType = "ftp_login"
 )
 
 type CaptureEvent struct {
@@ -55,17 +53,9 @@ type CaptureEvent struct {
 	VNCAuthHash      string `json:"vnc_auth_hash,omitempty"`
 	VNCAuthResult    string `json:"vnc_auth_result,omitempty"`
 
-	// MySQL BiParser
-	MySQLUsername string `json:"mysql_username,omitempty"`
-	MySQLAuthHash string `json:"mysql_auth_hash,omitempty"` // hashcat mode 11200: $mysqlna$<salt>*<resp>
-
 	// SMTP relay probe
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
-
-	// FTP login
-	FTPUsername string `json:"ftp_username,omitempty"`
-	FTPPassword string `json:"ftp_password,omitempty"`
 }
 
 type ProtocolParser interface {
@@ -225,10 +215,9 @@ func (s *MySQLSession) FeedClient(data []byte) []CaptureEvent {
 	}
 	authResp := payload[i : i+authLen]
 	usernameEv := CaptureEvent{
-		EventType:     EventCredential,
-		Direction:     "client->honeypot",
-		Username:      username,
-		MySQLUsername: username,
+		EventType: EventCredential,
+		Direction: "client->honeypot",
+		Username:  username,
 	}
 	events := []CaptureEvent{usernameEv}
 	if len(s.salt) == 20 && len(authResp) == 20 {
@@ -245,10 +234,9 @@ func (s *MySQLSession) FeedClient(data []byte) []CaptureEvent {
 				plugin, hex.EncodeToString(s.salt), hex.EncodeToString(authResp))
 		}
 		events = append(events, CaptureEvent{
-			EventType:     EventCredential,
-			Direction:     "client->honeypot",
-			Password:      authHash,
-			MySQLAuthHash: authHash,
+			EventType: EventCredential,
+			Direction: "client->honeypot",
+			Password:  authHash,
 		})
 	}
 	return events
@@ -257,7 +245,7 @@ func (s *MySQLSession) FeedClient(data []byte) []CaptureEvent {
 func (s *MySQLSession) ParseClientData(data []byte, logger func(string, ...interface{})) []CaptureEvent {
 	user := extractMySQLUsername(data, logger)
 	if user != "" {
-		return []CaptureEvent{{EventType: EventCredential, Direction: "client->honeypot", Username: user, MySQLUsername: user}}
+		return []CaptureEvent{{EventType: EventCredential, Direction: "client->honeypot", Username: user}}
 	}
 	if len(data) > 5 {
 		return []CaptureEvent{{EventType: EventRawData, Direction: "client->honeypot", RawPayload: hex.EncodeToString(data)}}
@@ -300,9 +288,9 @@ func (p *FTPBiParser) FeedClient(data []byte) []CaptureEvent {
 			password := strings.TrimSpace(line[5:])
 			events = append(events,
 				CaptureEvent{EventType: EventCredential, Direction: "client->honeypot",
-					Username: p.username, FTPUsername: p.username},
+					Username: p.username},
 				CaptureEvent{EventType: EventCredential, Direction: "client->honeypot",
-					Password: password, FTPPassword: password},
+					Password: password},
 			)
 		case line != "":
 			events = append(events, CaptureEvent{

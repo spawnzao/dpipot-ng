@@ -155,14 +155,12 @@ func HandleMQTT(config MQTTConfig) error {
 			uEv := base
 			uEv.NDPIApp = "username"
 			uEv.AttackType = username
-			uEv.MQTTUsername = username
 			config.OnEvent(&uEv)
 		}
 		if password != "" {
 			pEv := base
 			pEv.NDPIApp = "password"
 			pEv.AttackType = password
-			pEv.MQTTPassword = password
 			config.OnEvent(&pEv)
 		}
 		if username == "" && password == "" {

@@ -95,13 +95,11 @@ func HandleMSSQL(config MSSQLConfig) error {
 				uEv := base
 				uEv.NDPIApp = "username"
 				uEv.AttackType = info.Username
-				uEv.MSSQLUsername = info.Username
 				config.OnEvent(&uEv)
 				if info.Password != "" {
 					pEv := base
 					pEv.NDPIApp = "password"
 					pEv.AttackType = info.Password
-					pEv.MSSQLPassword = info.Password
 					config.OnEvent(&pEv)
 				}
 			}

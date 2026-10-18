@@ -83,14 +83,12 @@ func HandleRedis(config RedisConfig) error {
 					uEv := base
 					uEv.NDPIApp = "username"
 					uEv.AttackType = username
-					uEv.RedisUsername = username
 					config.OnEvent(&uEv)
 				}
 				if password != "" {
 					pEv := base
 					pEv.NDPIApp = "password"
 					pEv.AttackType = password
-					pEv.RedisPassword = password
 					config.OnEvent(&pEv)
 				}
 			}
@@ -102,18 +100,17 @@ func HandleRedis(config RedisConfig) error {
 			config.Logger("exploit cmd=%q", fullCmd)
 			if config.OnEvent != nil {
 				config.OnEvent(&kafka.Event{
-					FlowID:       config.FlowID,
-					TupleID:      config.TupleID,
-					Timestamp:    time.Now(),
-					SrcIP:        config.SrcIP,
-					SrcPort:      config.SrcPort,
-					DstIP:        config.DstIP,
-					DstPort:      config.DstPort,
-					NDPIProto:    "REDIS",
-					NDPIApp:      "redis_exploit",
-					AttackType:   cmd,
-					Instance:     "proxy",
-					RedisCommand: fullCmd,
+					FlowID:    config.FlowID,
+					TupleID:   config.TupleID,
+					Timestamp: time.Now(),
+					SrcIP:     config.SrcIP,
+					SrcPort:   config.SrcPort,
+					DstIP:     config.DstIP,
+					DstPort:   config.DstPort,
+					NDPIProto: "REDIS",
+					NDPIApp:   "redis_exploit",
+					AttackType: fullCmd,
+					Instance:  "proxy",
 				})
 			}
 			config.ClientConn.Write([]byte("-NOAUTH Authentication required.\r\n")) //nolint:errcheck

@@ -30,12 +30,8 @@ func ndpiAppFromEvent(ev CaptureEvent) string {
 		return "vnc_auth"
 	case EventVNCResult:
 		return "vnc_result"
-	case EventMySQLLogin:
-		return "mysql_login"
 	case EventSMTPRelayProbe:
 		return "smtp_relay_probe"
-	case EventFTPLogin:
-		return "ftp_login"
 	default:
 		return string(ev.EventType)
 	}
@@ -69,15 +65,8 @@ func formatAttackType(ev CaptureEvent) string {
 		return ev.VNCAuthHash
 	case EventVNCResult:
 		return ev.VNCAuthResult
-	case EventMySQLLogin:
-		if ev.MySQLUsername != "" {
-			return ev.MySQLUsername
-		}
-		return ev.MySQLAuthHash
 	case EventSMTPRelayProbe:
 		return ev.SMTPRecipient
-	case EventFTPLogin:
-		return ev.FTPUsername
 	}
 	return ""
 }
