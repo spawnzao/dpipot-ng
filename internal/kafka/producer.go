@@ -86,7 +86,7 @@ type Event struct {
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 
 	// Probe detection (flow events only; nil on non-flow events)
-	ClientBytes *int   `json:"client_bytes,omitempty"` // TCP wire bytes received from client (independent of payload buffer limit; TLS flows include handshake overhead)
+	ClientBytes *int   `json:"client_bytes,omitempty"` // bytes read from the client connection (includes TLS wire bytes; unread kernel-buffer data is not counted)
 	IsProbe     *bool  `json:"is_probe,omitempty"`     // true/false on common flow events; absent on TLS events (handshake = client active)
 	ProbeReason string `json:"probe_reason,omitempty"` // eof_no_payload | timeout_no_payload (phase 1 only)
 

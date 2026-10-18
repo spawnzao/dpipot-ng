@@ -1669,9 +1669,10 @@ func normalizeFlowID(srcIP, dstIP net.IP, srcPort, dstPort uint16, protocol uint
 	return fmt.Sprintf("%s-%s-%d", src, dst, protocol)
 }
 
-// countingConn wraps a net.Conn and counts every byte received from the remote
-// side via Read. The counter is independent of payload capture buffers and their
-// size limits, so it reflects actual TCP wire bytes for the lifetime of the conn.
+// countingConn wraps a net.Conn and counts every byte read from the connection
+// via Read. The counter is independent of payload capture buffers and their size
+// limits. It measures bytes the process actually read — not all bytes that arrived
+// at the network interface; unread data still in the kernel buffer is not counted.
 type countingConn struct {
 	net.Conn
 	n atomic.Int64
