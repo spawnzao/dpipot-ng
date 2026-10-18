@@ -85,6 +85,11 @@ type Event struct {
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 
+	// Probe detection (flow events only)
+	ClientBytes *int   `json:"client_bytes,omitempty"` // bytes sent by the client across the entire connection
+	IsProbe     bool   `json:"is_probe,omitempty"`     // true when client_bytes==0 and ndpi_proto==Unknown
+	ProbeReason string `json:"probe_reason,omitempty"` // eof_no_payload | timeout_no_payload
+
 	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
 	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"
 	FastpathProto string `json:"fastpath_proto,omitempty"` // protocol label from structural detector

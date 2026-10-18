@@ -339,6 +339,7 @@ func (h *Handler) Handle() {
 		isTLS          bool
 		isClientTimeout   bool
 		isProbe          bool
+		probeReason      string // eof_no_payload | timeout_no_payload
 		skipFirstChunkWrite bool // para server-first: não reescreve greeting para o honeypot
 		refined          string
 		trackerFound       bool
@@ -580,8 +581,10 @@ greetingBuf = greetingBuf[:n]
 	if n == 0 && !isServerFirstPort(h.serverFirstPorts, dstPort) {
 		if err == nil || err == io.EOF {
 			isProbe = true
+			probeReason = "eof_no_payload"
 		} else if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			isProbe = true
+			probeReason = "timeout_no_payload"
 		}
 	}
 	if isProbe {
@@ -1417,6 +1420,13 @@ publish:
 
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
+	clientBytes := bufSrc.Len()
+	isProbeConfirmed := clientBytes == 0 && strings.ToUpper(ndpiLabel) == "UNKNOWN"
+	finalProbeReason := ""
+	if isProbeConfirmed {
+		finalProbeReason = probeReason
+	}
+
 	event := &kafka.Event{
 		EventType:     "flow",
 		FlowID:        h.classifierFlowID,
@@ -1433,6 +1443,9 @@ publish:
 		PayloadSrc:    append([]byte(nil), bufSrc.Bytes()...),
 		PayloadDst:    append([]byte(nil), bufDst.Bytes()...),
 		PayloadLen:    kafka.IntPtr(bufSrc.Len() + bufDst.Len()),
+		ClientBytes:   kafka.IntPtr(clientBytes),
+		IsProbe:       isProbeConfirmed,
+		ProbeReason:   finalProbeReason,
 		DurationMs:    durationMs,
 		Instance:      "proxy",
 		PortMismatch:  portMismatch,
