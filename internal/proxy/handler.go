@@ -1421,7 +1421,12 @@ publish:
 	portMismatch, expectedProto := checkPortProtoMismatch(uint16(origDstPort), ndpiLabel)
 
 	clientBytes := bufSrc.Len()
-	isProbeConfirmed := clientBytes == 0 && strings.ToUpper(ndpiLabel) == "UNKNOWN"
+	// Phase 1: probe only when client sent zero bytes, nDPI returned Unknown,
+	// AND the close reason is one of the two known phase-1 motives.
+	// RST and other errors are excluded until phase 2 adds rst_no_payload explicitly.
+	isProbeConfirmed := clientBytes == 0 &&
+		strings.ToUpper(ndpiLabel) == "UNKNOWN" &&
+		(probeReason == "eof_no_payload" || probeReason == "timeout_no_payload")
 	finalProbeReason := ""
 	if isProbeConfirmed {
 		finalProbeReason = probeReason
@@ -1444,7 +1449,7 @@ publish:
 		PayloadDst:    append([]byte(nil), bufDst.Bytes()...),
 		PayloadLen:    kafka.IntPtr(bufSrc.Len() + bufDst.Len()),
 		ClientBytes:   kafka.IntPtr(clientBytes),
-		IsProbe:       isProbeConfirmed,
+		IsProbe:       kafka.BoolPtr(isProbeConfirmed),
 		ProbeReason:   finalProbeReason,
 		DurationMs:    durationMs,
 		Instance:      "proxy",

@@ -85,10 +85,10 @@ type Event struct {
 	SMTPSender    string `json:"smtp_sender,omitempty"`
 	SMTPRecipient string `json:"smtp_recipient,omitempty"`
 
-	// Probe detection (flow events only)
-	ClientBytes *int   `json:"client_bytes,omitempty"` // bytes sent by the client across the entire connection
-	IsProbe     bool   `json:"is_probe,omitempty"`     // true when client_bytes==0 and ndpi_proto==Unknown
-	ProbeReason string `json:"probe_reason,omitempty"` // eof_no_payload | timeout_no_payload
+	// Probe detection (flow events only; nil on non-flow events)
+	ClientBytes *int   `json:"client_bytes,omitempty"` // captured client payload bytes (capped by buffer limit; zero is reliable for probe detection)
+	IsProbe     *bool  `json:"is_probe,omitempty"`     // true/false on flow events; omitted on credential/command events
+	ProbeReason string `json:"probe_reason,omitempty"` // eof_no_payload | timeout_no_payload (phase 1 only)
 
 	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
 	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"
