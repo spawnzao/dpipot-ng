@@ -91,7 +91,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		}
 		s := &ndpiShard{ndpiDM: dm}
 		if n > 1 {
-			s.ch = make(chan []byte, 1024)
+			s.ch = make(chan []byte, 16384)
 		}
 		shards[i] = s
 	}
@@ -253,6 +253,10 @@ func shardKey(data []byte) uint32 {
 	h ^= uint32(dp[0]); h *= 16777619
 	h ^= uint32(dp[1]); h *= 16777619
 	h ^= uint32(proto); h *= 16777619
+	// Wang's finalizer: ensures all bits influence the low bits used by modulo.
+	h ^= h >> 16
+	h *= 0x45d9f3b
+	h ^= h >> 16
 	return h
 }
 
