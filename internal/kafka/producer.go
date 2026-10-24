@@ -149,7 +149,10 @@ type Event struct {
 	NDPIPackets         *int64 `json:"ndpi_packets_processed,omitempty"`   // pacotes processados pelo nDPI no intervalo
 	NDPIFlowsActive     *int   `json:"ndpi_flows_active,omitempty"`        // flows ativos no sync.Map do nDPI (snapshot)
 	NDPICleanupEvicted  *int64 `json:"ndpi_cleanup_evicted,omitempty"`     // flows removidos pelo cleanup no intervalo
-	NDPIShardDrops      *int64 `json:"ndpi_shard_drops,omitempty"`         // packets descartados por shard channel cheio (NDPI_WORKERS>1)
+	NDPIShardDrops      *int64 `json:"ndpi_shard_drops,omitempty"`         // packets descartados por shard channel cheio; always published (0 = sem drops)
+	NDPIPacketsDispatched *int64 `json:"ndpi_packets_dispatched,omitempty"` // packets que entraram em shard channel (N>1) ou foram processados (N=1)
+	NDPIShardQueueMax   *int64 `json:"ndpi_shard_queue_max,omitempty"`     // maior ocupação de shard channel no snapshot
+	NDPIShardQueueAvg   *int64 `json:"ndpi_shard_queue_avg,omitempty"`     // média de ocupação de shard channel no snapshot
 
 	// tamanho atual da flow table in-process — preenchido no heartbeat
 	FlowTableSize     *int   `json:"flow_table_size,omitempty"`
@@ -172,6 +175,12 @@ type Event struct {
 	// queue_depth: samples of len(af.Packets()) at dequeue time
 	NDPIQueueDepthMax *int64 `json:"ndpi_queue_depth_max,omitempty"`
 	NDPIQueueDepthAvg *int64 `json:"ndpi_queue_depth_avg,omitempty"`
+
+	// runtime Go — preenchido no heartbeat; permite diagnosticar GC e pressão de memória
+	GoGCCycles       *int64 `json:"go_gc_cycles,omitempty"`        // ciclos de GC neste intervalo
+	GoGCPauseNs      *int64 `json:"go_gc_pause_ns,omitempty"`      // pausa total de GC no intervalo (ns)
+	GoHeapAllocBytes *int64 `json:"go_heap_alloc_bytes,omitempty"` // heap em uso no momento do snapshot
+	GoGoroutines     *int64 `json:"go_goroutines,omitempty"`       // goroutines ativas no momento do snapshot
 
 	// qualidade de link — preenchido no heartbeat; permite calcular retransmits/fluxo por direção
 	TCPRetransmitsClientTotal   *int64 `json:"tcp_retransmits_client_total,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -31,9 +32,12 @@ type NDPITimingStats struct {
 	ProcessP99     int64
 	ProcessP999    int64
 	ProcessCount   int64
-	QueueDepthMax  int64
-	QueueDepthAvg  int64
-	ShardDrops     int64 // packets dropped because a shard channel was full (0 when NDPI_WORKERS=1)
+	QueueDepthMax     int64
+	QueueDepthAvg     int64
+	ShardDrops        int64 // packets dropped because a shard channel was full (0 when NDPI_WORKERS=1)
+	PacketsDispatched int64 // packets that entered a shard channel or were processed synchronously
+	ShardQueueMax     int64 // max shard channel occupancy at snapshot time
+	ShardQueueAvg     int64 // avg shard channel occupancy at snapshot time
 }
 
 // ClassifierTelemetry abstrai as métricas do AF_PACKET e do nDPI handler para
@@ -46,6 +50,7 @@ type ClassifierTelemetry interface {
 	NDPIFlowsActive() int
 	NDPICleanupEvictedAndReset() int64
 	NDPITimingStatsAndReset() NDPITimingStats
+	NDPIShardQueueDepths() []int
 }
 
 // Server aceita conexões TCP e cria um Handler por conexão.
@@ -309,6 +314,13 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 	}
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
+
+	// Baseline GC counters so the first heartbeat reports the interval delta, not cumulative total.
+	var baseMS runtime.MemStats
+	runtime.ReadMemStats(&baseMS)
+	lastGCNum := baseMS.NumGC
+	lastGCPauseNs := baseMS.PauseTotalNs
+
 	for {
 		select {
 		case <-quit:
@@ -329,6 +341,13 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				flowTableSize = s.flowTable.Size()
 			}
 
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			gcCycles := int64(ms.NumGC - lastGCNum)
+			gcPauseNs := int64(ms.PauseTotalNs - lastGCPauseNs)
+			lastGCNum = ms.NumGC
+			lastGCPauseNs = ms.PauseTotalNs
+
 			var afKernelDrops, afChanDrops, ndpiPackets, ndpiEvicted int64
 			var ndpiFlowsActive int
 			var timing NDPITimingStats
@@ -339,6 +358,19 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				ndpiFlowsActive = s.classifier.NDPIFlowsActive()
 				ndpiEvicted = s.classifier.NDPICleanupEvictedAndReset()
 				timing = s.classifier.NDPITimingStatsAndReset()
+
+				depths := s.classifier.NDPIShardQueueDepths()
+				var qMax, qSum int64
+				for _, d := range depths {
+					if int64(d) > qMax {
+						qMax = int64(d)
+					}
+					qSum += int64(d)
+				}
+				if len(depths) > 0 {
+					timing.ShardQueueMax = qMax
+					timing.ShardQueueAvg = qSum / int64(len(depths))
+				}
 			}
 
 			ev := &kafka.Event{
@@ -371,6 +403,14 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				NDPIPackets:                 kafka.Int64Ptr(ndpiPackets),
 				NDPIFlowsActive:             kafka.IntPtr(ndpiFlowsActive),
 				NDPICleanupEvicted:          kafka.Int64Ptr(ndpiEvicted),
+				NDPIShardDrops:              kafka.Int64Ptr(timing.ShardDrops),
+				NDPIPacketsDispatched:       kafka.Int64Ptr(timing.PacketsDispatched),
+				NDPIShardQueueMax:           kafka.Int64Ptr(timing.ShardQueueMax),
+				NDPIShardQueueAvg:           kafka.Int64Ptr(timing.ShardQueueAvg),
+				GoGCCycles:                  kafka.Int64Ptr(gcCycles),
+				GoGCPauseNs:                 kafka.Int64Ptr(gcPauseNs),
+				GoHeapAllocBytes:            kafka.Int64Ptr(int64(ms.HeapAlloc)),
+				GoGoroutines:                kafka.Int64Ptr(int64(runtime.NumGoroutine())),
 			}
 			if timing.QueueWaitCount > 0 {
 				ev.NDPIQueueWaitP50 = kafka.Int64Ptr(timing.QueueWaitP50)
@@ -389,9 +429,6 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			if timing.QueueDepthMax > 0 {
 				ev.NDPIQueueDepthMax = kafka.Int64Ptr(timing.QueueDepthMax)
 				ev.NDPIQueueDepthAvg = kafka.Int64Ptr(timing.QueueDepthAvg)
-			}
-			if timing.ShardDrops > 0 {
-				ev.NDPIShardDrops = kafka.Int64Ptr(timing.ShardDrops)
 			}
 			s.producer.Publish(ev)
 		}

@@ -51,10 +51,11 @@ type Handler struct {
 	localIP           net.IP
 
 	// telemetry counters — read by heartbeat via ClassifierTelemetry
-	packetsProcessed atomic.Int64
-	activeFlows      atomic.Int64
-	cleanupEvicted   atomic.Int64
-	shardDrops       atomic.Int64 // packets dropped because a shard's dispatch channel was full
+	packetsProcessed  atomic.Int64
+	packetsDispatched atomic.Int64 // packets that entered a shard channel (N>1) or were processed synchronously (N=1)
+	activeFlows       atomic.Int64
+	cleanupEvicted    atomic.Int64
+	shardDrops        atomic.Int64 // packets dropped because a shard's dispatch channel was full
 
 	// Phase 2 timing histograms
 	queueWait  metrics.Histogram
@@ -148,6 +149,7 @@ func (h *Handler) ProcessPacket(data []byte) {
 		t := time.Now()
 		h.dispatchToShard(h.shards[0], data)
 		h.processing.Observe(time.Since(t).Nanoseconds())
+		h.packetsDispatched.Add(1)
 		return
 	}
 
@@ -156,6 +158,7 @@ func (h *Handler) ProcessPacket(data []byte) {
 	idx := int(shardKey(data) % uint32(h.numShards))
 	select {
 	case h.shards[idx].ch <- data:
+		h.packetsDispatched.Add(1)
 	default:
 		// Channel full; drop to avoid blocking the AF_PACKET reader.
 		h.shardDrops.Add(1)
@@ -533,9 +536,31 @@ func decodeTCPFlags(flags uint8) string {
 }
 
 // PacketsProcessedAndReset retorna pacotes recebidos pelo ProcessPacket desde o último reset
-// e zera o contador.
+// e zera o contador. Inclui pacotes que foram descartados antes de entrar em um shard.
 func (h *Handler) PacketsProcessedAndReset() int64 {
 	return h.packetsProcessed.Swap(0)
+}
+
+// PacketsDispatchedAndReset retorna pacotes que entraram efetivamente em um canal de shard
+// (N>1) ou foram processados de forma síncrona (N=1) desde o último reset, e zera o contador.
+// A diferença entre PacketsProcessedAndReset e este valor é igual a ShardDropsAndReset.
+func (h *Handler) PacketsDispatchedAndReset() int64 {
+	return h.packetsDispatched.Swap(0)
+}
+
+// ShardQueueDepths retorna o número atual de pacotes pendentes em cada canal de shard.
+// Retorna slice vazio quando NDPI_WORKERS=1 (modo síncrono, sem canal).
+func (h *Handler) ShardQueueDepths() []int {
+	if h.numShards <= 1 {
+		return nil
+	}
+	depths := make([]int, len(h.shards))
+	for i, s := range h.shards {
+		if s.ch != nil {
+			depths[i] = len(s.ch)
+		}
+	}
+	return depths
 }
 
 // ActiveFlows retorna o número atual de flows ativos no nDPI (somados de todos os shards).

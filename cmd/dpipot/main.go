@@ -302,20 +302,25 @@ func (c *classifierTelemetry) NDPICleanupEvictedAndReset() int64 { return c.hand
 func (c *classifierTelemetry) NDPITimingStatsAndReset() proxy.NDPITimingStats {
 	snap := c.handler.TimingSnapshotAndReset()
 	return proxy.NDPITimingStats{
-		QueueWaitP50:   snap.QueueWait.P50,
-		QueueWaitP95:   snap.QueueWait.P95,
-		QueueWaitP99:   snap.QueueWait.P99,
-		QueueWaitP999:  snap.QueueWait.P999,
-		QueueWaitCount: snap.QueueWait.Count,
-		ProcessP50:     snap.Processing.P50,
-		ProcessP95:     snap.Processing.P95,
-		ProcessP99:     snap.Processing.P99,
-		ProcessP999:    snap.Processing.P999,
-		ProcessCount:   snap.Processing.Count,
-		QueueDepthMax:  snap.QueueDepth.Max,
-		QueueDepthAvg:  snap.QueueDepth.Avg,
-		ShardDrops:     c.handler.ShardDropsAndReset(),
+		QueueWaitP50:      snap.QueueWait.P50,
+		QueueWaitP95:      snap.QueueWait.P95,
+		QueueWaitP99:      snap.QueueWait.P99,
+		QueueWaitP999:     snap.QueueWait.P999,
+		QueueWaitCount:    snap.QueueWait.Count,
+		ProcessP50:        snap.Processing.P50,
+		ProcessP95:        snap.Processing.P95,
+		ProcessP99:        snap.Processing.P99,
+		ProcessP999:       snap.Processing.P999,
+		ProcessCount:      snap.Processing.Count,
+		QueueDepthMax:     snap.QueueDepth.Max,
+		QueueDepthAvg:     snap.QueueDepth.Avg,
+		ShardDrops:        c.handler.ShardDropsAndReset(),
+		PacketsDispatched: c.handler.PacketsDispatchedAndReset(),
 	}
+}
+
+func (c *classifierTelemetry) NDPIShardQueueDepths() []int {
+	return c.handler.ShardQueueDepths()
 }
 
 func interfaceIP(ifname string, logger *zap.Logger) net.IP {
