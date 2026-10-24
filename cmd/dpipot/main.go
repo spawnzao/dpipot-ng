@@ -25,6 +25,10 @@ import (
 	"github.com/spawnzao/dpipot-ng/internal/router"
 )
 
+// AppVersion is set at build time via -ldflags "-X main.AppVersion=<version>".
+// The value comes from git describe --tags --always --dirty in the CI pipeline.
+var AppVersion = "dev"
+
 func main() {
 	cfg, err := config.Load()
 	if err != nil {
@@ -40,6 +44,7 @@ func main() {
 	defer logger.Sync()
 
 	logger.Info("starting dpipot",
+		zap.String("version", AppVersion),
 		zap.String("listen", cfg.ListenAddr),
 		zap.String("interface", cfg.ClassifierInterface),
 		zap.Duration("flow_table_ttl", cfg.FlowTableTTL),
@@ -181,6 +186,7 @@ func main() {
 	// Wire classifier telemetry — combina AF_PACKET e nDPI num único provider
 	// para que o heartbeat do proxy inclua todas as métricas de captura.
 	server.SetClassifier(&classifierTelemetry{af: af, handler: ndpiHandler})
+	server.SetVersion(AppVersion)
 	server.SetFastpathEnabled(cfg.FastpathEnabled)
 	server.SetClassifyWaitTimeout(cfg.ClassifyWaitTimeout)
 

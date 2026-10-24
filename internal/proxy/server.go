@@ -75,6 +75,7 @@ type Server struct {
 	maxPerIPConns       int
 	nodeName            string // spec.nodeName injetado via Downward API (NODE_NAME)
 	podName             string // metadata.name injetado via Downward API (POD_NAME)
+	version             string // binary version set via SetVersion (injected at build time)
 
 	// contadores de qualidade de link — acumulados por connection e zerados a cada heartbeat
 	retransmitsClient   atomic.Int64 // soma de retransmissões atacante→proxy
@@ -98,6 +99,7 @@ func (s *Server) SetClassifier(c ClassifierTelemetry) {
 }
 
 // SetFastpathEnabled controls structural payload detection for Unknown flows (FASTPATH_ENABLED).
+func (s *Server) SetVersion(v string)        { s.version = v }
 func (s *Server) SetFastpathEnabled(v bool) { s.fastpathEnabled = v }
 
 // SetClassifyWaitTimeout sets the max duration to wait for nDPI to classify Unknown flows (CLASSIFY_WAIT_TIMEOUT).
@@ -342,6 +344,7 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 			ev := &kafka.Event{
 				Timestamp:                   time.Now(),
 				EventType:                   "heartbeat",
+				AppVersion:                  s.version,
 				SlotsUsed:                   kafka.IntPtr(len(s.sem)),
 				SlotsMax:                    cap(s.sem),
 				KafkaDrops:                  kafka.Int64Ptr(drops),

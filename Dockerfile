@@ -30,11 +30,12 @@ WORKDIR /build
 
 COPY . .
 
+ARG APP_VERSION=dev
 RUN GOWORK=off CGO_ENABLED=1 \
     CGO_CFLAGS="-I/usr/local/include" \
     CGO_LDFLAGS="-L/usr/local/lib -lndpi -lpcap -lpthread -lm -lrdkafka" \
     GOOS=linux \
-    go build -mod=mod -ldflags="-s -w" -o /dpipot ./cmd/dpipot
+    go build -mod=mod -ldflags="-s -w -X main.AppVersion=${APP_VERSION}" -o /dpipot ./cmd/dpipot
 
 FROM debian:bookworm
 
