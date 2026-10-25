@@ -4,6 +4,7 @@ image:
 
 config:
   NDPI_EVENTS_ENABLED: "true"
+  NDPI_WORKERS: "2"
 
 kafka:
   persistence:

@@ -13,6 +13,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	_ "go.uber.org/automaxprocs" // sets GOMAXPROCS to match cgroup CPU quota
 
 	"github.com/spawnzao/dpipot-ng/internal/capture"
 	"github.com/spawnzao/dpipot-ng/internal/config"
