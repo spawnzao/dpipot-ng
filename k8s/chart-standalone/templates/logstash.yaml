@@ -166,6 +166,11 @@ spec:
           # pipeline. This probe checks the cumulative events.out counter from
           # /_node/stats/pipelines instead: if it stops advancing for >10 min
           # (600s) the probe fails and Kubernetes restarts the pod.
+          # Also tracks events.in: on low-traffic nodes, out can legitimately
+          # stall just because nothing new arrived (idle, not stuck) - a plain
+          # out-only check restarted the pod needlessly in that case. Only
+          # fails when in keeps advancing (new data arriving) while out stays
+          # flat (genuinely wedged), never on idle (both flat).
           # initialDelaySeconds=300: JVM+JRuby cold start observed up to ~3m30s
           # in production; failureThreshold=3 adds +90s tolerance (3×30s).
           # No readinessProbe: logstash does not serve traffic via a K8s Service
@@ -178,26 +183,37 @@ spec:
                 - |
                   STATE=/tmp/logstash_liveness_state
                   NOW=$(date +%s)
-                  OUT=$(curl -s --max-time 5 http://localhost:9600/_node/stats/pipelines 2>/dev/null \
-                    | grep -o '"events":{"out":[0-9]*' | head -1 | grep -o '[0-9]*$')
-                  if [ -z "$OUT" ]; then
+                  STATS=$(curl -s --max-time 5 http://localhost:9600/_node/stats/pipelines 2>/dev/null)
+                  if [ -z "$STATS" ]; then
                     echo "monitoring API (9600) did not respond"
+                    exit 1
+                  fi
+                  BLOCK=$(echo "$STATS" | grep -o '"events":{[^}]*}' | head -1)
+                  OUT=$(echo "$BLOCK" | grep -o '"out":[0-9]*' | cut -d: -f2)
+                  IN=$(echo "$BLOCK" | grep -o '"in":[0-9]*' | cut -d: -f2)
+                  if [ -z "$OUT" ] || [ -z "$IN" ]; then
+                    echo "could not parse pipeline events stats"
                     exit 1
                   fi
                   if [ -f "$STATE" ]; then
                     PREV_OUT=$(cut -d' ' -f1 "$STATE")
-                    PREV_TIME=$(cut -d' ' -f2 "$STATE")
+                    PREV_IN=$(cut -d' ' -f2 "$STATE")
+                    PREV_TIME=$(cut -d' ' -f3 "$STATE")
                   else
                     PREV_OUT=""
+                    PREV_IN=""
                     PREV_TIME=""
                   fi
-                  if [ "$OUT" != "$PREV_OUT" ]; then
-                    echo "$OUT $NOW" > "$STATE"
+                  # progresso (out mudou) OU ocioso de verdade (in também não mudou,
+                  # ou seja não chegou nada novo pra processar) -> saudável
+                  if [ "$OUT" != "$PREV_OUT" ] || [ "$IN" = "$PREV_IN" ]; then
+                    echo "$OUT $IN $NOW" > "$STATE"
                     exit 0
                   fi
+                  # in avançou mas out não -> pipeline recebendo mas não emitindo
                   STUCK_FOR=$((NOW - PREV_TIME))
                   if [ "$STUCK_FOR" -gt 600 ]; then
-                    echo "pipeline stuck for ${STUCK_FOR}s (events.out stalled at $OUT)"
+                    echo "pipeline stuck for ${STUCK_FOR}s (events.in=$IN advancing but events.out stalled at $OUT)"
                     exit 1
                   fi
                   exit 0
