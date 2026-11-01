@@ -16,7 +16,7 @@ data:
     input {
       kafka {
         bootstrap_servers => "kafka-svc.dpipot.svc.cluster.local:9092"
-        topics_pattern => "dpipot\\.events.*"
+        topics => ["dpipot.events-application", "dpipot.events-debug", "dpipot.events-ndpi"]
         codec => json
         group_id => "logstash-dpipot"
         auto_offset_reset => "earliest"
