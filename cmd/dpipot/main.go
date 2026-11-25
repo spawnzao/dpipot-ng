@@ -46,11 +46,15 @@ func main() {
 
 	logger.Info("starting dpipot",
 		zap.String("version", AppVersion),
+		zap.Bool("passive_mode", cfg.PassiveMode),
 		zap.String("listen", cfg.ListenAddr),
 		zap.String("interface", cfg.ClassifierInterface),
 		zap.Duration("flow_table_ttl", cfg.FlowTableTTL),
 		zap.String("kafka_brokers", cfg.KafkaBrokers),
 	)
+	if cfg.PassiveMode {
+		logger.Info("passive mode: TPROXY rules not installed; proxy idle; classifier-only sensor")
+	}
 
 	// Verifica se o OS está configurado corretamente para AF_PACKET.
 	// Em modo interativo oferece criar o arquivo sysctl e aplicar imediatamente.
@@ -190,6 +194,7 @@ func main() {
 	server.SetVersion(AppVersion)
 	server.SetFastpathEnabled(cfg.FastpathEnabled)
 	server.SetClassifyWaitTimeout(cfg.ClassifyWaitTimeout)
+	server.SetPassiveMode(cfg.PassiveMode)
 
 	// Start AF_PACKET capture
 	af.Start()

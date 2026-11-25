@@ -36,11 +36,24 @@ spec:
               add:
                 - NET_ADMIN
                 - NET_RAW
+          env:
+            - name: PASSIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: dpipot-config
+                  key: PASSIVE
+                  optional: true
           command:
             - /bin/sh
             - -c
             - |
               set -e
+
+              if [ "${PASSIVE:-false}" = "true" ] || [ "${PASSIVE:-false}" = "on" ]; then
+                echo "passive mode: skipping TPROXY iptables rules (classifier-only sensor)"
+                exit 0
+              fi
+
               apk add --no-cache iptables iproute2 >/dev/null
               IFACE="{{ .Values.network.interface }}"
               PROXY_PORT=8080

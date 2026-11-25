@@ -1,0 +1,59 @@
+# Passive darknet sensor profile.
+#
+# When PASSIVE=true the init container skips TPROXY iptables rules, so
+# no traffic is ever redirected to the proxy. The dpipot binary still
+# starts (keeping the heartbeat/telemetry loop alive), but the proxy
+# accepts zero connections. Only the AF_PACKET + nDPI classifier is
+# active: it passively observes all TCP traffic on the interface,
+# classifies flows by port heuristic (payload is never seen because the
+# kernel answers RST before any data arrives), and publishes flow events
+# and heartbeats to Kafka -> Logstash -> Elasticsearch.
+#
+# All flow events in this mode will have is_probe=true because every
+# connection attempt ends in RST (no one listening) or timeout.
+# Protocol classification relies entirely on port-based heuristics;
+# matches for well-known ports (22, 80, 443, 3389, …) are reliable,
+# unknown ports will show ndpi_proto="Unknown".
+#
+# Usage:
+#   microk8s helm3 upgrade dpipot k8s/chart/ -n dpipot \
+#     -f k8s/chart/values-dpipot.yaml \
+#     -f k8s/chart/values-passive.yaml
+
+# Activate passive mode: init container skips TPROXY iptables rules.
+config:
+  PASSIVE: "true"
+  # nDPI events give full per-flow telemetry even without payload.
+  NDPI_EVENTS_ENABLED: "true"
+  # Fastpath structural detection is irrelevant with no active connections.
+  FASTPATH_ENABLED: "false"
+  LOG_LEVEL: "info"
+
+# No honeypots needed: no traffic will reach them.
+honeypots:
+  cowrie:
+    enabled: false
+  wordpot:
+    enabled: false
+  heralding:
+    enabled: false
+  galah:
+    enabled: false
+
+# No container sidecar logs to ship without honeypot pods.
+filebeat:
+  enabled: false
+
+# Kafka and Logstash remain active: telemetry must reach Elasticsearch.
+kafka:
+  enabled: true
+
+# Lean resource profile: no connection handling, only classifier + heartbeat.
+resources:
+  dpipot:
+    requests:
+      cpu: 200m
+      memory: 128Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi

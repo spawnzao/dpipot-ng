@@ -2,6 +2,7 @@
 # Only the named profiles below are tracked in the repository.
 values-*.yaml
 !values-prod.yaml
+!values-passive.yaml
 !values-sensor.yaml
 !values-debug.yaml
 !values-light.yaml

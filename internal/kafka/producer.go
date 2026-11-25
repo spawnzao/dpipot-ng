@@ -129,6 +129,7 @@ type Event struct {
 	// campos exclusivos de eventos internos (event_type = "heartbeat")
 	// Todos usam ponteiro para aparecerem mesmo quando zero — diagnóstico requer visibilidade completa.
 	AppVersion     string  `json:"app_version,omitempty"`  // binary version injected at build time via -ldflags
+	PassiveMode    *bool   `json:"passive_mode,omitempty"` // true when PASSIVE=true (sensor mode, no proxy intercept)
 	KafkaDrops    *int64  `json:"kafka_drops,omitempty"`
 	KafkaStatus   string  `json:"kafka_status,omitempty"` // "ok" | "error"
 	UptimeSec     float64 `json:"uptime_sec,omitempty"`

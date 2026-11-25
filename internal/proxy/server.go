@@ -95,6 +95,7 @@ type Server struct {
 	classifier          ClassifierTelemetry // opcional — nil se não configurado
 	fastpathEnabled     bool               // FASTPATH_ENABLED: structural payload detection for Unknown flows
 	classifyWaitTimeout time.Duration      // CLASSIFY_WAIT_TIMEOUT: max wait for nDPI (0 = disabled)
+	passiveMode         bool               // PASSIVE: classifier-only; proxy is idle, TPROXY rules not installed
 }
 
 // SetClassifier registra a implementação de ClassifierTelemetry para que o heartbeat
@@ -106,6 +107,7 @@ func (s *Server) SetClassifier(c ClassifierTelemetry) {
 // SetFastpathEnabled controls structural payload detection for Unknown flows (FASTPATH_ENABLED).
 func (s *Server) SetVersion(v string)        { s.version = v }
 func (s *Server) SetFastpathEnabled(v bool) { s.fastpathEnabled = v }
+func (s *Server) SetPassiveMode(v bool)     { s.passiveMode = v }
 
 // SetClassifyWaitTimeout sets the max duration to wait for nDPI to classify Unknown flows (CLASSIFY_WAIT_TIMEOUT).
 func (s *Server) SetClassifyWaitTimeout(d time.Duration) { s.classifyWaitTimeout = d }
@@ -377,6 +379,7 @@ func (s *Server) startHeartbeat(startTime time.Time, quit <-chan struct{}) {
 				Timestamp:                   time.Now(),
 				EventType:                   "heartbeat",
 				AppVersion:                  s.version,
+				PassiveMode:                 kafka.BoolPtr(s.passiveMode),
 				SlotsUsed:                   kafka.IntPtr(len(s.sem)),
 				SlotsMax:                    cap(s.sem),
 				KafkaDrops:                  kafka.Int64Ptr(drops),

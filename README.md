@@ -123,6 +123,7 @@ Two deployment modes are available depending on whether a node exposes services 
 | Mode | Chart | Use case |
 |---|---|---|
 | **Standard** | `k8s/chart/` | Proxy + classifier + honeypots on the same node. The `dpipot-proxy` captures all inbound TCP via TPROXY, classifies it with nDPI, and routes it to honeypots running as `ClusterIP` services on the same cluster. All production nodes today run this mode. |
+| **Passive sensor** | `k8s/chart/` + `values-passive.yaml` | Classifier-only darknet sensor. TPROXY rules are **not installed** (`PASSIVE=true`), so the proxy never intercepts traffic. The AF_PACKET + nDPI classifier passively observes every packet, classifies flows by port heuristic, and forwards telemetry to Kafka → Elasticsearch. No honeypots are needed. The kernel answers RST to every probe, so all flows are marked `is_probe=true`. |
 | **Standalone honeypots** | `k8s/chart-standalone/` (`dpipotProxy.enabled=false`) | Honeypots only — no local proxy, no TPROXY, no nDPI. A remote `dpipot-ng` node (running the proxy/classifier) forwards already-classified connections here via an isolated WireGuard network. The node has no data interface exposed to the internet. Useful to separate the public attack surface from honeypot execution, limiting blast radius if a honeypot is compromised. |
 | **Standalone proxy** | `k8s/chart-standalone/` (`dpipotProxy.enabled=true`) | Proxy + classifier only — no local honeypots. Captures and classifies internet traffic (TPROXY + nDPI) and forwards connections to a remote honeypot node. Set `config.HONEYPOT_ROUTES` to the remote host. Useful when the capture node must be physically close to the traffic source but honeypot execution should be isolated elsewhere. |
 
@@ -136,6 +137,7 @@ k8s/
 │   ├── Chart.yaml
 │   ├── values.yaml           # Defaults: all components enabled, tag latest
 │   ├── values-prod.yaml      # Pinned tags, kafka PVC 100Gi, higher requests
+│   ├── values-passive.yaml   # PASSIVE=true, all honeypots off — classifier-only sensor
 │   ├── values-sensor.yaml    # kafka=true, filebeat=false
 │   ├── values-light.yaml     # kafka=false, filebeat=false (no pipeline stack)
 │   ├── values-debug.yaml     # kafka=false, filebeat=true
@@ -426,6 +428,7 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 | `SSH_INPUT_BUF_SIZE` | `4096` | SSH input buffer size in bytes |
 | `SSH_OUTPUT_BUF_SIZE` | `65536` | SSH output buffer size in bytes |
 | `NDPI_EVENTS_ENABLED` | `false` | Publish per-packet nDPI classification events to Kafka |
+| `PASSIVE` | `false` | Passive sensor mode: init container skips TPROXY iptables rules; proxy is idle; only AF_PACKET + nDPI classifier is active. Set honeypots to `enabled: false` and `filebeat.enabled: false` when using this mode. |
 
 **Kafka**
 
@@ -441,15 +444,22 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 
 ## Deployment Scenarios
 
-| Profile | Kafka | Filebeat | Logstash | Image tags | Kafka PVC |
-|---------|-------|----------|----------|------------|-----------|
-| _(default)_ | ✅ | ✅ | ✅ | `latest` | emptyDir |
-| `prod` | ✅ | ✅ | ✅ | `main` | 100Gi |
-| `sensor` | ✅ | ❌ | kafka only | `latest` | emptyDir |
-| `light` | ❌ | ❌ | ❌ | `latest` | — |
-| `debug` | ❌ | ✅ | filebeat only | `latest` | — |
+| Profile | Kafka | Filebeat | Logstash | Honeypots | Image tags | Kafka PVC |
+|---------|-------|----------|----------|-----------|------------|-----------|
+| _(default)_ | ✅ | ✅ | ✅ | ✅ all | `latest` | emptyDir |
+| `prod` | ✅ | ✅ | ✅ | ✅ all | `main` | 100Gi |
+| `passive` | ✅ | ❌ | ✅ | ❌ none | `latest` | emptyDir |
+| `sensor` | ✅ | ❌ | kafka only | ✅ all | `latest` | emptyDir |
+| `light` | ❌ | ❌ | ❌ | ✅ all | `latest` | — |
+| `debug` | ❌ | ✅ | filebeat only | ✅ all | `latest` | — |
 
 ```bash
+# Passive darknet sensor (no honeypots, no TPROXY, classifier-only)
+microk8s helm3 upgrade --install dpipot k8s/chart/ \
+  -f k8s/chart/values-$(hostname -s).yaml \
+  -f k8s/chart/values-passive.yaml \
+  --namespace dpipot --create-namespace
+
 # Sensor node (Kafka + honeypots, no Filebeat)
 helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-sensor.yaml
 
@@ -458,6 +468,118 @@ helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-light.yaml
 
 # Debug (Filebeat only)
 helm upgrade --install dpipot k8s/chart/ -f k8s/chart/values-debug.yaml
+```
+
+---
+
+### Passive Sensor Mode
+
+Passive mode turns dpipot-ng into a **pure darknet sensor**: the AF_PACKET + nDPI classifier runs as usual, but the TPROXY iptables rules are never installed — the proxy accepts zero connections and no honeypots are needed. The kernel answers every inbound SYN with RST, and the classifier passively observes the full probe traffic from AF_PACKET.
+
+```
+  Internet              ┌─────────────────────────────────────────────┐
+  TCP :22 / :80         │           Kubernetes Node (DaemonSet)       │
+  :443 / :3389 / ...    │                                             │
+         │              │  init-container: PASSIVE=true → exit 0     │
+         │              │  (iptables TPROXY rules NOT installed)      │
+         │  SYN         │                                             │
+         ├─────────────▶│  ┌─────────────────────────────────────┐   │
+         │              │  │          dpipot (single binary)      │   │
+         │  RST         │  │                                      │   │
+         │◀─────────────│  │  AF_PACKET capture  ◀── all packets  │   │
+         │  (kernel)    │  │  nDPI 4.12 (CGO)    ── classify      │   │
+                        │  │  In-memory table    ── by 5-tuple    │   │
+                        │  │                                      │   │
+                        │  │  TPROXY listener :8080 (idle)        │   │
+                        │  │  Heartbeat loop (60s)  ──────────────┼──▶│── Kafka
+                        │  └─────────────────────────────────────┘   │
+                        └─────────────────────────────────────────────┘
+                                        │ flow events + heartbeat
+                                        ▼
+                              Kafka → Logstash → Elasticsearch
+```
+
+#### How it works
+
+1. The **init container** reads the `PASSIVE` env var from the `dpipot-config` ConfigMap. If `true`, it prints a message and exits without installing any iptables rules.
+2. The **dpipot binary** starts normally: AF_PACKET capture, nDPI handler, flow table, Kafka producer, and heartbeat loop — all active.
+3. Because there are no TPROXY rules, the kernel receives every inbound SYN directly and responds with RST (nothing is listening on those ports on the host). The connection lasts exactly one round trip.
+4. nDPI sees the **SYN packet** (and sometimes the RST from the kernel) via AF_PACKET. Classification is based solely on **port heuristics**: well-known ports (22→SSH, 80→HTTP, 443→TLS, 3306→MySQL, 3389→RDP, …) match reliably; unrecognised ports produce `ndpi_proto="Unknown"`.
+5. Flow events are published to Kafka with `is_probe=true` and `probe_reason="rst_no_payload"`. **Every single flow in this mode is a probe by definition** — this is a useful fact for ELK filtering.
+
+#### What events look like
+
+```json
+{
+  "event_type":   "flow",
+  "src_ip":       "185.220.101.47",
+  "src_port":     41822,
+  "dst_ip":       "10.100.100.7",
+  "dst_port":     22,
+  "ndpi_proto":   "SSH",
+  "ndpi_app":     "SSH",
+  "is_probe":     true,
+  "probe_reason": "rst_no_payload",
+  "client_bytes": 0,
+  "passive_mode": true,
+  "node_name":    "dpipot-ng-ufes",
+  "pod_name":     "dpipot-proxy-9xk2p"
+}
+```
+
+Heartbeat events include `"passive_mode": true` as a persistent tag, making it easy to split passive nodes from active ones in Kibana dashboards.
+
+#### Protocol coverage expectations
+
+| Port range | Expected `ndpi_proto` | Notes |
+|---|---|---|
+| 22, 2222, 22222 | `SSH` | Reliable — SSH scanners dominate darknet |
+| 80, 8080, 8888 | `HTTP` | Reliable |
+| 443, 8443 | `TLS` | Reliable |
+| 3389 | `RDP` | Reliable |
+| 3306 | `MySQL` | Reliable |
+| 23 | `TELNET` | Reliable |
+| 5900 | `VNC` | Reliable |
+| 1433, 5432 | `TDS_Generic`, `PostgreSQL` | Reliable |
+| Random high ports | `Unknown` | No heuristic — normal for scanners |
+
+#### Enabling passive mode
+
+Apply `values-passive.yaml` on top of your per-node values file:
+
+```bash
+microk8s helm3 upgrade --install dpipot k8s/chart/ \
+  -n dpipot --create-namespace \
+  -f k8s/chart/values-$(hostname -s).yaml \
+  -f k8s/chart/values-passive.yaml
+
+kubectl rollout restart daemonset/dpipot-proxy -n dpipot
+```
+
+To return to active mode, upgrade again **without** the passive overlay:
+
+```bash
+microk8s helm3 upgrade dpipot k8s/chart/ \
+  -n dpipot \
+  -f k8s/chart/values-$(hostname -s).yaml
+
+kubectl rollout restart daemonset/dpipot-proxy -n dpipot
+```
+
+#### Useful ELK queries for passive nodes
+
+```
+# All probe events from passive nodes
+passive_mode:true AND is_probe:true
+
+# Top scanner IPs
+passive_mode:true | stats count by src_ip | sort -count
+
+# Protocol distribution (port heuristics)
+passive_mode:true | stats count by ndpi_proto
+
+# Unknown ports — potential zero-day scanners
+passive_mode:true AND ndpi_proto:"Unknown" | stats count by dst_port
 ```
 
 ---
