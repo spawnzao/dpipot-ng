@@ -142,6 +142,14 @@ config:
   HONEYPOT_ROUTES: ""
   LOG_LEVEL: "info"
   MAX_CONNECTIONS: "10000"
+  # Comma-separated CIDR list this node is responsible for receiving.
+  # Leave empty to auto-detect from the classifier interface IP (host/32).
+  # Required only for NAT nodes or promiscuous darknet nodes receiving
+  # a full subnet via L2 MAC forwarding (interface IP not in target range).
+  #   single public IP behind NAT:  "203.0.113.5/32"
+  #   darknet /24 via promiscuous:  "198.51.100.0/24"
+  #   both:                         "198.51.100.0/24,203.0.113.5/32"
+  LOCAL_CIDRS: ""
   SERVER_FIRST_PORTS: "25,110,143,587,993,995"
   SSH_BANNER_POOL: "SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,SSH-2.0-OpenSSH_8.4p1 Debian-2+deb11u2,SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2"
   SSH_BANNER_MAP: "22=SSH-2.0-OpenSSH_8.2p1 Ubuntu-4ubuntu0.9,222=SSH-2.0-OpenSSH_7.9p1 Raspbian-10+deb10u2,2222=SSH-2.0-OpenSSH_8.4p1 Raspbian-5+deb11u1"

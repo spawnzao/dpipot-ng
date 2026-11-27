@@ -90,6 +90,9 @@ type Event struct {
 	IsProbe     *bool  `json:"is_probe,omitempty"`     // true/false on common flow events; absent on TLS events (handshake = client active)
 	ProbeReason string `json:"probe_reason,omitempty"` // eof_no_payload | timeout_no_payload | rst_no_payload | banner_only
 
+	// Packet direction relative to this node (nDPI events only)
+	Direction string `json:"direction,omitempty"` // "inbound" | "outbound" | "transit"
+
 	// Fast-path routing metadata (set when nDPI returned Unknown at connection time)
 	RoutingSource string `json:"routing_source,omitempty"` // "fastpath" | "ndpi" | "fallback"
 	FastpathProto string `json:"fastpath_proto,omitempty"` // protocol label from structural detector

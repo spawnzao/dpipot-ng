@@ -23,6 +23,7 @@
 # Activate passive mode: init container skips TPROXY iptables rules.
 config:
   PASSIVE: "true"
+  LOCAL_CIDRS: ""
   # nDPI events give full per-flow telemetry even without payload.
   NDPI_EVENTS_ENABLED: "true"
   # Fastpath structural detection is irrelevant with no active connections.

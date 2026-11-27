@@ -35,6 +35,7 @@ type Config struct {
 	ClassifyWaitTimeout  time.Duration // CLASSIFY_WAIT_TIMEOUT: max wait for nDPI to classify Unknown flows
 	NDPIWorkers          int           // NDPI_WORKERS: parallel nDPI shards (0 or 1 = synchronous)
 	PassiveMode          bool          // PASSIVE=true: classifier-only; TPROXY rules not installed, proxy idle
+	LocalCIDRs           string        // LOCAL_CIDRS: comma-separated CIDRs this node owns; empty = auto (interface IP/32)
 
 	// classifier (agora no mesmo processo)
 	ClassifierInterface string
@@ -75,6 +76,7 @@ func Load() (*Config, error) {
 		ClassifyWaitTimeout: getDuration("CLASSIFY_WAIT_TIMEOUT", 50*time.Millisecond),
 		NDPIWorkers:         getInt("NDPI_WORKERS", 1),
 		PassiveMode:         parseBoolEnv("PASSIVE", false),
+		LocalCIDRs:          getEnv("LOCAL_CIDRS", ""),
 		ServerFirstPorts:    parseServerFirstPorts(serverFirstPortsRaw),
 		ServerFirstPortsTLS: parseServerFirstPortsTLS(serverFirstPortsTLSRaw),
 		HttpAuthPorts:       parsePortList(getEnv("HTTP_AUTH_PORTS", "")),

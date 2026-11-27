@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -90,6 +91,7 @@ func main() {
 
 	// nDPI handler — classifies packets and writes to flowTable
 	// producer is nil here (created below); passed after construction if NdpiEventsEnabled
+	localIP := interfaceIP(cfg.ClassifierInterface, logger)
 	ndpiHandler, err := ndpi.NewHandler(ndpi.HandlerConfig{
 		FlowTable:         flowTable,
 		Logger:            logger,
@@ -98,7 +100,7 @@ func main() {
 		NdpiEventsEnabled: cfg.NdpiEventsEnabled,
 		NodeName:          os.Getenv("NODE_NAME"),
 		PodName:           os.Getenv("POD_NAME"),
-		LocalIP:           interfaceIP(cfg.ClassifierInterface, logger),
+		LocalCIDRs:        buildLocalCIDRs(cfg.LocalCIDRs, localIP, logger),
 		NumWorkers:        cfg.NDPIWorkers,
 	})
 	if err != nil {
@@ -327,6 +329,32 @@ func (c *classifierTelemetry) NDPITimingStatsAndReset() proxy.NDPITimingStats {
 
 func (c *classifierTelemetry) NDPIShardQueueDepths() []int {
 	return c.handler.ShardQueueDepths()
+}
+
+// buildLocalCIDRs returns the CIDRs this node is responsible for receiving.
+// If raw is non-empty it is parsed as a comma-separated list of CIDR strings.
+// Otherwise it falls back to a /32 host route derived from localIP (auto mode).
+func buildLocalCIDRs(raw string, localIP net.IP, logger *zap.Logger) []net.IPNet {
+	if raw != "" {
+		var cidrs []net.IPNet
+		for _, s := range strings.Split(raw, ",") {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			_, ipnet, err := net.ParseCIDR(s)
+			if err != nil {
+				logger.Warn("LOCAL_CIDRS: invalid CIDR, skipping", zap.String("cidr", s), zap.Error(err))
+				continue
+			}
+			cidrs = append(cidrs, *ipnet)
+		}
+		return cidrs
+	}
+	if localIP != nil {
+		return []net.IPNet{{IP: localIP.Mask(net.CIDRMask(32, 32)), Mask: net.CIDRMask(32, 32)}}
+	}
+	return nil
 }
 
 func interfaceIP(ifname string, logger *zap.Logger) net.IP {

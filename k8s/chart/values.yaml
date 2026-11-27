@@ -115,6 +115,14 @@ config:
   KAFKA_BROKERS: "kafka-svc.dpipot.svc.cluster.local:9092"
   KAFKA_TOPIC: "dpipot.events"
   NDPI_EVENTS_ENABLED: "false"
+  # Comma-separated CIDR list this node is responsible for receiving.
+  # Leave empty to auto-detect from the classifier interface IP (host/32).
+  # Required only for NAT nodes (interface IP differs from public destination IP)
+  # or promiscuous darknet nodes receiving a full subnet via L2 MAC forwarding.
+  #   single public IP behind NAT:  "203.0.113.5/32"
+  #   darknet /24 via promiscuous:  "198.51.100.0/24"
+  #   both:                         "198.51.100.0/24,203.0.113.5/32"
+  LOCAL_CIDRS: ""
   MAX_PAYLOAD_BYTES: "65536"
   PAYLOAD_B64_ENABLED: "true"
   PAYLOAD_HEX_ENABLED: "true"

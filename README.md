@@ -429,6 +429,7 @@ All configuration is done via environment variables, loaded from the `dpipot-con
 | `SSH_OUTPUT_BUF_SIZE` | `65536` | SSH output buffer size in bytes |
 | `NDPI_EVENTS_ENABLED` | `false` | Publish per-packet nDPI classification events to Kafka |
 | `PASSIVE` | `false` | Passive sensor mode: init container skips TPROXY iptables rules; proxy is idle; only AF_PACKET + nDPI classifier is active. Set honeypots to `enabled: false` and `filebeat.enabled: false` when using this mode. |
+| `LOCAL_CIDRS` | `""` | Comma-separated CIDR list this node owns, used to populate the `direction` field (`inbound`/`outbound`/`transit`) on nDPI events. Empty = auto-detect from the classifier interface IP as a `/32` host route. Set explicitly for NAT nodes (interface IP differs from public destination IP) or promiscuous darknet nodes receiving a full subnet via L2 MAC forwarding. Example: `"198.51.100.0/24,203.0.113.5/32"`. |
 
 **Kafka**
 
@@ -647,6 +648,7 @@ Any protocol label not in `HONEYPOT_ROUTES` is forwarded to `DEFAULT_ROUTE`.
 | `ethertype` | `"0x0800"` (IPv4) or `"0x86DD"` (IPv6) |
 | `ip_proto` | `6` (TCP) or `17` (UDP) |
 | `category` | nDPI category ID |
+| `direction` | `"inbound"` (packet arriving at node), `"outbound"` (packet leaving node), or `"transit"` (neither side is local). Populated when `LOCAL_CIDRS` is set or when the interface IP is auto-detected. Absent when no local IP/CIDR is known. |
 
 **Heartbeat events** (`event_type: "heartbeat"`, emitted every 60 s) include:
 

@@ -48,7 +48,7 @@ type Handler struct {
 	ndpiEventsEnabled bool
 	nodeName          string
 	podName           string
-	localIP           net.IP
+	localCIDRs        []net.IPNet // CIDRs this node owns; used for direction classification
 
 	// telemetry counters — read by heartbeat via ClassifierTelemetry
 	packetsProcessed  atomic.Int64
@@ -72,8 +72,8 @@ type HandlerConfig struct {
 	NdpiEventsEnabled bool
 	NodeName          string
 	PodName           string
-	LocalIP           net.IP
-	NumWorkers        int // NDPI_WORKERS; 0 or 1 = synchronous single-goroutine (default)
+	LocalCIDRs        []net.IPNet // CIDRs this node owns; empty = direction field omitted
+	NumWorkers        int         // NDPI_WORKERS; 0 or 1 = synchronous single-goroutine (default)
 }
 
 func NewHandler(cfg HandlerConfig) (*Handler, error) {
@@ -112,7 +112,7 @@ func NewHandler(cfg HandlerConfig) (*Handler, error) {
 		ndpiEventsEnabled: cfg.NdpiEventsEnabled,
 		nodeName:          cfg.NodeName,
 		podName:           cfg.PodName,
-		localIP:           cfg.LocalIP,
+		localCIDRs:        cfg.LocalCIDRs,
 	}
 
 	// Worker goroutines — only needed in sharded (N>1) mode.
@@ -439,10 +439,32 @@ func (h *Handler) classifyAndUpdateFlowShard(s *ndpiShard, srcIP, dstIP net.IP, 
 	}
 }
 
+// containsIP reports whether ip falls within any of the node's local CIDRs.
+func (h *Handler) containsIP(ip net.IP) bool {
+	for i := range h.localCIDRs {
+		if h.localCIDRs[i].Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
 func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP, srcPort, dstPort uint16, masterProto, appProto string, category uint32, ttl, tos uint8, tcpWindow uint16, ipVersion uint8, protocol uint8, ipPacket []byte) {
+	// Classify packet direction relative to this node before any src/dst swap.
+	var direction string
+	if len(h.localCIDRs) > 0 {
+		if h.containsIP(dstIP) {
+			direction = "inbound"
+		} else if h.containsIP(srcIP) {
+			direction = "outbound"
+		} else {
+			direction = "transit"
+		}
+	}
+
 	// Normaliza direção: dst_ip deve ser sempre o IP do servidor (honeypot).
-	// Para pacotes de retorno (srcIP == IP local), inverte src/dst.
-	if h.localIP != nil && srcIP.Equal(h.localIP) {
+	// Para pacotes de retorno (srcIP em localCIDRs), inverte src/dst.
+	if len(h.localCIDRs) > 0 && h.containsIP(srcIP) {
 		srcIP, dstIP = dstIP, srcIP
 		srcPort, dstPort = dstPort, srcPort
 	}
@@ -507,6 +529,7 @@ func (h *Handler) publishNdpiEvent(flowUUID, tupleID string, srcIP, dstIP net.IP
 		PayloadLen: kafka.IntPtr(payloadLen),
 		Ethertype:  ethertype,
 		IPProto:    int(protocol),
+		Direction:  direction,
 		NodeName:   h.nodeName,
 		PodName:    h.podName,
 	})
